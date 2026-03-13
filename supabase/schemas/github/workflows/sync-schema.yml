@@ -1,0 +1,26 @@
+name: Sync Supabase Schema for AI Context
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch: # Allows you to run it manually from the "Actions" tab
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Supabase CLI
+        run: npm install -g supabase
+
+      - name: Pull Schema
+        run: |
+          mkdir -p supabase/schemas
+          supabase db dump --db-url "${{ secrets.SUPABASE_DB_URL }}" --schema public > supabase/schemas/schema.sql
+
+      - name: Commit Schema
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "update database schema for AI context"
+          file_pattern: 'supabase/schemas/schema.sql'
