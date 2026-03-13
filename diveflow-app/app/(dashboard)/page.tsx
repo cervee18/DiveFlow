@@ -11,21 +11,6 @@ export default async function Home() {
 
   return (
     <div className="min-h-screen flex flex-col">
-      <header className="bg-white border-b border-slate-200 sticky top-0 z-10">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 bg-blue-500 rounded-md flex items-center justify-center shadow-sm">
-              <span className="text-white font-bold text-xl leading-none">D</span>
-            </div>
-            {/* Softened to slate-700 */}
-            <span className="text-xl font-bold text-slate-700 tracking-tight">DiveFlow</span>
-          </div>
-          <div className="text-sm font-medium text-slate-500 py-1.5 px-4 bg-slate-50 border border-slate-200 rounded-full">
-            {user.email}
-          </div>
-        </div>
-      </header>
-
       <main className="flex-1 max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-8">
         <div className="mb-8">
           {/* Softened to slate-800 */}
