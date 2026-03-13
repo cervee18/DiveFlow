@@ -3,6 +3,13 @@
 import { useState, useEffect, useRef } from "react";
 import { createClient } from "@/utils/supabase/client";
 
+// Helper to format YYYY-MM-DD to dd/mm/yyyy securely
+const formatDate = (dateStr?: string) => {
+  if (!dateStr) return "Unknown";
+  const [year, month, day] = dateStr.split('-');
+  return `${day}/${month}/${year}`;
+};
+
 export default function ClientsPage() {
   const supabase = createClient();
   
@@ -20,70 +27,53 @@ export default function ClientsPage() {
   const [recentClients, setRecentClients] = useState<any[]>([]);
   const [selectedClient, setSelectedClient] = useState<any | null>(null);
   const [clientVisits, setClientVisits] = useState<any[]>([]);
+  
+  // Lookups
   const [certLevels, setCertLevels] = useState<any[]>([]);
   const [certOrgs, setCertOrgs] = useState<any[]>([]);
+  const [hotels, setHotels] = useState<any[]>([]);
   
   // Form & Modal States
   const [isSaving, setIsSaving] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
 
-  // 1. Fetch User's Organization ID on load
+  // Visit Modal States
+  const [visitModalMode, setVisitModalMode] = useState<'add' | 'edit' | null>(null);
+  const [editingVisit, setEditingVisit] = useState<any>(null);
+  const [isSavingVisit, setIsSavingVisit] = useState(false);
+
+  // 1. Initial Data Fetch (Profile, Orgs, Levels, Hotels)
   useEffect(() => {
-    async function getUserProfile() {
+    async function loadInitialData() {
       const { data: { user } } = await supabase.auth.getUser();
       if (user) {
-        const { data: profile } = await supabase
-          .from("profiles")
-          .select("organization_id")
-          .eq("id", user.id)
-          .single();
+        const { data: profile } = await supabase.from("profiles").select("organization_id").eq("id", user.id).single();
         if (profile) setUserOrgId(profile.organization_id);
       }
+      const { data: levels } = await supabase.from("certification_levels").select("*").order("id", { ascending: true });
+      if (levels) setCertLevels(levels);
+      
+      const { data: orgs } = await supabase.from("certification_organizations").select("*").order("name", { ascending: true });
+      if (orgs) setCertOrgs(orgs);
+
+      const { data: h } = await supabase.from("hotels").select("*").order("name", { ascending: true });
+      if (h) setHotels(h);
     }
-    getUserProfile();
+    loadInitialData();
   }, [supabase]);
 
-  // 2. Fetch Recently Added Clients
+  // 2. Fetch Recently Added
   useEffect(() => {
     async function fetchRecent() {
-      if (!userOrgId) return; // Only fetch if we know the org
-      const { data } = await supabase
-        .from("clients")
-        .select("*")
-        .eq("organization_id", userOrgId)
-        .order("created_at", { ascending: false })
-        .limit(6);
+      if (!userOrgId) return;
+      const { data } = await supabase.from("clients").select("*").eq("organization_id", userOrgId).order("created_at", { ascending: false }).limit(6);
       if (data) setRecentClients(data);
     }
     fetchRecent();
   }, [userOrgId, supabase]);
 
-  // Fetch Certification Levels
-  useEffect(() => {
-    async function fetchCertLevels() {
-      const { data } = await supabase
-        .from("certification_levels")
-        .select("*")
-        .order("id", { ascending: true });
-      if (data) setCertLevels(data);
-    }
-    fetchCertLevels();
-  }, [supabase]);
-
-  // Fetch Certification Organizations
-  useEffect(() => {
-    async function fetchCertOrgs() {
-      const { data } = await supabase
-        .from("certification_organizations")
-        .select("*")
-        .order("name", { ascending: true });
-      if (data) setCertOrgs(data);
-    }
-    fetchCertOrgs();
-  }, [supabase]);
-
-  // 3. Handle Live Search
+  // 3. Live Search
   useEffect(() => {
     async function performSearch() {
       if (!searchQuery.trim() || !userOrgId) {
@@ -104,33 +94,38 @@ export default function ClientsPage() {
       setSearchResults(data || []);
       setIsSearching(false);
     }
-
     const timer = setTimeout(() => performSearch(), 300);
     return () => clearTimeout(timer);
   }, [searchQuery, userOrgId, supabase]);
 
-  // 4. Fetch Client Visits
+  // Fetch Client Visits
+  const fetchClientVisits = async (clientId: string) => {
+    const { data } = await supabase
+      .from("visit_clients")
+      .select(`
+        id, room_number,
+        visits (
+          id, start_date, end_date, hotel_id,
+          hotels ( name ),
+          visit_clients (
+            id, client_id,
+            clients ( id, client_number, first_name, last_name )
+          )
+        )
+      `)
+      .eq("client_id", clientId)
+      .order('visits(start_date)', { ascending: false });
+    setClientVisits(data || []);
+  };
+
   useEffect(() => {
-    async function fetchVisits() {
-      if (!selectedClient) return;
-      const { data } = await supabase
-        .from("visit_clients")
-        .select(`
-          id, room_number, arrival_time, departure_time, transfer_needed,
-          visits ( id, start_date, end_date, hotels ( name ) )
-        `)
-        .eq("client_id", selectedClient.id);
-      setClientVisits(data || []);
-    }
-    fetchVisits();
+    if (selectedClient) fetchClientVisits(selectedClient.id);
   }, [selectedClient, supabase]);
 
   // Close dropdown when clicking outside
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
-      if (searchRef.current && !searchRef.current.contains(event.target as Node)) {
-        setShowDropdown(false);
-      }
+      if (searchRef.current && !searchRef.current.contains(event.target as Node)) setShowDropdown(false);
     }
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
@@ -142,35 +137,23 @@ export default function ClientsPage() {
     setSearchQuery("");
   };
 
-  // 5. Handle Creating a NEW Client
+  // Profile Form Handlers (Create & Save)
   const handleCreate = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    if (!userOrgId) {
-      alert("Error: No organization found for your profile. Please contact support.");
-      return;
-    }
-    
+    if (!userOrgId) return;
     setIsCreating(true);
     const formData = new FormData(e.currentTarget);
-    
-    // If email is empty, send null so it doesn't violate unique constraints
     const emailValue = formData.get("email") as string;
-    const finalEmail = emailValue.trim() === "" ? null : emailValue.trim();
     
     const newClient = {
       organization_id: userOrgId,
       first_name: formData.get("first_name"),
       last_name: formData.get("last_name"),
-      email: finalEmail,
+      email: emailValue.trim() === "" ? null : emailValue.trim(),
       phone: formData.get("phone") || null,
     };
 
-    const { data, error } = await supabase
-      .from("clients")
-      .insert(newClient)
-      .select()
-      .single();
-
+    const { data, error } = await supabase.from("clients").insert(newClient).select().single();
     setIsCreating(false);
 
     if (!error && data) {
@@ -182,7 +165,6 @@ export default function ClientsPage() {
     }
   };
 
-  // 6. Handle Saving Edits (Existing Client)
   const handleSave = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!selectedClient) return;
@@ -216,6 +198,68 @@ export default function ClientsPage() {
     } else {
       alert("Error updating client.");
     }
+  };
+
+  // Visit Form Handlers
+  const handleSaveVisit = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (!selectedClient || !userOrgId) return;
+    setIsSavingVisit(true);
+    
+    const fd = new FormData(e.currentTarget);
+    const startDate = fd.get("start_date");
+    const endDate = fd.get("end_date");
+    const hotelId = fd.get("hotel_id") || null;
+    const roomNumber = fd.get("room_number") || null;
+
+    if (visitModalMode === 'add') {
+      const { data: newVisit, error: visitError } = await supabase.from("visits").insert({
+        organization_id: userOrgId,
+        start_date: startDate,
+        end_date: endDate,
+        hotel_id: hotelId
+      }).select().single();
+
+      if (!visitError && newVisit) {
+        await supabase.from("visit_clients").insert({
+          visit_id: newVisit.id,
+          client_id: selectedClient.id,
+          room_number: roomNumber
+        });
+      }
+    } else if (visitModalMode === 'edit' && editingVisit) {
+      await supabase.from("visits").update({ start_date: startDate, end_date: endDate, hotel_id: hotelId }).eq("id", editingVisit.visits.id);
+      await supabase.from("visit_clients").update({ room_number: roomNumber }).eq("id", editingVisit.id);
+    }
+
+    setIsSavingVisit(false);
+    setVisitModalMode(null);
+    setEditingVisit(null);
+    fetchClientVisits(selectedClient.id);
+  };
+
+  const handleDeleteVisit = async (visitLink: any) => {
+    const visit = visitLink.visits;
+    const companions = visit.visit_clients?.filter((vc: any) => vc.client_id !== selectedClient.id) || [];
+
+    if (companions.length > 0) {
+      const deleteJustMe = window.confirm(`Remove ${selectedClient.first_name} from this visit?`);
+      if (!deleteJustMe) return;
+
+      const deleteForAll = window.confirm(`This trip includes ${companions.length} companion(s). Do you want to delete the entire trip for EVERYONE?\n\n(Click 'Cancel' to ONLY remove ${selectedClient.first_name} and leave the companions' trip intact).`);
+      
+      if (deleteForAll) {
+        await supabase.from("visits").delete().eq("id", visit.id);
+      } else {
+        await supabase.from("visit_clients").delete().eq("id", visitLink.id);
+      }
+    } else {
+      const confirmDelete = window.confirm("Are you sure you want to delete this visit entirely?");
+      if (!confirmDelete) return;
+      await supabase.from("visits").delete().eq("id", visit.id);
+    }
+    
+    fetchClientVisits(selectedClient.id);
   };
 
   return (
@@ -312,37 +356,33 @@ export default function ClientsPage() {
           {/* Left Column: Client Details */}
           <div className="w-6/12 bg-white rounded-xl shadow-sm border border-slate-200 flex flex-col h-full overflow-hidden">
             <div className="p-5 border-b border-slate-100 flex justify-between items-center bg-slate-50/50 shrink-0">
-<div className="p-5 border-b border-slate-100 flex justify-between items-center bg-slate-50/50 shrink-0">
-  {/* Increased gap from 3 to 5 for much better spacing */}
-  <h2 className="text-lg font-semibold text-slate-800 flex items-center gap-5 truncate">
-    <span className="truncate">
-      {selectedClient.first_name} {selectedClient.last_name}
-    </span>
-    
-    {/* Pulled the number into its own span so it obeys the flex gap */}
-    <span className="font-normal text-slate-500 shrink-0">
-      #{selectedClient.client_number}
-    </span>
-    
-    {/* Certification Chip */}
-    {selectedClient.cert_level && (
-      <span 
-        title={selectedClient.nitrox_cert_number ? `Nitrox Cert: ${selectedClient.nitrox_cert_number}` : "Standard Air"}
-        className={`text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded border shrink-0 ${
-          selectedClient.nitrox_cert_number?.trim() 
-            ? "bg-emerald-50 text-emerald-600 border-emerald-200" 
-            : "bg-slate-100 text-slate-500 border-slate-200"
-        }`}
-      >
-        {certLevels.find(c => c.name === selectedClient.cert_level)?.abbreviation || selectedClient.cert_level}
-      </span>
-    )}
-  </h2>
-</div>
-  <button onClick={() => setSelectedClient(null)} className="text-sm text-slate-500 hover:text-slate-800 font-medium shrink-0">
-    Close
-  </button>
-</div>
+              <h2 className="text-lg font-semibold text-slate-800 flex items-center gap-5 truncate">
+                <span className="truncate">
+                  {selectedClient.first_name} {selectedClient.last_name}
+                </span>
+                
+                <span className="font-normal text-slate-500 shrink-0">
+                  #{selectedClient.client_number}
+                </span>
+                
+                {selectedClient.cert_level && (
+                  <span 
+                    title={selectedClient.nitrox_cert_number ? `Nitrox Cert: ${selectedClient.nitrox_cert_number}` : "Standard Air"}
+                    className={`text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded border shrink-0 ${
+                      selectedClient.nitrox_cert_number?.trim() 
+                        ? "bg-emerald-50 text-emerald-600 border-emerald-200" 
+                        : "bg-slate-100 text-slate-500 border-slate-200"
+                    }`}
+                  >
+                    {certLevels.find(c => c.name === selectedClient.cert_level)?.abbreviation || selectedClient.cert_level}
+                  </span>
+                )}
+              </h2>
+              
+              <button onClick={() => setSelectedClient(null)} className="text-sm text-slate-500 hover:text-slate-800 font-medium shrink-0">
+                Close
+              </button>
+            </div>
             
             <form key={selectedClient.id} onSubmit={handleSave} className="p-6 flex flex-col gap-8 overflow-y-auto">
               <div>
@@ -360,7 +400,7 @@ export default function ClientsPage() {
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <label className="block text-xs font-medium text-slate-600 mb-1">Email</label>
-                    <input name="email" type="email" defaultValue={selectedClient.email} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-md focus:bg-white focus:ring-2 focus:ring-blue-500 outline-none text-sm" required />
+                    <input name="email" type="email" defaultValue={selectedClient.email} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-md focus:bg-white focus:ring-2 focus:ring-blue-500 outline-none text-sm" />
                   </div>
                   <div>
                     <label className="block text-xs font-medium text-slate-600 mb-1">Phone</label>
@@ -373,48 +413,30 @@ export default function ClientsPage() {
                 <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-4 border-b border-slate-100 pb-2">Diving Profile</h3>
                 <div className="grid grid-cols-2 gap-4 mb-4">
                   <div>
-    <label className="block text-xs font-medium text-slate-600 mb-1">Organization</label>
-    <select 
-      name="cert_organization" 
-      defaultValue={selectedClient.cert_organization || ""} 
-      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-md focus:bg-white focus:ring-2 focus:ring-blue-500 outline-none text-sm text-slate-700"
-    >
-      <option value="">Select Organization</option>
-      {certOrgs.map(org => (
-        <option key={org.id} value={org.name}>
-          {org.name}
-        </option>
-      ))}
-    </select>
-  </div>
-<div>
-    <label className="block text-xs font-medium text-slate-600 mb-1">Level</label>
-    <select 
-      name="cert_level" 
-      defaultValue={selectedClient.cert_level || ""} 
-      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-md focus:bg-white focus:ring-2 focus:ring-blue-500 outline-none text-sm text-slate-700"
-    >
-      <option value="">No Certification Listed</option>
-      
-      {/* Recreational Levels */}
-      <optgroup label="Recreational">
-        {certLevels.filter(level => !level.is_professional).map(level => (
-          <option key={level.id} value={level.name}>
-            {level.name} ({level.abbreviation})
-          </option>
-        ))}
-      </optgroup>
-
-      {/* Professional Levels */}
-      <optgroup label="Professional">
-        {certLevels.filter(level => level.is_professional).map(level => (
-          <option key={level.id} value={level.name}>
-            {level.name} ({level.abbreviation}) ✦
-          </option>
-        ))}
-      </optgroup>
-    </select>
-  </div>
+                    <label className="block text-xs font-medium text-slate-600 mb-1">Organization</label>
+                    <select name="cert_organization" defaultValue={selectedClient.cert_organization || ""} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-md focus:bg-white focus:ring-2 focus:ring-blue-500 outline-none text-sm text-slate-700">
+                      <option value="">Select Organization</option>
+                      {certOrgs.map(org => (
+                        <option key={org.id} value={org.name}>{org.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-slate-600 mb-1">Level</label>
+                    <select name="cert_level" defaultValue={selectedClient.cert_level || ""} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-md focus:bg-white focus:ring-2 focus:ring-blue-500 outline-none text-sm text-slate-700">
+                      <option value="">No Certification Listed</option>
+                      <optgroup label="Recreational">
+                        {certLevels.filter(l => !l.is_professional).map(l => (
+                          <option key={l.id} value={l.name}>{l.name} ({l.abbreviation})</option>
+                        ))}
+                      </optgroup>
+                      <optgroup label="Professional">
+                        {certLevels.filter(l => l.is_professional).map(l => (
+                          <option key={l.id} value={l.name}>{l.name} ({l.abbreviation}) ✦</option>
+                        ))}
+                      </optgroup>
+                    </select>
+                  </div>
                 </div>
                 <div className="grid grid-cols-2 gap-4 mb-4">
                   <div>
@@ -471,7 +493,10 @@ export default function ClientsPage() {
           <div className="w-6/12 bg-white rounded-xl shadow-sm border border-slate-200 h-full overflow-hidden flex flex-col">
             <div className="p-5 border-b border-slate-100 flex justify-between items-center bg-slate-50/50 shrink-0">
               <h2 className="text-lg font-semibold text-slate-800">Visit History</h2>
-              <button className="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1.5 rounded-md text-sm font-medium shadow-sm transition-colors">
+              <button 
+                onClick={() => setVisitModalMode('add')}
+                className="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1.5 rounded-md text-sm font-medium shadow-sm transition-colors"
+              >
                 + Add Visit
               </button>
             </div>
@@ -482,31 +507,66 @@ export default function ClientsPage() {
                   <p>No visits recorded for this diver.</p>
                 </div>
               ) : (
-                <div className="flex flex-col gap-4">
+                <div className="flex flex-col gap-5">
                   {clientVisits.map((visitLink) => {
                     const visit = visitLink.visits;
+                    const companions = visit.visit_clients?.filter((vc: any) => vc.client_id !== selectedClient.id) || [];
+
                     return (
-                      <div key={visitLink.id} className="border border-slate-200 rounded-lg p-4 hover:border-blue-300 transition-colors">
+                      <div key={visitLink.id} className="border border-slate-200 rounded-xl p-5 hover:border-blue-300 transition-colors bg-white shadow-sm">
+                        
                         <div className="flex justify-between items-start mb-2">
                           <div>
-                            <p className="font-semibold text-slate-800">
-                              {visit?.start_date ? new Date(visit.start_date).toLocaleDateString() : "Unknown"} 
-                              {" - "} 
-                              {visit?.end_date ? new Date(visit.end_date).toLocaleDateString() : "Unknown"}
+                            {/* Dates formatted as dd/mm/yyyy */}
+                            <p className="font-semibold text-slate-800 text-lg">
+                              {formatDate(visit?.start_date)} {" - "} {formatDate(visit?.end_date)}
                             </p>
-                            <p className="text-sm text-slate-600 flex items-center gap-1 mt-1">
-                              <svg className="w-4 h-4 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            
+                            {/* Hotel and Room combined with equal weight */}
+                            <div className="flex items-center gap-2 mt-1">
+                              <svg className="w-4 h-4 text-slate-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
                               </svg>
-                              {visit?.hotels?.name || "No Hotel Specified"}
-                            </p>
+                              <p className="text-sm text-slate-700 font-medium">
+                                {visit?.hotels?.name || "No Hotel Specified"}
+                                {visitLink.room_number && (
+                                  <span className="text-slate-500 font-normal ml-1.5">
+                                    (Room {visitLink.room_number})
+                                  </span>
+                                )}
+                              </p>
+                            </div>
                           </div>
-                          {visitLink.room_number && (
-                            <span className="bg-slate-100 text-slate-600 text-xs font-medium px-2.5 py-1 rounded border border-slate-200">
-                              Room {visitLink.room_number}
-                            </span>
-                          )}
+
+                          {/* Action Buttons */}
+                          <div className="flex gap-2 shrink-0">
+                            <button onClick={() => { setEditingVisit(visitLink); setVisitModalMode('edit'); }} className="text-xs font-medium text-slate-400 hover:text-blue-600 px-2 py-1">
+                              Edit
+                            </button>
+                            <button onClick={() => handleDeleteVisit(visitLink)} className="text-xs font-medium text-slate-400 hover:text-red-600 px-2 py-1">
+                              Delete
+                            </button>
+                          </div>
                         </div>
+
+                        {/* Companions Section */}
+                        {companions.length > 0 && (
+                          <div className="mt-4 pt-4 border-t border-slate-100">
+                            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">Traveling With</p>
+                            <div className="flex flex-wrap gap-2">
+                              {companions.map((comp: any) => (
+                                <button 
+                                  key={comp.id}
+                                  onClick={() => handleSelectClient(comp.clients)}
+                                  className="px-2.5 py-1 bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-100 rounded text-xs font-medium transition-colors shadow-sm"
+                                  title={`Switch to ${comp.clients.first_name}'s profile`}
+                                >
+                                  {comp.clients.first_name} {comp.clients.last_name}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        )}
                       </div>
                     );
                   })}
@@ -522,19 +582,12 @@ export default function ClientsPage() {
       {isModalOpen && (
         <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center z-[100] p-4">
           <div className="bg-white rounded-xl shadow-xl border border-slate-200 w-full max-w-lg overflow-hidden flex flex-col max-h-full">
-            
             <div className="p-5 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
               <h2 className="text-lg font-semibold text-slate-800">Add New Diver</h2>
-              <button 
-                onClick={() => setIsModalOpen(false)} 
-                className="text-slate-400 hover:text-slate-600 transition-colors"
-              >
-                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
+              <button onClick={() => setIsModalOpen(false)} className="text-slate-400 hover:text-slate-600 transition-colors">
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
               </button>
             </div>
-
             <form onSubmit={handleCreate} className="p-6 flex flex-col gap-5 overflow-y-auto">
               <div className="grid grid-cols-2 gap-4">
                 <div>
@@ -546,32 +599,67 @@ export default function ClientsPage() {
                   <input name="last_name" className="w-full px-3 py-2 border rounded-md border-slate-300 focus:ring-2 focus:ring-blue-500 outline-none" required />
                 </div>
               </div>
-
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">Email Address</label>
-                {/* Removed the 'required' attribute here */}
                 <input name="email" type="email" className="w-full px-3 py-2 border rounded-md border-slate-300 focus:ring-2 focus:ring-blue-500 outline-none" />
               </div>
-
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">Phone Number</label>
                 <input name="phone" className="w-full px-3 py-2 border rounded-md border-slate-300 focus:ring-2 focus:ring-blue-500 outline-none" />
               </div>
+              <div className="pt-4 mt-2 border-t border-slate-100 flex justify-end gap-3">
+                <button type="button" onClick={() => setIsModalOpen(false)} className="px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 rounded-md transition-colors">Cancel</button>
+                <button type="submit" disabled={isCreating} className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2 rounded-md text-sm font-medium shadow-sm transition-colors disabled:opacity-70">{isCreating ? "Creating..." : "Create Client"}</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: Add / Edit Visit */}
+      {visitModalMode && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center z-[100] p-4">
+          <div className="bg-white rounded-xl shadow-xl border border-slate-200 w-full max-w-lg overflow-hidden flex flex-col max-h-full">
+            <div className="p-5 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
+              <h2 className="text-lg font-semibold text-slate-800">
+                {visitModalMode === 'add' ? 'Add New Visit' : 'Edit Visit'}
+              </h2>
+              <button onClick={() => { setVisitModalMode(null); setEditingVisit(null); }} className="text-slate-400 hover:text-slate-600 transition-colors">
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
+            
+            <form onSubmit={handleSaveVisit} className="p-6 flex flex-col gap-5 overflow-y-auto">
+              
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Check-in Date *</label>
+                  <input type="date" name="start_date" defaultValue={editingVisit?.visits?.start_date || ""} required className="w-full px-3 py-2 border rounded-md border-slate-300 focus:ring-2 focus:ring-blue-500 outline-none" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Check-out Date *</label>
+                  <input type="date" name="end_date" defaultValue={editingVisit?.visits?.end_date || ""} required className="w-full px-3 py-2 border rounded-md border-slate-300 focus:ring-2 focus:ring-blue-500 outline-none" />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Hotel</label>
+                  <select name="hotel_id" defaultValue={editingVisit?.visits?.hotel_id || ""} className="w-full px-3 py-2 border rounded-md border-slate-300 focus:ring-2 focus:ring-blue-500 outline-none bg-white">
+                    <option value="">Select Hotel</option>
+                    {hotels.map(h => <option key={h.id} value={h.id}>{h.name}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Room Number</label>
+                  <input type="text" name="room_number" defaultValue={editingVisit?.room_number || ""} className="w-full px-3 py-2 border rounded-md border-slate-300 focus:ring-2 focus:ring-blue-500 outline-none" />
+                </div>
+              </div>
 
               <div className="pt-4 mt-2 border-t border-slate-100 flex justify-end gap-3">
-                <button 
-                  type="button" 
-                  onClick={() => setIsModalOpen(false)}
-                  className="px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 rounded-md transition-colors"
-                >
-                  Cancel
-                </button>
-                <button 
-                  type="submit" 
-                  disabled={isCreating}
-                  className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2 rounded-md text-sm font-medium shadow-sm transition-colors disabled:opacity-70"
-                >
-                  {isCreating ? "Creating..." : "Create Client"}
+                <button type="button" onClick={() => { setVisitModalMode(null); setEditingVisit(null); }} className="px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 rounded-md transition-colors">Cancel</button>
+                <button type="submit" disabled={isSavingVisit} className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2 rounded-md text-sm font-medium shadow-sm transition-colors disabled:opacity-70">
+                  {isSavingVisit ? "Saving..." : "Save Visit"}
                 </button>
               </div>
             </form>
