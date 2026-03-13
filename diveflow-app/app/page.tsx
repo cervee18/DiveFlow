@@ -2,31 +2,62 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/utils/supabase/server";
 
 export default async function Home() {
-  // 1. Initialize the server-side Supabase client
   const supabase = await createClient();
-
-  // 2. Fetch the currently authenticated user
   const { data: { user }, error } = await supabase.auth.getUser();
 
-  // 3. If there is no user, redirect them to the login page immediately
   if (error || !user) {
     redirect("/login");
   }
 
-  // 4. If the user is logged in, render the dashboard
   return (
-    <div className="flex min-h-screen flex-col p-8 bg-zinc-50 dark:bg-black font-sans text-black dark:text-white">
-      <main className="max-w-4xl mx-auto w-full mt-10">
-        <h1 className="text-3xl font-bold mb-6">DiveFlow Dashboard</h1>
+    <div className="min-h-screen flex flex-col">
+      <header className="bg-white border-b border-slate-200 sticky top-0 z-10">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 bg-blue-500 rounded-md flex items-center justify-center shadow-sm">
+              <span className="text-white font-bold text-xl leading-none">D</span>
+            </div>
+            {/* Softened to slate-700 */}
+            <span className="text-xl font-bold text-slate-700 tracking-tight">DiveFlow</span>
+          </div>
+          <div className="text-sm font-medium text-slate-500 py-1.5 px-4 bg-slate-50 border border-slate-200 rounded-full">
+            {user.email}
+          </div>
+        </div>
+      </header>
+
+      <main className="flex-1 max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-8">
+        <div className="mb-8">
+          {/* Softened to slate-800 */}
+          <h1 className="text-2xl font-semibold text-slate-800">Dashboard</h1>
+          <p className="text-sm text-slate-500 mt-1">Overview of your daily operations.</p>
+        </div>
         
-        <div className="p-6 bg-white dark:bg-zinc-900 rounded-lg shadow border border-zinc-200 dark:border-zinc-800">
-          <h2 className="text-xl font-semibold mb-2">Welcome Back!</h2>
-          <p className="text-zinc-600 dark:text-zinc-400 mb-4">
-            You are securely logged in as: <span className="font-medium text-black dark:text-white">{user.email}</span>
-          </p>
-          <p className="text-zinc-600 dark:text-zinc-400">
-            Your dive center management portal is ready. We will start building out the modules here soon.
-          </p>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
+            <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Today's Boat Trips</h2>
+            <div className="flex items-end justify-between">
+              {/* Softened to slate-700 */}
+              <p className="text-3xl font-bold text-slate-700">3</p>
+              <span className="text-sm font-medium text-blue-600 bg-blue-50 border border-blue-100 px-2 py-1 rounded-md">Scheduled</span>
+            </div>
+          </div>
+          
+          <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
+            <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Divers on Roster</h2>
+            <div className="flex items-end justify-between">
+              <p className="text-3xl font-bold text-slate-700">24</p>
+              <span className="text-sm font-medium text-emerald-600 bg-emerald-50 border border-emerald-100 px-2 py-1 rounded-md">All checked in</span>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
+            <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Equipment Alerts</h2>
+            <div className="flex items-end justify-between">
+              <p className="text-3xl font-bold text-amber-500">2</p>
+              <span className="text-sm font-medium text-amber-700 bg-amber-50 border border-amber-100 px-2 py-1 rounded-md">Service due</span>
+            </div>
+          </div>
         </div>
       </main>
     </div>
