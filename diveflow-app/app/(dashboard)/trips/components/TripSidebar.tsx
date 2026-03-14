@@ -14,7 +14,7 @@ export default function TripSidebar({
   };
 
   return (
-    <div className="w-96 flex flex-col border-r border-slate-200 bg-white shrink-0">
+    <div className="w-80 flex flex-col border-r border-slate-200 bg-white shrink-0">
       <div className="p-4 border-b border-slate-200 bg-slate-50 z-10 shrink-0">
         <div className="flex justify-between items-center mb-4">
           <h1 className="text-xl font-semibold text-slate-800">Daily Schedule</h1>

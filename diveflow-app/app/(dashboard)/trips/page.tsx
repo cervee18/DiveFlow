@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { createClient } from '@/utils/supabase/client';
-import TripSidebar from './components/TripSidebar';
+import TripTopBar from './components/TripTopBar'; 
 import TripHeader from './components/TripHeader';
 import TripFormModal from './components/TripFormModal';
 import TripManifest from './components/TripManifest';
@@ -159,8 +159,10 @@ export default function TripsPage() {
   const selectedTrip = trips.find(t => t.id === selectedTripId);
 
   return (
-    <div className="flex h-[calc(100vh-4rem)] bg-slate-50 relative">
-      <TripSidebar 
+    <div className="flex flex-col h-[calc(100vh-4rem)] bg-slate-50 relative overflow-hidden">
+      
+      {/* Top Bar now stretches across the entire top */}
+      <TripTopBar 
         trips={trips} 
         selectedDate={selectedDate} 
         selectedTripId={selectedTripId} 
@@ -170,15 +172,19 @@ export default function TripsPage() {
         onAddTrip={openAddModal} 
       />
 
+      {/* Main Content Area now takes full width and remaining height */}
       <div className="flex-1 bg-slate-50 p-6 overflow-y-auto min-w-0">
         {selectedTripId && selectedTrip ? (
           <div className="bg-white rounded-xl shadow-sm border border-slate-200 min-h-full p-8 flex flex-col">
             <TripHeader trip={selectedTrip} onEdit={openEditModal} onDelete={handleDeleteTrip} />
-            <TripManifest tripId={selectedTrip.id} />
+            <TripManifest 
+  tripId={selectedTrip.id} 
+  tripDate={selectedTrip.start_time} 
+/>
           </div>
         ) : (
           <div className="h-full flex items-center justify-center text-slate-500 bg-white rounded-xl shadow-sm border border-slate-200">
-            Select a trip from the timeline to view details
+            Select a trip from the top bar to view details and manifest
           </div>
         )}
       </div>

@@ -17,7 +17,7 @@ export default async function DashboardLayout({
   return (
     <div className="min-h-screen flex bg-slate-50">
       {/* Sidebar Navigation */}
-      <aside className="w-64 bg-white border-r border-slate-200 flex flex-col sticky top-0 h-screen">
+      <aside className="w-50 bg-white border-r border-slate-200 flex flex-col sticky top-0 h-screen">
         <div className="h-16 flex items-center px-6 border-b border-slate-200">
           <div className="flex items-center gap-2">
             <div className="w-8 h-8 bg-blue-500 rounded-md flex items-center justify-center shadow-sm">
