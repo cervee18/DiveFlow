@@ -134,7 +134,7 @@ CREATE TABLE IF NOT EXISTS "public"."clients" (
     "email" "text",
     "phone" "text",
     "cert_number" "text",
-    "cert_level" "text",
+    "cert_level" "uuid",
     "cert_organization" "text",
     "nitrox_cert_number" "text",
     "last_dive_date" "date",
@@ -147,8 +147,7 @@ CREATE TABLE IF NOT EXISTS "public"."clients" (
     "updated_at" timestamp with time zone DEFAULT "now"(),
     "organization_id" "uuid" NOT NULL,
     "location_id" "uuid",
-    "client_number" bigint NOT NULL,
-    "certification_level_id" "uuid"
+    "client_number" bigint NOT NULL
 );
 
 
@@ -202,7 +201,8 @@ ALTER TABLE "public"."dive_sites" OWNER TO "postgres";
 
 CREATE TABLE IF NOT EXISTS "public"."equipment_categories" (
     "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
-    "name" "text" NOT NULL
+    "name" "text" NOT NULL,
+    "sizes" "text"[] DEFAULT '{}'::"text"[]
 );
 
 
@@ -629,10 +629,6 @@ ALTER TABLE ONLY "public"."visits"
 
 
 
-CREATE INDEX "idx_clients_cert_level" ON "public"."clients" USING "btree" ("certification_level_id");
-
-
-
 CREATE INDEX "idx_clients_country" ON "public"."clients" USING "btree" ("address_country");
 
 
@@ -846,11 +842,6 @@ CREATE OR REPLACE TRIGGER "visits_updated_at" BEFORE UPDATE ON "public"."visits"
 
 
 ALTER TABLE ONLY "public"."clients"
-    ADD CONSTRAINT "clients_certification_level_id_fkey" FOREIGN KEY ("certification_level_id") REFERENCES "public"."certification_levels"("id");
-
-
-
-ALTER TABLE ONLY "public"."clients"
     ADD CONSTRAINT "clients_location_id_fkey" FOREIGN KEY ("location_id") REFERENCES "public"."locations"("id") ON DELETE SET NULL;
 
 
@@ -872,6 +863,11 @@ ALTER TABLE ONLY "public"."dive_sites"
 
 ALTER TABLE ONLY "public"."dive_sites"
     ADD CONSTRAINT "dive_sites_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "public"."organizations"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."clients"
+    ADD CONSTRAINT "fk_clients_cert_level" FOREIGN KEY ("cert_level") REFERENCES "public"."certification_levels"("id");
 
 
 
