@@ -302,6 +302,15 @@ CREATE TABLE IF NOT EXISTS "public"."profiles" (
 ALTER TABLE "public"."profiles" OWNER TO "postgres";
 
 
+CREATE TABLE IF NOT EXISTS "public"."roles" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "name" "text" NOT NULL
+);
+
+
+ALTER TABLE "public"."roles" OWNER TO "postgres";
+
+
 CREATE TABLE IF NOT EXISTS "public"."specialties" (
     "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
     "name" "text" NOT NULL,
@@ -325,7 +334,8 @@ CREATE TABLE IF NOT EXISTS "public"."staff" (
     "created_at" timestamp with time zone DEFAULT "now"(),
     "updated_at" timestamp with time zone DEFAULT "now"(),
     "organization_id" "uuid" NOT NULL,
-    "location_id" "uuid"
+    "location_id" "uuid",
+    "initials" "text"
 );
 
 
@@ -365,7 +375,7 @@ CREATE TABLE IF NOT EXISTS "public"."trip_staff" (
     "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
     "trip_id" "uuid" NOT NULL,
     "staff_id" "uuid" NOT NULL,
-    "role" "text" NOT NULL
+    "role_id" "uuid"
 );
 
 
@@ -384,11 +394,26 @@ CREATE TABLE IF NOT EXISTS "public"."trips" (
     "created_at" timestamp with time zone DEFAULT "now"(),
     "updated_at" timestamp with time zone DEFAULT "now"(),
     "organization_id" "uuid" NOT NULL,
-    "location_id" "uuid"
+    "location_id" "uuid",
+    "vessel_id" "uuid"
 );
 
 
 ALTER TABLE "public"."trips" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."vessels" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "organization_id" "uuid" NOT NULL,
+    "location_id" "uuid",
+    "name" "text" NOT NULL,
+    "capacity" integer NOT NULL,
+    "created_at" timestamp with time zone DEFAULT "now"(),
+    "updated_at" timestamp with time zone DEFAULT "now"()
+);
+
+
+ALTER TABLE "public"."vessels" OWNER TO "postgres";
 
 
 CREATE TABLE IF NOT EXISTS "public"."visit_clients" (
@@ -501,6 +526,16 @@ ALTER TABLE ONLY "public"."profiles"
 
 
 
+ALTER TABLE ONLY "public"."roles"
+    ADD CONSTRAINT "roles_name_key" UNIQUE ("name");
+
+
+
+ALTER TABLE ONLY "public"."roles"
+    ADD CONSTRAINT "roles_pkey" PRIMARY KEY ("id");
+
+
+
 ALTER TABLE ONLY "public"."specialties"
     ADD CONSTRAINT "specialties_name_agency_key" UNIQUE ("name", "agency");
 
@@ -548,6 +583,11 @@ ALTER TABLE ONLY "public"."trip_staff"
 
 ALTER TABLE ONLY "public"."trips"
     ADD CONSTRAINT "trips_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."vessels"
+    ADD CONSTRAINT "vessels_pkey" PRIMARY KEY ("id");
 
 
 
@@ -686,6 +726,18 @@ CREATE INDEX "idx_trips_start_time" ON "public"."trips" USING "btree" ("start_ti
 
 
 
+CREATE INDEX "idx_trips_vessel" ON "public"."trips" USING "btree" ("vessel_id");
+
+
+
+CREATE INDEX "idx_vessels_location" ON "public"."vessels" USING "btree" ("location_id");
+
+
+
+CREATE INDEX "idx_vessels_organization" ON "public"."vessels" USING "btree" ("organization_id");
+
+
+
 CREATE INDEX "idx_visit_clients_client" ON "public"."visit_clients" USING "btree" ("client_id");
 
 
@@ -743,6 +795,10 @@ CREATE OR REPLACE TRIGGER "staff_updated_at" BEFORE UPDATE ON "public"."staff" F
 
 
 CREATE OR REPLACE TRIGGER "trips_updated_at" BEFORE UPDATE ON "public"."trips" FOR EACH ROW EXECUTE FUNCTION "public"."update_updated_at"();
+
+
+
+CREATE OR REPLACE TRIGGER "vessels_updated_at" BEFORE UPDATE ON "public"."vessels" FOR EACH ROW EXECUTE FUNCTION "public"."update_updated_at"();
 
 
 
@@ -856,6 +912,11 @@ ALTER TABLE ONLY "public"."trip_clients"
 
 
 ALTER TABLE ONLY "public"."trip_staff"
+    ADD CONSTRAINT "trip_staff_role_id_fkey" FOREIGN KEY ("role_id") REFERENCES "public"."roles"("id") ON DELETE SET NULL;
+
+
+
+ALTER TABLE ONLY "public"."trip_staff"
     ADD CONSTRAINT "trip_staff_staff_id_fkey" FOREIGN KEY ("staff_id") REFERENCES "public"."staff"("id") ON DELETE CASCADE;
 
 
@@ -877,6 +938,21 @@ ALTER TABLE ONLY "public"."trips"
 
 ALTER TABLE ONLY "public"."trips"
     ADD CONSTRAINT "trips_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "public"."organizations"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."trips"
+    ADD CONSTRAINT "trips_vessel_id_fkey" FOREIGN KEY ("vessel_id") REFERENCES "public"."vessels"("id") ON DELETE SET NULL;
+
+
+
+ALTER TABLE ONLY "public"."vessels"
+    ADD CONSTRAINT "vessels_location_id_fkey" FOREIGN KEY ("location_id") REFERENCES "public"."locations"("id") ON DELETE SET NULL;
+
+
+
+ALTER TABLE ONLY "public"."vessels"
+    ADD CONSTRAINT "vessels_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "public"."organizations"("id") ON DELETE CASCADE;
 
 
 
@@ -997,6 +1073,12 @@ GRANT ALL ON TABLE "public"."profiles" TO "service_role";
 
 
 
+GRANT ALL ON TABLE "public"."roles" TO "anon";
+GRANT ALL ON TABLE "public"."roles" TO "authenticated";
+GRANT ALL ON TABLE "public"."roles" TO "service_role";
+
+
+
 GRANT ALL ON TABLE "public"."specialties" TO "anon";
 GRANT ALL ON TABLE "public"."specialties" TO "authenticated";
 GRANT ALL ON TABLE "public"."specialties" TO "service_role";
@@ -1030,6 +1112,12 @@ GRANT ALL ON TABLE "public"."trip_staff" TO "service_role";
 GRANT ALL ON TABLE "public"."trips" TO "anon";
 GRANT ALL ON TABLE "public"."trips" TO "authenticated";
 GRANT ALL ON TABLE "public"."trips" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."vessels" TO "anon";
+GRANT ALL ON TABLE "public"."vessels" TO "authenticated";
+GRANT ALL ON TABLE "public"."vessels" TO "service_role";
 
 
 
