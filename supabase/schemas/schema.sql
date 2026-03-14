@@ -147,7 +147,8 @@ CREATE TABLE IF NOT EXISTS "public"."clients" (
     "updated_at" timestamp with time zone DEFAULT "now"(),
     "organization_id" "uuid" NOT NULL,
     "location_id" "uuid",
-    "client_number" bigint NOT NULL
+    "client_number" bigint NOT NULL,
+    "certification_level_id" "uuid"
 );
 
 
@@ -401,7 +402,7 @@ ALTER TABLE "public"."trip_types" OWNER TO "postgres";
 
 CREATE TABLE IF NOT EXISTS "public"."trips" (
     "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
-    "label" "text" NOT NULL,
+    "label" "text",
     "entry_mode" "text" NOT NULL,
     "start_time" timestamp with time zone NOT NULL,
     "duration_minutes" integer NOT NULL,
@@ -628,6 +629,10 @@ ALTER TABLE ONLY "public"."visits"
 
 
 
+CREATE INDEX "idx_clients_cert_level" ON "public"."clients" USING "btree" ("certification_level_id");
+
+
+
 CREATE INDEX "idx_clients_country" ON "public"."clients" USING "btree" ("address_country");
 
 
@@ -837,6 +842,11 @@ CREATE OR REPLACE TRIGGER "vessels_updated_at" BEFORE UPDATE ON "public"."vessel
 
 
 CREATE OR REPLACE TRIGGER "visits_updated_at" BEFORE UPDATE ON "public"."visits" FOR EACH ROW EXECUTE FUNCTION "public"."update_updated_at"();
+
+
+
+ALTER TABLE ONLY "public"."clients"
+    ADD CONSTRAINT "clients_certification_level_id_fkey" FOREIGN KEY ("certification_level_id") REFERENCES "public"."certification_levels"("id");
 
 
 
