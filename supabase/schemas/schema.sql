@@ -364,7 +364,10 @@ CREATE TABLE IF NOT EXISTS "public"."trip_clients" (
     "bcd" "text",
     "regulator" boolean DEFAULT false,
     "wetsuit" "text",
-    "computer" boolean DEFAULT false
+    "computer" boolean DEFAULT false,
+    "pick_up" boolean DEFAULT false,
+    "waiver" boolean DEFAULT false,
+    "deposit" boolean DEFAULT false
 );
 
 
@@ -382,10 +385,23 @@ CREATE TABLE IF NOT EXISTS "public"."trip_staff" (
 ALTER TABLE "public"."trip_staff" OWNER TO "postgres";
 
 
+CREATE TABLE IF NOT EXISTS "public"."trip_types" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "organization_id" "uuid" NOT NULL,
+    "name" "text" NOT NULL,
+    "default_start_time" time without time zone NOT NULL,
+    "number_of_dives" integer DEFAULT 1 NOT NULL,
+    "created_at" timestamp with time zone DEFAULT "now"(),
+    "updated_at" timestamp with time zone DEFAULT "now"()
+);
+
+
+ALTER TABLE "public"."trip_types" OWNER TO "postgres";
+
+
 CREATE TABLE IF NOT EXISTS "public"."trips" (
     "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
     "label" "text" NOT NULL,
-    "type" "text" NOT NULL,
     "entry_mode" "text" NOT NULL,
     "start_time" timestamp with time zone NOT NULL,
     "duration_minutes" integer NOT NULL,
@@ -395,7 +411,8 @@ CREATE TABLE IF NOT EXISTS "public"."trips" (
     "updated_at" timestamp with time zone DEFAULT "now"(),
     "organization_id" "uuid" NOT NULL,
     "location_id" "uuid",
-    "vessel_id" "uuid"
+    "vessel_id" "uuid",
+    "trip_type_id" "uuid"
 );
 
 
@@ -447,12 +464,12 @@ ALTER TABLE "public"."visits" OWNER TO "postgres";
 
 
 ALTER TABLE ONLY "public"."certification_levels"
-    ADD CONSTRAINT "certification_levels_abbreviation_key" UNIQUE ("name");
+    ADD CONSTRAINT "certification_levels_abbreviation_key" UNIQUE ("abbreviation");
 
 
 
 ALTER TABLE ONLY "public"."certification_levels"
-    ADD CONSTRAINT "certification_levels_name_key" UNIQUE ("abbreviation");
+    ADD CONSTRAINT "certification_levels_name_key" UNIQUE ("name");
 
 
 
@@ -578,6 +595,11 @@ ALTER TABLE ONLY "public"."trip_staff"
 
 ALTER TABLE ONLY "public"."trip_staff"
     ADD CONSTRAINT "trip_staff_trip_id_staff_id_key" UNIQUE ("trip_id", "staff_id");
+
+
+
+ALTER TABLE ONLY "public"."trip_types"
+    ADD CONSTRAINT "trip_types_pkey" PRIMARY KEY ("id");
 
 
 
@@ -710,6 +732,10 @@ CREATE INDEX "idx_trip_staff_trip" ON "public"."trip_staff" USING "btree" ("trip
 
 
 
+CREATE INDEX "idx_trip_types_organization" ON "public"."trip_types" USING "btree" ("organization_id");
+
+
+
 CREATE INDEX "idx_trips_dive_site" ON "public"."trips" USING "btree" ("dive_site_id");
 
 
@@ -723,6 +749,10 @@ CREATE INDEX "idx_trips_org" ON "public"."trips" USING "btree" ("organization_id
 
 
 CREATE INDEX "idx_trips_start_time" ON "public"."trips" USING "btree" ("start_time");
+
+
+
+CREATE INDEX "idx_trips_trip_type" ON "public"."trips" USING "btree" ("trip_type_id");
 
 
 
@@ -791,6 +821,10 @@ CREATE OR REPLACE TRIGGER "profiles_updated_at" BEFORE UPDATE ON "public"."profi
 
 
 CREATE OR REPLACE TRIGGER "staff_updated_at" BEFORE UPDATE ON "public"."staff" FOR EACH ROW EXECUTE FUNCTION "public"."update_updated_at"();
+
+
+
+CREATE OR REPLACE TRIGGER "trip_types_updated_at" BEFORE UPDATE ON "public"."trip_types" FOR EACH ROW EXECUTE FUNCTION "public"."update_updated_at"();
 
 
 
@@ -926,6 +960,11 @@ ALTER TABLE ONLY "public"."trip_staff"
 
 
 
+ALTER TABLE ONLY "public"."trip_types"
+    ADD CONSTRAINT "trip_types_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "public"."organizations"("id") ON DELETE CASCADE;
+
+
+
 ALTER TABLE ONLY "public"."trips"
     ADD CONSTRAINT "trips_dive_site_id_fkey" FOREIGN KEY ("dive_site_id") REFERENCES "public"."dive_sites"("id") ON DELETE SET NULL;
 
@@ -938,6 +977,11 @@ ALTER TABLE ONLY "public"."trips"
 
 ALTER TABLE ONLY "public"."trips"
     ADD CONSTRAINT "trips_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "public"."organizations"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."trips"
+    ADD CONSTRAINT "trips_trip_type_id_fkey" FOREIGN KEY ("trip_type_id") REFERENCES "public"."trip_types"("id") ON DELETE RESTRICT;
 
 
 
@@ -1106,6 +1150,12 @@ GRANT ALL ON TABLE "public"."trip_clients" TO "service_role";
 GRANT ALL ON TABLE "public"."trip_staff" TO "anon";
 GRANT ALL ON TABLE "public"."trip_staff" TO "authenticated";
 GRANT ALL ON TABLE "public"."trip_staff" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."trip_types" TO "anon";
+GRANT ALL ON TABLE "public"."trip_types" TO "authenticated";
+GRANT ALL ON TABLE "public"."trip_types" TO "service_role";
 
 
 
