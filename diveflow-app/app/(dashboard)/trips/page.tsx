@@ -179,7 +179,8 @@ export default function TripsPage() {
             <TripHeader trip={selectedTrip} onEdit={openEditModal} onDelete={handleDeleteTrip} />
             <TripManifest 
   tripId={selectedTrip.id} 
-  tripDate={selectedTrip.start_time} 
+  tripDate={selectedTrip.start_time}
+  onManifestChange={() => setRefreshTrigger(prev => prev + 1)} 
 />
           </div>
         ) : (
