@@ -17,10 +17,12 @@ DiveFlow is a modern, web-based dive center management platform designed to trac
     * Linking multiple companions to the same visit.
     * Smart deletion logic (remove self vs. delete entire trip).
 
+* **Trips / Scheduling Module:** * Daily roster management via a horizontal TopBar timeline.
+    * **Interactive Manifest:** Inline editing for gear assignment, waivers, and nitrox percentages with batch-saving functionality.
+    * **Visit Validation (Ghost Booking Prevention):** Hard logic that prevents adding a client to a boat if they do not have an active hotel visit overlapping the trip date.
+    * **Companion Grouping:** Automated detection of travel companions (via the `visit_clients` table) for 1-click bulk adding/removing from trip manifests.
+
 ## 3. Upcoming Modules (To Be Built)
-* **Trips / Scheduling:** * Daily roster management.
-    * Assigning active clients (currently on a Visit) to specific boats.
-    * Assigning Staff (Divemasters/Instructors) to guide the trips.
 * **Inventory Management:** * Tracking BCDs, regulators, and tanks.
     * Maintenance alerts based on service dates.
     * Assigning specific rental gear to clients on a trip.

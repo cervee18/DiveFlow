@@ -25,3 +25,11 @@ This document outlines the standard UI guidelines for DiveFlow to ensure a consi
 * **Neutral Chip:** `bg-slate-100 text-slate-500 border-slate-200`
 * **Success/Active Chip:** `bg-emerald-50 text-emerald-600 border-emerald-200`
 * **Warning/Alert Chip:** `bg-amber-50 text-amber-600 border-amber-200`
+
+* **Data-Heavy Dashboards (The TopBar Exception):** For pages requiring massive horizontal real estate (like the 14-column Trip Manifest), abandon the standard Left Sidebar layout. Instead, use a horizontal `TopBar` with scrolling "Pills" for navigation, allowing the primary data table to stretch 100% of the screen width.
+
+## 5. Data Grids & Inline Editing
+* For high-volume operational tables (like a boat manifest), do not use a Modal for every small edit.
+* Use **Inline Editing**: inputs and selects should look like plain text until hovered/focused.
+* **Batch Saving:** Track edits in a local React state object (`pendingChanges`). Show a prominent "Save Changes" button and listen for the `Enter` key to batch-update Supabase in one go.
+* **Row Actions:** Destructive actions (like removing a diver) should be hidden by default and only appear on row hover (`group/row` -> `group-hover/row:opacity-100`) to keep the interface uncluttered.
