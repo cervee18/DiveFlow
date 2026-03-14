@@ -6,6 +6,7 @@ import TripTopBar from './components/TripTopBar';
 import TripHeader from './components/TripHeader';
 import TripFormModal from './components/TripFormModal';
 import TripManifest from './components/TripManifest';
+import { useSearchParams } from 'next/navigation';
 
 export default function TripsPage() {
   const supabase = createClient();
@@ -31,6 +32,16 @@ export default function TripsPage() {
   const [modalMode, setModalMode] = useState<'add' | 'edit'>('add');
   const [editingTrip, setEditingTrip] = useState<any>(null);
   const [isSaving, setIsSaving] = useState(false);
+
+// -- Catch URL Parameters on Mount --
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const dateParam = urlParams.get('date');
+    const tripIdParam = urlParams.get('tripId');
+    
+    if (dateParam) setSelectedDate(dateParam);
+    if (tripIdParam) setSelectedTripId(tripIdParam);
+  }, []);
 
   // -- Data Fetching --
   useEffect(() => {
