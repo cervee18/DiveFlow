@@ -19,7 +19,7 @@ export default function RecentClientsGrid({ recentClients, onSelectClient }: Rec
               <p className="text-sm text-slate-500">{client.email}</p>
             </div>
             <div className="mt-2 inline-block px-2 py-1 bg-slate-100 rounded text-xs font-medium text-slate-600 w-fit">
-              {client.cert_level || "No Certification Listed"}
+              {client.certification_levels?.abbreviation || "No Certification Listed"}
             </div>
           </button>
         ))}
