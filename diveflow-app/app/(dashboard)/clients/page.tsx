@@ -5,7 +5,6 @@ import { useState, useEffect, Suspense } from "react";
 import { createClient } from "@/utils/supabase/client";
 import { useRouter, useSearchParams, usePathname } from "next/navigation";
 
-// Components
 import ClientTopBar from "./components/ClientTopBar";
 import RecentClientsGrid from "./components/RecentClientsGrid";
 import ClientProfileForm from "./components/ClientProfileForm";
@@ -13,52 +12,61 @@ import ClientVisitHistory from "./components/ClientVisitHistory";
 import ClientFormModal from "./components/ClientFormModal";
 import VisitFormModal from "./components/VisitFormModal";
 
-// We extract the main content into a sub-component so we can wrap it in <Suspense>
 function ClientsContent() {
   const supabase = createClient();
   const router = useRouter();
   const pathname = usePathname();
+  // FIX 3: use Next.js useSearchParams — not window.location.search
   const searchParams = useSearchParams();
-  
-  // Auth & Org State
+
   const [userOrgId, setUserOrgId] = useState<string | null>(null);
 
-  // Search State
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [isSearching, setIsSearching] = useState(false);
 
-  // Main View State
   const [recentClients, setRecentClients] = useState<any[]>([]);
   const [selectedClient, setSelectedClient] = useState<any | null>(null);
   const [clientVisits, setClientVisits] = useState<any[]>([]);
   const [clientTrips, setClientTrips] = useState<any[]>([]);
-  
-  // Lookups
+
   const [certLevels, setCertLevels] = useState<any[]>([]);
   const [certOrgs, setCertOrgs] = useState<any[]>([]);
   const [hotels, setHotels] = useState<any[]>([]);
-  
-  // Modal States
+
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [visitModalMode, setVisitModalMode] = useState<'add' | 'edit' | null>(null);
+  const [visitModalMode, setVisitModalMode] = useState<"add" | "edit" | null>(null);
   const [editingVisit, setEditingVisit] = useState<any>(null);
 
-  // --- Data Fetching ---
+  // ── Initial data load ──────────────────────────────────────────────────────
   useEffect(() => {
     async function loadInitialData() {
       const { data: { user } } = await supabase.auth.getUser();
       if (user) {
-        const { data: profile } = await supabase.from("profiles").select("organization_id").eq("id", user.id).single();
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("organization_id")
+          .eq("id", user.id)
+          .single();
         if (profile) setUserOrgId(profile.organization_id);
       }
-      const { data: levels } = await supabase.from("certification_levels").select("*").order("id", { ascending: true });
+
+      const { data: levels } = await supabase
+        .from("certification_levels")
+        .select("*")
+        .order("id", { ascending: true });
       if (levels) setCertLevels(levels);
-      
-      const { data: orgs } = await supabase.from("certification_organizations").select("*").order("name", { ascending: true });
+
+      const { data: orgs } = await supabase
+        .from("certification_organizations")
+        .select("*")
+        .order("name", { ascending: true });
       if (orgs) setCertOrgs(orgs);
 
-      const { data: h } = await supabase.from("hotels").select("*").order("name", { ascending: true });
+      const { data: h } = await supabase
+        .from("hotels")
+        .select("*")
+        .order("name", { ascending: true });
       if (h) setHotels(h);
     }
     loadInitialData();
@@ -67,7 +75,12 @@ function ClientsContent() {
   useEffect(() => {
     async function fetchRecent() {
       if (!userOrgId) return;
-      const { data } = await supabase.from("clients").select("*").eq("organization_id", userOrgId).order("created_at", { ascending: false }).limit(6);
+      const { data } = await supabase
+        .from("clients")
+        .select("*")
+        .eq("organization_id", userOrgId)
+        .order("created_at", { ascending: false })
+        .limit(6);
       if (data) setRecentClients(data);
     }
     fetchRecent();
@@ -86,7 +99,6 @@ function ClientsContent() {
         .eq("organization_id", userOrgId)
         .or(`first_name.ilike.%${searchQuery}%,last_name.ilike.%${searchQuery}%,email.ilike.%${searchQuery}%`)
         .limit(10);
-      
       setSearchResults(data || []);
       setIsSearching(false);
     }
@@ -94,8 +106,8 @@ function ClientsContent() {
     return () => clearTimeout(timer);
   }, [searchQuery, userOrgId, supabase]);
 
+  // ── Client history ─────────────────────────────────────────────────────────
   const fetchClientHistory = async (clientId: string) => {
-    // 1. Fetch Visits
     const { data: vData } = await supabase
       .from("visit_clients")
       .select(`
@@ -110,11 +122,9 @@ function ClientsContent() {
         )
       `)
       .eq("client_id", clientId)
-      .order('visits(start_date)', { ascending: false });
-    
+      .order("visits(start_date)", { ascending: false });
     setClientVisits(vData || []);
 
-    // 2. Fetch Trips
     const { data: tData } = await supabase
       .from("trip_clients")
       .select(`
@@ -127,34 +137,31 @@ function ClientsContent() {
         )
       `)
       .eq("client_id", clientId);
-
     setClientTrips(tData || []);
   };
 
-  // -- Catch URL Parameters for Back Button Support --
+  // ── URL → selected client (FIX 3: useSearchParams, not window.location) ───
   useEffect(() => {
-    const clientIdParam = searchParams.get('clientId');
-    
+    const clientIdParam = searchParams.get("clientId");
     if (clientIdParam && (!selectedClient || selectedClient.id !== clientIdParam)) {
-      const fetchClientFromUrl = async () => {
-        const { data } = await supabase
-          .from("clients")
-          .select("*")
-          .eq("id", clientIdParam)
-          .single();
-        if (data) setSelectedClient(data);
-      };
-      fetchClientFromUrl();
+      supabase
+        .from("clients")
+        .select("*")
+        .eq("id", clientIdParam)
+        .single()
+        .then(({ data }) => { if (data) setSelectedClient(data); });
     } else if (!clientIdParam && selectedClient) {
       setSelectedClient(null);
     }
-  }, [searchParams, selectedClient, supabase]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
 
   useEffect(() => {
     if (selectedClient) fetchClientHistory(selectedClient.id);
-  }, [selectedClient, supabase]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedClient]);
 
-  // --- Handlers ---
+  // ── Handlers ───────────────────────────────────────────────────────────────
   const handleSelectClient = (client: any) => {
     setSelectedClient(client);
     setSearchQuery("");
@@ -163,63 +170,65 @@ function ClientsContent() {
 
   const handleUpdateClientState = (updatedClient: any) => {
     setSelectedClient(updatedClient);
-    setRecentClients(recentClients.map(c => c.id === updatedClient.id ? updatedClient : c));
+    setRecentClients(recentClients.map((c) => c.id === updatedClient.id ? updatedClient : c));
   };
 
   const handleCreateClientSuccess = (newClient: any) => {
-    setRecentClients([newClient, ...recentClients].slice(0, 6)); 
-    handleSelectClient(newClient); // Select immediately and push URL
+    setRecentClients([newClient, ...recentClients].slice(0, 6));
+    handleSelectClient(newClient);
     setIsModalOpen(false);
   };
 
   return (
     <div className="p-8 max-w-7xl mx-auto w-full flex flex-col gap-8 h-[calc(100vh-4rem)] relative">
-      <ClientTopBar 
+      {/*
+        FIX 1 (display): certLevels passed so TopBar can resolve cert UUID → abbreviation.
+        The search query already returns the full client row including cert_level UUID.
+      */}
+      <ClientTopBar
         searchQuery={searchQuery}
         setSearchQuery={setSearchQuery}
         searchResults={searchResults}
         isSearching={isSearching}
+        certLevels={certLevels}
         onSelectClient={handleSelectClient}
         onOpenAddModal={() => setIsModalOpen(true)}
       />
 
-      {/* Main Content Area */}
       {!selectedClient ? (
-        <RecentClientsGrid 
-          recentClients={recentClients} 
-          onSelectClient={handleSelectClient} 
+        <RecentClientsGrid
+          recentClients={recentClients}
+          onSelectClient={handleSelectClient}
         />
       ) : (
         <div className="flex gap-6 items-start flex-1 min-h-0">
-          <ClientProfileForm 
+          <ClientProfileForm
             selectedClient={selectedClient}
             certLevels={certLevels}
             certOrgs={certOrgs}
             onClose={() => {
               setSelectedClient(null);
-              router.push(pathname, { scroll: false }); // Clears the URL
+              router.push(pathname, { scroll: false });
             }}
             onUpdate={handleUpdateClientState}
           />
-
-          <ClientVisitHistory 
+          <ClientVisitHistory
             selectedClient={selectedClient}
             clientVisits={clientVisits}
-            clientTrips={clientTrips} 
-            onAddVisit={() => setVisitModalMode('add')}
+            clientTrips={clientTrips}
+            onAddVisit={() => setVisitModalMode("add")}
             onEditVisit={(visitLink) => {
               setEditingVisit(visitLink);
-              setVisitModalMode('edit');
+              setVisitModalMode("edit");
             }}
-            onRefreshVisits={() => fetchClientHistory(selectedClient.id)} 
+            onRefreshVisits={() => fetchClientHistory(selectedClient.id)}
             onSelectCompanion={handleSelectClient}
           />
         </div>
       )}
 
-      {/* Modals */}
       {isModalOpen && (
-        <ClientFormModal 
+        <ClientFormModal
           userOrgId={userOrgId}
           onClose={() => setIsModalOpen(false)}
           onSuccess={handleCreateClientSuccess}
@@ -227,22 +236,21 @@ function ClientsContent() {
       )}
 
       {visitModalMode && (
-        <VisitFormModal 
+        <VisitFormModal
           mode={visitModalMode}
           editingVisit={editingVisit}
           selectedClientId={selectedClient?.id}
           userOrgId={userOrgId}
           hotels={hotels}
-          clientVisits={clientVisits} 
+          clientVisits={clientVisits}
           onClose={() => { setVisitModalMode(null); setEditingVisit(null); }}
-          onSuccess={() => fetchClientHistory(selectedClient.id)} 
+          onSuccess={() => fetchClientHistory(selectedClient.id)}
         />
       )}
     </div>
   );
 }
 
-// Next.js requires useSearchParams to be wrapped in a Suspense boundary 
 export default function ClientsPage() {
   return (
     <Suspense fallback={<div className="p-8 text-slate-500">Loading Client Directory...</div>}>
