@@ -77,7 +77,7 @@ function ClientsContent() {
       if (!userOrgId) return;
       const { data } = await supabase
         .from("clients")
-        .select("*")
+        .select("*, certification_levels!cert_level(abbreviation)")
         .eq("organization_id", userOrgId)
         .order("created_at", { ascending: false })
         .limit(6);
