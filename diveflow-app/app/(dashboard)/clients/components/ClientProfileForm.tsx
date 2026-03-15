@@ -24,21 +24,23 @@ export default function ClientProfileForm({
     setIsSaving(true);
     
     const formData = new FormData(e.currentTarget);
+    
+    // Fallback empty strings to null to prevent UUID and date type errors
     const updates = {
       first_name: formData.get("first_name"),
       last_name: formData.get("last_name"),
       email: formData.get("email") || null,
       phone: formData.get("phone") || null,
-      address_street: formData.get("address_street"),
-      address_city: formData.get("address_city"),
-      address_zip: formData.get("address_zip"),
-      address_country: formData.get("address_country"),
-      cert_organization: formData.get("cert_organization"),
-      cert_level: formData.get("cert_level"),
-      cert_number: formData.get("cert_number"),
-      nitrox_cert_number: formData.get("nitrox_cert_number"),
+      address_street: formData.get("address_street") || null,
+      address_city: formData.get("address_city") || null,
+      address_zip: formData.get("address_zip") || null,
+      address_country: formData.get("address_country") || null,
+      cert_organization: formData.get("cert_organization") || null,
+      cert_level: formData.get("cert_level") || null, // <-- This fixes the empty string error
+      cert_number: formData.get("cert_number") || null,
+      nitrox_cert_number: formData.get("nitrox_cert_number") || null,
       last_dive_date: formData.get("last_dive_date") || null,
-      notes: formData.get("notes"),
+      notes: formData.get("notes") || null,
     };
 
     const { error } = await supabase.from("clients").update(updates).eq("id", selectedClient.id);
@@ -70,7 +72,8 @@ export default function ClientProfileForm({
                   : "bg-slate-100 text-slate-500 border-slate-200"
               }`}
             >
-              {certLevels.find(c => c.name === selectedClient.cert_level)?.abbreviation || selectedClient.cert_level}
+              {/* Changed c.name to c.id in the find method below */}
+              {certLevels.find(c => c.id === selectedClient.cert_level)?.abbreviation || "CERT"}
             </span>
           )}
         </h2>
@@ -122,12 +125,12 @@ export default function ClientProfileForm({
                 <option value="">No Certification Listed</option>
                 <optgroup label="Recreational">
                   {certLevels.filter(l => !l.is_professional).map(l => (
-                    <option key={l.id} value={l.name}>{l.name} ({l.abbreviation})</option>
+                    <option key={l.id} value={l.id}>{l.name} ({l.abbreviation})</option>
                   ))}
                 </optgroup>
                 <optgroup label="Professional">
                   {certLevels.filter(l => l.is_professional).map(l => (
-                    <option key={l.id} value={l.name}>{l.name} ({l.abbreviation}) ✦</option>
+                    <option key={l.id} value={l.id}>{l.name} ({l.abbreviation}) ✦</option>
                   ))}
                 </optgroup>
               </select>
