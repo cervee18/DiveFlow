@@ -38,7 +38,7 @@ export default function LoginPage({
   return (
     <div className="flex min-h-screen items-center justify-center bg-slate-50 p-4">
       <div className="w-full max-w-md bg-white p-8 rounded-xl shadow-sm border border-slate-200">
-        <h1 className="text-2xl font-bold text-center mb-6 text-blue-600">
+        <h1 className="text-2xl font-bold text-center mb-6 text-teal-500">
           DiveFlow
         </h1>
         
@@ -48,7 +48,7 @@ export default function LoginPage({
               Email
             </label>
             <input
-              className="w-full px-4 py-2 border rounded-md bg-white border-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full px-4 py-2 border rounded-md bg-white border-slate-300 focus:outline-none focus:ring-2 focus:ring-teal-500"
               name="email"
               placeholder="instructor@divecenter.com"
               required
@@ -60,7 +60,7 @@ export default function LoginPage({
               Password
             </label>
             <input
-              className="w-full px-4 py-2 border rounded-md bg-white border-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full px-4 py-2 border rounded-md bg-white border-slate-300 focus:outline-none focus:ring-2 focus:ring-teal-500"
               type="password"
               name="password"
               placeholder="••••••••"
@@ -77,7 +77,7 @@ export default function LoginPage({
           <div className="flex flex-col gap-3 mt-4">
             <button
               formAction={signIn}
-              className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded-md transition-colors shadow-sm"
+              className="w-full bg-teal-600 hover:bg-teal-700 text-white font-medium py-2 px-4 rounded-md transition-colors shadow-sm"
             >
               Sign In
             </button>

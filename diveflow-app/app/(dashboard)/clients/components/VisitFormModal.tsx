@@ -244,7 +244,7 @@ export default function VisitFormModal({
                   value={startDate}
                   onChange={(e) => setStartDate(e.target.value)}
                   required 
-                  className="w-full px-3 py-2 border rounded-md border-slate-300 focus:ring-2 focus:ring-blue-500 outline-none" 
+                  className="w-full px-3 py-2 border rounded-md border-slate-300 focus:ring-2 focus:ring-teal-500 outline-none" 
                 />
               </div>
               <div>
@@ -255,7 +255,7 @@ export default function VisitFormModal({
                   value={endDate}
                   onChange={(e) => setEndDate(e.target.value)}
                   required 
-                  className="w-full px-3 py-2 border rounded-md border-slate-300 focus:ring-2 focus:ring-blue-500 outline-none" 
+                  className="w-full px-3 py-2 border rounded-md border-slate-300 focus:ring-2 focus:ring-teal-500 outline-none" 
                 />
               </div>
             </div>
@@ -263,14 +263,14 @@ export default function VisitFormModal({
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">Hotel</label>
-                <select name="hotel_id" defaultValue={editingVisit?.visits?.hotel_id || ""} className="w-full px-3 py-2 border rounded-md border-slate-300 focus:ring-2 focus:ring-blue-500 outline-none bg-white">
+                <select name="hotel_id" defaultValue={editingVisit?.visits?.hotel_id || ""} className="w-full px-3 py-2 border rounded-md border-slate-300 focus:ring-2 focus:ring-teal-500 outline-none bg-white">
                   <option value="">Select Hotel</option>
                   {hotels.map(h => <option key={h.id} value={h.id}>{h.name}</option>)}
                 </select>
               </div>
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">Room Number</label>
-                <input type="text" name="room_number" defaultValue={editingVisit?.room_number || ""} className="w-full px-3 py-2 border rounded-md border-slate-300 focus:ring-2 focus:ring-blue-500 outline-none" />
+                <input type="text" name="room_number" defaultValue={editingVisit?.room_number || ""} className="w-full px-3 py-2 border rounded-md border-slate-300 focus:ring-2 focus:ring-teal-500 outline-none" />
               </div>
             </div>
           </form>
@@ -283,9 +283,9 @@ export default function VisitFormModal({
             {selectedCompanions.length > 0 && (
               <div className="flex flex-wrap gap-2 mb-4">
                 {selectedCompanions.map(comp => (
-                  <span key={comp.id} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-blue-50 text-blue-700 border border-blue-100 text-xs font-medium">
+                  <span key={comp.id} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-teal-50 text-teal-700 border border-teal-100 text-xs font-medium">
                     {comp.first_name} {comp.last_name}
-                    <button onClick={() => handleRemoveCompanion(comp.id)} className="hover:bg-blue-200 rounded-full p-0.5 transition-colors" title="Remove">
+                    <button onClick={() => handleRemoveCompanion(comp.id)} className="hover:bg-teal-200 rounded-full p-0.5 transition-colors" title="Remove">
                       <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
                     </button>
                   </span>
@@ -298,10 +298,10 @@ export default function VisitFormModal({
               <form onSubmit={handleQuickCreateCompanion} className="bg-slate-50 p-4 rounded-lg border border-slate-200 flex flex-col gap-3">
                 <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Quick Create Diver</h4>
                 <div className="grid grid-cols-2 gap-3">
-                  <input name="first_name" placeholder="First Name *" required className="w-full px-3 py-2 text-sm border rounded-md border-slate-300 focus:ring-2 focus:ring-blue-500 outline-none" autoFocus />
-                  <input name="last_name" placeholder="Last Name *" required className="w-full px-3 py-2 text-sm border rounded-md border-slate-300 focus:ring-2 focus:ring-blue-500 outline-none" />
+                  <input name="first_name" placeholder="First Name *" required className="w-full px-3 py-2 text-sm border rounded-md border-slate-300 focus:ring-2 focus:ring-teal-500 outline-none" autoFocus />
+                  <input name="last_name" placeholder="Last Name *" required className="w-full px-3 py-2 text-sm border rounded-md border-slate-300 focus:ring-2 focus:ring-teal-500 outline-none" />
                 </div>
-                <input name="email" type="email" placeholder="Email Address (Optional)" className="w-full px-3 py-2 text-sm border rounded-md border-slate-300 focus:ring-2 focus:ring-blue-500 outline-none" />
+                <input name="email" type="email" placeholder="Email Address (Optional)" className="w-full px-3 py-2 text-sm border rounded-md border-slate-300 focus:ring-2 focus:ring-teal-500 outline-none" />
                 <div className="flex justify-end gap-2 mt-1">
                   <button type="button" onClick={() => setShowCreateCompanion(false)} className="px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-200 rounded-md transition-colors">Cancel</button>
                   <button type="submit" disabled={isCreating} className="bg-slate-800 hover:bg-slate-900 text-white px-3 py-1.5 rounded-md text-xs font-medium shadow-sm transition-colors disabled:opacity-70">
@@ -321,7 +321,7 @@ export default function VisitFormModal({
                     else setShowDropdown(false);
                   }}
                   onFocus={() => searchQuery.trim() && setShowDropdown(true)}
-                  className="flex-1 px-3 py-2 text-sm border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-800"
+                  className="flex-1 px-3 py-2 text-sm border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-teal-500 text-slate-800"
                 />
                 <button 
                   type="button"
@@ -369,7 +369,7 @@ export default function VisitFormModal({
             type="submit" 
             form="visit-form" // Triggers the form submission above
             disabled={isSavingVisit || hasOverlap} 
-            className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2 rounded-md text-sm font-medium shadow-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            className="bg-teal-600 hover:bg-teal-700 text-white px-5 py-2 rounded-md text-sm font-medium shadow-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {isSavingVisit ? "Saving..." : "Save Visit"}
           </button>

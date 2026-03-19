@@ -20,7 +20,7 @@ export default function TripSidebar({
           <h1 className="text-xl font-semibold text-slate-800">Daily Schedule</h1>
           <button 
             onClick={onAddTrip}
-            className="bg-blue-600 hover:bg-blue-700 text-white p-1.5 rounded-md shadow-sm transition-colors"
+            className="bg-teal-600 hover:bg-teal-700 text-white p-1.5 rounded-md shadow-sm transition-colors"
             title="Add New Trip"
           >
             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -33,7 +33,7 @@ export default function TripSidebar({
             type="date" 
             value={selectedDate}
             onChange={(e) => onSelectDate(e.target.value)}
-            className="w-full bg-white border border-slate-200 text-slate-800 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent transition-all shadow-sm"
+            className="w-full bg-white border border-slate-200 text-slate-800 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-teal-600 focus:border-transparent transition-all shadow-sm"
           />
         </div>
       </div>
@@ -56,19 +56,19 @@ export default function TripSidebar({
                 onClick={() => onSelectTrip(trip.id)}
                 className={`w-full text-left transition-all flex items-center gap-3 px-3 py-3 rounded-lg border ${
                   isSelected 
-                    ? 'bg-blue-50 border-blue-600 shadow-sm' 
+                    ? 'bg-teal-50 border-teal-600 shadow-sm'
                     : 'bg-transparent border-transparent hover:bg-slate-100'
                 }`}
               >
-                <div className={`w-16 shrink-0 text-sm font-bold ${isSelected ? 'text-blue-700' : 'text-slate-700'}`}>
+                <div className={`w-16 shrink-0 text-sm font-bold ${isSelected ? 'text-teal-700' : 'text-slate-700'}`}>
                   {formatTime(trip.start_time)}
                 </div>
 
                 <div className="flex-1 min-w-0 flex flex-col justify-center">
-                  <span className={`text-sm font-medium truncate ${isSelected ? 'text-blue-900' : 'text-slate-800'}`}>
+                  <span className={`text-sm font-medium truncate ${isSelected ? 'text-teal-900' : 'text-slate-800'}`}>
                     {trip.trip_types?.name || 'Unknown Type'}
                   </span>
-                  <span className={`text-[10px] truncate mt-0.5 ${isSelected ? 'text-blue-600' : 'text-slate-500'}`}>
+                  <span className={`text-[10px] truncate mt-0.5 ${isSelected ? 'text-teal-600' : 'text-slate-500'}`}>
                     {trip.label}
                   </span>
                 </div>
@@ -76,8 +76,8 @@ export default function TripSidebar({
                 <div className={`shrink-0 text-xs font-semibold px-2 py-1 rounded ${
                   isFull 
                     ? 'text-amber-700 bg-amber-100' 
-                    : isSelected 
-                      ? 'text-blue-700 bg-blue-100' 
+                    : isSelected
+                      ? 'text-teal-700 bg-teal-100'
                       : 'text-slate-600 bg-slate-200'
                 }`}>
                   {isFull ? 'Full' : `${spacesLeft} left`}

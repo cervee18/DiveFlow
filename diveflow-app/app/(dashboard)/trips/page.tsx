@@ -188,10 +188,11 @@ export default function TripsPage() {
         {selectedTripId && selectedTrip ? (
           <div className="bg-white rounded-xl shadow-sm border border-slate-200 min-h-full p-8 flex flex-col">
             <TripHeader trip={selectedTrip} onEdit={openEditModal} onDelete={handleDeleteTrip} />
-            <TripManifest 
-  tripId={selectedTrip.id} 
+            <TripManifest
+  tripId={selectedTrip.id}
   tripDate={selectedTrip.start_time}
-  onManifestChange={() => setRefreshTrigger(prev => prev + 1)} 
+  capacity={selectedTrip.max_divers}
+  onManifestChange={() => setRefreshTrigger(prev => prev + 1)}
 />
           </div>
         ) : (

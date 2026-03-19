@@ -12,7 +12,7 @@ export default function RecentClientsGrid({ recentClients, onSelectClient }: Rec
           <button
             key={client.id}
             onClick={() => onSelectClient(client)}
-            className="bg-white border border-slate-200 p-5 rounded-xl shadow-sm hover:shadow-md hover:border-slate-300 transition-all text-left flex flex-col gap-2"
+            className="bg-white border border-slate-200 p-5 rounded-xl shadow-sm hover:shadow-md hover:border-teal-300 transition-all text-left flex flex-col gap-2"
           >
             <div>
               <p className="font-medium text-slate-800">{client.first_name} {client.last_name}</p>

@@ -183,13 +183,13 @@ export default function AddDiverModal({ isOpen, onClose, tripId, tripDate, onSuc
                 <input 
                   type="text" autoFocus placeholder="Search by first or last name..." 
                   value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)}
-                  className="w-full pl-4 pr-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                  className="w-full pl-4 pr-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-teal-500 outline-none"
                 />
               </div>
             </div>
             <div className="flex-1 max-h-[400px] overflow-y-auto bg-slate-50 p-2">
               {results.map((client) => (
-                <div key={client.id} className="flex items-center justify-between bg-white p-3 rounded-lg border border-slate-200 mb-1 shadow-sm hover:border-blue-300 transition-colors">
+                <div key={client.id} className="flex items-center justify-between bg-white p-3 rounded-lg border border-slate-200 mb-1 shadow-sm hover:border-teal-300 transition-colors">
                   <div>
                     <div className="font-bold text-slate-800 flex items-center gap-2">
                       {client.first_name} {client.last_name}
@@ -202,7 +202,7 @@ export default function AddDiverModal({ isOpen, onClose, tripId, tripDate, onSuc
                   <button 
                     onClick={() => handleSelectClient(client)}
                     disabled={isProcessing}
-                    className="bg-blue-50 hover:bg-blue-600 text-blue-700 hover:text-white border border-blue-200 hover:border-blue-600 px-3 py-1.5 rounded-md text-xs font-bold transition-all disabled:opacity-50"
+                    className="bg-teal-50 hover:bg-teal-600 text-teal-700 hover:text-white border border-teal-200 hover:border-teal-600 px-3 py-1.5 rounded-md text-xs font-bold transition-all disabled:opacity-50"
                   >
                     {isProcessing && primaryClient?.id === client.id ? 'Checking...' : '+ Add'}
                   </button>
@@ -238,18 +238,18 @@ export default function AddDiverModal({ isOpen, onClose, tripId, tripDate, onSuc
             
             <div className="flex-1 overflow-y-auto space-y-2 mb-4">
               {/* Primary Client (Auto-Selected) */}
-              <label className="flex items-center gap-3 p-3 bg-white border-2 border-blue-500 rounded-lg cursor-pointer shadow-sm">
-                <input type="checkbox" checked={selectedToBook.has(primaryClient.id)} onChange={() => toggleSelection(primaryClient.id)} className="w-5 h-5 rounded text-blue-600 focus:ring-blue-500" />
+              <label className="flex items-center gap-3 p-3 bg-white border-2 border-teal-500 rounded-lg cursor-pointer shadow-sm">
+                <input type="checkbox" checked={selectedToBook.has(primaryClient.id)} onChange={() => toggleSelection(primaryClient.id)} className="w-5 h-5 rounded text-teal-600 focus:ring-teal-500" />
                 <div className="font-bold text-slate-800">
                   {primaryClient.first_name} {primaryClient.last_name} 
-                  <span className="text-[10px] font-normal text-blue-600 ml-2">(Selected)</span>
+                  <span className="text-[10px] font-normal text-teal-600 ml-2">(Selected)</span>
                 </div>
               </label>
 
               {/* Companions */}
               {companions.map(comp => (
-                <label key={comp.id} className={`flex items-center gap-3 p-3 bg-white border rounded-lg cursor-pointer transition-colors ${selectedToBook.has(comp.id) ? 'border-blue-500 bg-blue-50/30' : 'border-slate-200 hover:border-blue-300'}`}>
-                  <input type="checkbox" checked={selectedToBook.has(comp.id)} onChange={() => toggleSelection(comp.id)} className="w-5 h-5 rounded text-blue-600 focus:ring-blue-500" />
+                <label key={comp.id} className={`flex items-center gap-3 p-3 bg-white border rounded-lg cursor-pointer transition-colors ${selectedToBook.has(comp.id) ? 'border-teal-500 bg-teal-50/30' : 'border-slate-200 hover:border-teal-300'}`}>
+                  <input type="checkbox" checked={selectedToBook.has(comp.id)} onChange={() => toggleSelection(comp.id)} className="w-5 h-5 rounded text-teal-600 focus:ring-teal-500" />
                   <div className="font-bold text-slate-800">
                     {comp.first_name} {comp.last_name}
                     <span className="text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded font-semibold border border-slate-200 ml-2">
@@ -265,7 +265,7 @@ export default function AddDiverModal({ isOpen, onClose, tripId, tripDate, onSuc
               <button 
                 onClick={() => executeBooking(Array.from(selectedToBook))}
                 disabled={isProcessing || selectedToBook.size === 0}
-                className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold rounded-lg shadow-sm transition-colors disabled:opacity-50"
+                className="px-6 py-2 bg-teal-600 hover:bg-teal-700 text-white text-sm font-bold rounded-lg shadow-sm transition-colors disabled:opacity-50"
               >
                 {isProcessing ? 'Adding...' : `Add ${selectedToBook.size} Divers`}
               </button>

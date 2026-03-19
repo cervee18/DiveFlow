@@ -13,6 +13,7 @@ export default function TripFormModal({
 }: any) {
   const [formTime, setFormTime] = useState("08:00");
   const [formDuration, setFormDuration] = useState(240);
+  const [formCapacity, setFormCapacity] = useState(14);
 
   // Set initial form values when modal opens
   useEffect(() => {
@@ -21,12 +22,19 @@ export default function TripFormModal({
         const d = new Date(tripData.start_time);
         setFormTime(`${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`);
         setFormDuration(tripData.duration_minutes);
+        setFormCapacity(tripData.max_divers || 14);
       } else if (mode === 'add' && tripTypes.length > 0) {
         setFormTime(tripTypes[0].default_start_time.substring(0, 5));
         setFormDuration(tripTypes[0].number_of_dives * 120);
+        setFormCapacity(14);
       }
     }
   }, [isOpen, mode, tripData, tripTypes]);
+
+  const handleVesselChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const selectedVessel = vessels.find((v: any) => v.id === e.target.value);
+    if (selectedVessel) setFormCapacity(selectedVessel.capacity);
+  };
 
   if (!isOpen) return null;
 
@@ -65,7 +73,7 @@ export default function TripFormModal({
                 defaultValue={tripData?.trip_type_id || (tripTypes.length > 0 ? tripTypes[0].id : "")} 
                 onChange={handleTypeChange}
                 required
-                className="w-full px-3 py-2 border rounded-md border-slate-300 focus:ring-2 focus:ring-blue-500 outline-none bg-white"
+                className="w-full px-3 py-2 border rounded-md border-slate-300 focus:ring-2 focus:ring-teal-500 outline-none bg-white"
               >
                 {tripTypes.map((t: any) => (
                   <option key={t.id} value={t.id}>{t.name}</option>
@@ -77,7 +85,7 @@ export default function TripFormModal({
               <select 
                 name="entry_mode" 
                 defaultValue={tripData?.entry_mode || "Boat"} 
-                className="w-full px-3 py-2 border rounded-md border-slate-300 focus:ring-2 focus:ring-blue-500 outline-none bg-white"
+                className="w-full px-3 py-2 border rounded-md border-slate-300 focus:ring-2 focus:ring-teal-500 outline-none bg-white"
               >
                 <option value="Boat">Boat</option>
                 <option value="Shore">Shore</option>
@@ -94,7 +102,7 @@ export default function TripFormModal({
                 name="date" 
                 defaultValue={mode === 'edit' ? getLocalDateString(tripData.start_time) : selectedDate} 
                 required 
-                className="w-full px-3 py-2 border rounded-md border-slate-300 focus:ring-2 focus:ring-blue-500 outline-none" 
+                className="w-full px-3 py-2 border rounded-md border-slate-300 focus:ring-2 focus:ring-teal-500 outline-none" 
               />
             </div>
             <div>
@@ -105,7 +113,7 @@ export default function TripFormModal({
                 value={formTime}
                 onChange={(e) => setFormTime(e.target.value)}
                 required 
-                className="w-full px-3 py-2 border rounded-md border-slate-300 focus:ring-2 focus:ring-blue-500 outline-none" 
+                className="w-full px-3 py-2 border rounded-md border-slate-300 focus:ring-2 focus:ring-teal-500 outline-none" 
               />
             </div>
           </div>
@@ -117,19 +125,20 @@ export default function TripFormModal({
               name="label" 
               placeholder="e.g. Special Wreck Run"
               defaultValue={tripData?.label || ""} 
-              className="w-full px-3 py-2 border rounded-md border-slate-300 focus:ring-2 focus:ring-blue-500 outline-none" 
+              className="w-full px-3 py-2 border rounded-md border-slate-300 focus:ring-2 focus:ring-teal-500 outline-none" 
             />
           </div>
 
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Base Capacity *</label>
-              <input 
-                type="number" 
-                name="max_divers" 
-                defaultValue={tripData?.max_divers || 14} 
-                required 
-                className="w-full px-3 py-2 border rounded-md border-slate-300 focus:ring-2 focus:ring-blue-500 outline-none" 
+              <label className="block text-sm font-medium text-slate-700 mb-1">Capacity *</label>
+              <input
+                type="number"
+                name="max_divers"
+                value={formCapacity}
+                onChange={e => setFormCapacity(Number(e.target.value))}
+                required
+                className="w-full px-3 py-2 border rounded-md border-slate-300 focus:ring-2 focus:ring-teal-500 outline-none"
               />
             </div>
             <div>
@@ -140,17 +149,18 @@ export default function TripFormModal({
                 value={formDuration}
                 onChange={(e) => setFormDuration(Number(e.target.value))}
                 required 
-                className="w-full px-3 py-2 border rounded-md border-slate-300 focus:ring-2 focus:ring-blue-500 outline-none" 
+                className="w-full px-3 py-2 border rounded-md border-slate-300 focus:ring-2 focus:ring-teal-500 outline-none" 
               />
             </div>
           </div>
 
           <div>
             <label className="block text-sm font-medium text-slate-700 mb-1">Assign Vessel</label>
-            <select 
-              name="vessel_id" 
-              defaultValue={tripData?.vessel_id || ""} 
-              className="w-full px-3 py-2 border rounded-md border-slate-300 focus:ring-2 focus:ring-blue-500 outline-none bg-white"
+            <select
+              name="vessel_id"
+              defaultValue={tripData?.vessel_id || ""}
+              onChange={handleVesselChange}
+              className="w-full px-3 py-2 border rounded-md border-slate-300 focus:ring-2 focus:ring-teal-500 outline-none bg-white"
             >
               <option value="">No Vessel (Shore Dive)</option>
               {vessels.map((v: any) => (
@@ -161,7 +171,7 @@ export default function TripFormModal({
 
           <div className="pt-4 mt-2 border-t border-slate-100 flex justify-end gap-3 shrink-0">
             <button type="button" onClick={onClose} className="px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 rounded-md transition-colors">Cancel</button>
-            <button type="submit" disabled={isSaving} className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2 rounded-md text-sm font-medium shadow-sm transition-colors disabled:opacity-70">
+            <button type="submit" disabled={isSaving} className="bg-teal-600 hover:bg-teal-700 text-white px-5 py-2 rounded-md text-sm font-medium shadow-sm transition-colors disabled:opacity-70">
               {isSaving ? "Saving..." : mode === 'add' ? "Create Trip" : "Save Changes"}
             </button>
           </div>

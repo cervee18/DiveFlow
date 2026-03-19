@@ -95,7 +95,7 @@ export default function ClientVisitHistory({
               const tripsInVisit = getTripsForVisit(visit);
 
               return (
-                <div key={visitLink.id} className="border border-slate-200 rounded-xl p-5 hover:border-blue-300 transition-colors bg-white shadow-sm flex flex-col gap-4">
+                <div key={visitLink.id} className="border border-slate-200 rounded-xl p-5 hover:border-teal-300 transition-colors bg-white shadow-sm flex flex-col gap-4">
                   
                   {/* Header Row */}
                   <div className="flex justify-between items-start">
@@ -118,7 +118,7 @@ export default function ClientVisitHistory({
                       </div>
                     </div>
                     <div className="flex gap-2 shrink-0">
-                      <button onClick={() => onEditVisit(visitLink)} className="text-xs font-medium text-slate-400 hover:text-blue-600 px-2 py-1">
+                      <button onClick={() => onEditVisit(visitLink)} className="text-xs font-medium text-slate-400 hover:text-teal-600 px-2 py-1">
                         Edit
                       </button>
                       <button onClick={() => handleDeleteVisit(visitLink)} className="text-xs font-medium text-slate-400 hover:text-red-600 px-2 py-1">
@@ -132,7 +132,7 @@ export default function ClientVisitHistory({
                     <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-2">
                       Booked Trips
                       {tripsInVisit.length > 0 && (
-                        <span className="bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded text-[10px]">
+                        <span className="bg-teal-100 text-teal-700 px-1.5 py-0.5 rounded text-[10px]">
                           {tripsInVisit.length}
                         </span>
                       )}
@@ -148,7 +148,7 @@ export default function ClientVisitHistory({
                             <Link 
                               key={tc.id} 
                               href={`/trips?date=${dateString}&tripId=${trip.id}`}
-                              className="flex items-center gap-2 bg-slate-50 hover:bg-blue-50 border border-slate-100 hover:border-blue-200 px-3 py-2 rounded-md transition-colors group text-sm"
+                              className="flex items-center gap-2 bg-slate-50 hover:bg-teal-50 border border-slate-100 hover:border-teal-200 px-3 py-2 rounded-md transition-colors group text-sm"
                             >
                               <span className="font-semibold text-slate-600 shrink-0 w-12 text-xs">
                                 {tripDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
@@ -156,7 +156,7 @@ export default function ClientVisitHistory({
                               <span className="text-slate-500 font-medium shrink-0 w-12 text-xs">
                                 {tripDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                               </span>
-                              <span className="font-medium text-slate-800 truncate group-hover:text-blue-700">
+                              <span className="font-medium text-slate-800 truncate group-hover:text-teal-700">
                                 {trip.trip_types?.name || 'Standard Trip'}
                               </span>
                               {(trip.vessels?.name || trip.dive_sites?.name) && (
@@ -164,7 +164,7 @@ export default function ClientVisitHistory({
                                   {[trip.vessels?.name, trip.dive_sites?.name].filter(Boolean).join(" • ")}
                                 </span>
                               )}
-                              <svg className="w-4 h-4 text-slate-300 group-hover:text-blue-500 shrink-0 ml-1 ml-auto sm:ml-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <svg className="w-4 h-4 text-slate-300 group-hover:text-teal-500 shrink-0 ml-1 ml-auto sm:ml-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                               </svg>
                             </Link>
@@ -185,7 +185,7 @@ export default function ClientVisitHistory({
                           <button 
                             key={comp.id}
                             onClick={() => onSelectCompanion(comp.clients)}
-                            className="px-2.5 py-1 bg-white text-slate-600 hover:bg-blue-50 hover:text-blue-700 border border-slate-200 hover:border-blue-200 rounded text-xs font-medium transition-colors shadow-sm"
+                            className="px-2.5 py-1 bg-white text-slate-600 hover:bg-teal-50 hover:text-teal-700 border border-slate-200 hover:border-teal-200 rounded text-xs font-medium transition-colors shadow-sm"
                             title={`Switch to ${comp.clients.first_name}'s profile`}
                           >
                             {comp.clients.first_name} {comp.clients.last_name}

@@ -24,7 +24,7 @@ export default async function Home() {
             <div className="flex items-end justify-between">
               {/* Softened to slate-700 */}
               <p className="text-3xl font-bold text-slate-700">3</p>
-              <span className="text-sm font-medium text-blue-600 bg-blue-50 border border-blue-100 px-2 py-1 rounded-md">Scheduled</span>
+              <span className="text-sm font-medium text-teal-600 bg-teal-50 border border-teal-100 px-2 py-1 rounded-md">Scheduled</span>
             </div>
           </div>
           

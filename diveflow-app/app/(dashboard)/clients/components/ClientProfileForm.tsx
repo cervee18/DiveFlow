@@ -85,21 +85,21 @@ export default function ClientProfileForm({
           <div className="grid grid-cols-2 gap-4 mb-4">
             <div>
               <label className="block text-xs font-medium text-slate-600 mb-1">First Name</label>
-              <input name="first_name" defaultValue={selectedClient.first_name} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-md focus:bg-white focus:ring-2 focus:ring-blue-500 outline-none text-sm" required />
+              <input name="first_name" defaultValue={selectedClient.first_name} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-md focus:bg-white focus:ring-2 focus:ring-teal-500 outline-none text-sm" required />
             </div>
             <div>
               <label className="block text-xs font-medium text-slate-600 mb-1">Last Name</label>
-              <input name="last_name" defaultValue={selectedClient.last_name} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-md focus:bg-white focus:ring-2 focus:ring-blue-500 outline-none text-sm" required />
+              <input name="last_name" defaultValue={selectedClient.last_name} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-md focus:bg-white focus:ring-2 focus:ring-teal-500 outline-none text-sm" required />
             </div>
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-medium text-slate-600 mb-1">Email</label>
-              <input name="email" type="email" defaultValue={selectedClient.email || ""} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-md focus:bg-white focus:ring-2 focus:ring-blue-500 outline-none text-sm" />
+              <input name="email" type="email" defaultValue={selectedClient.email || ""} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-md focus:bg-white focus:ring-2 focus:ring-teal-500 outline-none text-sm" />
             </div>
             <div>
               <label className="block text-xs font-medium text-slate-600 mb-1">Phone</label>
-              <input name="phone" defaultValue={selectedClient.phone || ""} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-md focus:bg-white focus:ring-2 focus:ring-blue-500 outline-none text-sm" />
+              <input name="phone" defaultValue={selectedClient.phone || ""} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-md focus:bg-white focus:ring-2 focus:ring-teal-500 outline-none text-sm" />
             </div>
           </div>
         </div>
@@ -109,7 +109,7 @@ export default function ClientProfileForm({
           <div className="grid grid-cols-2 gap-4 mb-4">
             <div>
               <label className="block text-xs font-medium text-slate-600 mb-1">Organization</label>
-              <select name="cert_organization" defaultValue={selectedClient.cert_organization || ""} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-md focus:bg-white focus:ring-2 focus:ring-blue-500 outline-none text-sm text-slate-700">
+              <select name="cert_organization" defaultValue={selectedClient.cert_organization || ""} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-md focus:bg-white focus:ring-2 focus:ring-teal-500 outline-none text-sm text-slate-700">
                 <option value="">Select Organization</option>
                 {certOrgs.map(org => (
                   <option key={org.id} value={org.name}>{org.name}</option>
@@ -118,7 +118,7 @@ export default function ClientProfileForm({
             </div>
             <div>
               <label className="block text-xs font-medium text-slate-600 mb-1">Level</label>
-              <select name="cert_level" defaultValue={selectedClient.cert_level || ""} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-md focus:bg-white focus:ring-2 focus:ring-blue-500 outline-none text-sm text-slate-700">
+              <select name="cert_level" defaultValue={selectedClient.cert_level || ""} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-md focus:bg-white focus:ring-2 focus:ring-teal-500 outline-none text-sm text-slate-700">
                 <option value="">No Certification Listed</option>
                 <optgroup label="Recreational">
                   {certLevels.filter(l => !l.is_professional).map(l => (
@@ -136,16 +136,16 @@ export default function ClientProfileForm({
           <div className="grid grid-cols-2 gap-4 mb-4">
             <div>
               <label className="block text-xs font-medium text-slate-600 mb-1">Cert Number</label>
-              <input name="cert_number" defaultValue={selectedClient.cert_number || ""} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-md focus:bg-white focus:ring-2 focus:ring-blue-500 outline-none text-sm" />
+              <input name="cert_number" defaultValue={selectedClient.cert_number || ""} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-md focus:bg-white focus:ring-2 focus:ring-teal-500 outline-none text-sm" />
             </div>
             <div>
               <label className="block text-xs font-medium text-slate-600 mb-1">Nitrox Number</label>
-              <input name="nitrox_cert_number" defaultValue={selectedClient.nitrox_cert_number || ""} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-md focus:bg-white focus:ring-2 focus:ring-blue-500 outline-none text-sm" />
+              <input name="nitrox_cert_number" defaultValue={selectedClient.nitrox_cert_number || ""} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-md focus:bg-white focus:ring-2 focus:ring-teal-500 outline-none text-sm" />
             </div>
           </div>
           <div>
             <label className="block text-xs font-medium text-slate-600 mb-1">Date of Last Dive</label>
-            <input name="last_dive_date" type="date" defaultValue={selectedClient.last_dive_date || ""} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-md focus:bg-white focus:ring-2 focus:ring-blue-500 outline-none text-sm" />
+            <input name="last_dive_date" type="date" defaultValue={selectedClient.last_dive_date || ""} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-md focus:bg-white focus:ring-2 focus:ring-teal-500 outline-none text-sm" />
           </div>
         </div>
 
@@ -153,31 +153,31 @@ export default function ClientProfileForm({
           <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-4 border-b border-slate-100 pb-2">Address</h3>
           <div className="mb-4">
             <label className="block text-xs font-medium text-slate-600 mb-1">Street</label>
-            <input name="address_street" defaultValue={selectedClient.address_street || ""} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-md focus:bg-white focus:ring-2 focus:ring-blue-500 outline-none text-sm" />
+            <input name="address_street" defaultValue={selectedClient.address_street || ""} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-md focus:bg-white focus:ring-2 focus:ring-teal-500 outline-none text-sm" />
           </div>
           <div className="grid grid-cols-3 gap-4">
             <div>
               <label className="block text-xs font-medium text-slate-600 mb-1">City</label>
-              <input name="address_city" defaultValue={selectedClient.address_city || ""} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-md focus:bg-white focus:ring-2 focus:ring-blue-500 outline-none text-sm" />
+              <input name="address_city" defaultValue={selectedClient.address_city || ""} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-md focus:bg-white focus:ring-2 focus:ring-teal-500 outline-none text-sm" />
             </div>
             <div>
               <label className="block text-xs font-medium text-slate-600 mb-1">ZIP / Postal</label>
-              <input name="address_zip" defaultValue={selectedClient.address_zip || ""} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-md focus:bg-white focus:ring-2 focus:ring-blue-500 outline-none text-sm" />
+              <input name="address_zip" defaultValue={selectedClient.address_zip || ""} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-md focus:bg-white focus:ring-2 focus:ring-teal-500 outline-none text-sm" />
             </div>
             <div>
               <label className="block text-xs font-medium text-slate-600 mb-1">Country</label>
-              <input name="address_country" defaultValue={selectedClient.address_country || ""} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-md focus:bg-white focus:ring-2 focus:ring-blue-500 outline-none text-sm" />
+              <input name="address_country" defaultValue={selectedClient.address_country || ""} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-md focus:bg-white focus:ring-2 focus:ring-teal-500 outline-none text-sm" />
             </div>
           </div>
         </div>
 
         <div>
           <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-4 border-b border-slate-100 pb-2">Additional Notes</h3>
-          <textarea name="notes" defaultValue={selectedClient.notes || ""} rows={3} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-md focus:bg-white focus:ring-2 focus:ring-blue-500 outline-none text-sm" placeholder="Any special requirements or notes about this diver..."></textarea>
+          <textarea name="notes" defaultValue={selectedClient.notes || ""} rows={3} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-md focus:bg-white focus:ring-2 focus:ring-teal-500 outline-none text-sm" placeholder="Any special requirements or notes about this diver..."></textarea>
         </div>
 
         <div className="pt-4 border-t border-slate-100 flex justify-end shrink-0 sticky bottom-0 bg-white">
-          <button type="submit" disabled={isSaving} className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-md text-sm font-medium shadow-sm transition-colors disabled:opacity-70">
+          <button type="submit" disabled={isSaving} className="bg-teal-600 hover:bg-teal-700 text-white px-5 py-2.5 rounded-md text-sm font-medium shadow-sm transition-colors disabled:opacity-70">
             {isSaving ? "Saving..." : "Save Profile"}
           </button>
         </div>

@@ -49,7 +49,7 @@ export default function TripHeader({ trip, onEdit, onDelete }: any) {
         {/* Vessel Badge */}
         <div className="flex items-center">
           {trip.vessels?.name ? (
-            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-md bg-blue-50 text-blue-700 font-bold border border-blue-100 text-sm" title="Assigned Vessel">
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-md bg-teal-50 text-teal-700 font-bold border border-teal-100 text-sm" title="Assigned Vessel">
               {/* Small Boat Icon */}
               <svg className="w-4 h-4 opacity-70" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v8l9-11h-7z" />
@@ -66,7 +66,7 @@ export default function TripHeader({ trip, onEdit, onDelete }: any) {
 
         {/* Actions (Edit / Delete) */}
         <div className="flex items-center gap-1">
-          <button onClick={() => onEdit(trip)} className="text-slate-400 hover:text-blue-600 transition-colors p-1.5 rounded-md hover:bg-blue-50" title="Edit Trip">
+          <button onClick={() => onEdit(trip)} className="text-slate-400 hover:text-teal-600 transition-colors p-1.5 rounded-md hover:bg-teal-50" title="Edit Trip">
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
           </button>
           <button onClick={() => onDelete(trip.id)} className="text-slate-400 hover:text-red-600 transition-colors p-1.5 rounded-md hover:bg-red-50" title="Delete Trip">

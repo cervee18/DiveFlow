@@ -17,33 +17,33 @@ export default async function DashboardLayout({
   return (
     <div className="min-h-screen flex bg-slate-50">
       {/* Sidebar Navigation */}
-      <aside className="w-50 bg-white border-r border-slate-200 flex flex-col sticky top-0 h-screen">
-        <div className="h-16 flex items-center px-6 border-b border-slate-200">
+      <aside className="w-50 bg-slate-900 border-r border-slate-700/50 flex flex-col sticky top-0 h-screen">
+        <div className="h-16 flex items-center px-6 border-b border-slate-700/50">
           <div className="flex items-center gap-2">
-            <div className="w-8 h-8 bg-blue-500 rounded-md flex items-center justify-center shadow-sm">
+            <div className="w-8 h-8 bg-teal-500 rounded-md flex items-center justify-center shadow-sm">
               <span className="text-white font-bold text-xl leading-none">D</span>
             </div>
-            <span className="text-xl font-bold text-slate-700 tracking-tight">DiveFlow</span>
+            <span className="text-xl font-bold text-white tracking-tight">DiveFlow</span>
           </div>
         </div>
 
         <nav className="flex-1 px-4 py-6 space-y-1 overflow-y-auto">
-          <Link href="/" className="flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium text-slate-600 hover:bg-slate-50 hover:text-blue-600 transition-colors">
+          <Link href="/" className="flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium text-slate-400 hover:bg-slate-800 hover:text-teal-400 transition-colors">
             Dashboard
           </Link>
-          <Link href="/clients" className="flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium text-slate-600 hover:bg-slate-50 hover:text-blue-600 transition-colors">
+          <Link href="/clients" className="flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium text-slate-400 hover:bg-slate-800 hover:text-teal-400 transition-colors">
             Clients
           </Link>
-          <Link href="/trips" className="flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium text-slate-600 hover:bg-slate-50 hover:text-blue-600 transition-colors">
+          <Link href="/trips" className="flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium text-slate-400 hover:bg-slate-800 hover:text-teal-400 transition-colors">
             Trips
           </Link>
-          <Link href="#" className="flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium text-slate-400 cursor-not-allowed">
+          <Link href="#" className="flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium text-slate-600 cursor-not-allowed">
             Inventory (Soon)
           </Link>
         </nav>
 
-        <div className="p-4 border-t border-slate-200">
-          <div className="text-xs font-medium text-slate-500 truncate px-2">
+        <div className="p-4 border-t border-slate-700/50">
+          <div className="text-xs font-medium text-slate-400 truncate px-2">
             {user.email}
           </div>
         </div>

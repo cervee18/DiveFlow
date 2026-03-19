@@ -50,24 +50,24 @@ export default function ClientFormModal({ userOrgId, onClose, onSuccess }: Clien
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">First Name *</label>
-              <input name="first_name" className="w-full px-3 py-2 border rounded-md border-slate-300 focus:ring-2 focus:ring-blue-500 outline-none" required autoFocus />
+              <input name="first_name" className="w-full px-3 py-2 border rounded-md border-slate-300 focus:ring-2 focus:ring-teal-500 outline-none" required autoFocus />
             </div>
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">Last Name *</label>
-              <input name="last_name" className="w-full px-3 py-2 border rounded-md border-slate-300 focus:ring-2 focus:ring-blue-500 outline-none" required />
+              <input name="last_name" className="w-full px-3 py-2 border rounded-md border-slate-300 focus:ring-2 focus:ring-teal-500 outline-none" required />
             </div>
           </div>
           <div>
             <label className="block text-sm font-medium text-slate-700 mb-1">Email Address</label>
-            <input name="email" type="email" className="w-full px-3 py-2 border rounded-md border-slate-300 focus:ring-2 focus:ring-blue-500 outline-none" />
+            <input name="email" type="email" className="w-full px-3 py-2 border rounded-md border-slate-300 focus:ring-2 focus:ring-teal-500 outline-none" />
           </div>
           <div>
             <label className="block text-sm font-medium text-slate-700 mb-1">Phone Number</label>
-            <input name="phone" className="w-full px-3 py-2 border rounded-md border-slate-300 focus:ring-2 focus:ring-blue-500 outline-none" />
+            <input name="phone" className="w-full px-3 py-2 border rounded-md border-slate-300 focus:ring-2 focus:ring-teal-500 outline-none" />
           </div>
           <div className="pt-4 mt-2 border-t border-slate-100 flex justify-end gap-3">
             <button type="button" onClick={onClose} className="px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 rounded-md transition-colors">Cancel</button>
-            <button type="submit" disabled={isCreating} className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2 rounded-md text-sm font-medium shadow-sm transition-colors disabled:opacity-70">
+            <button type="submit" disabled={isCreating} className="bg-teal-600 hover:bg-teal-700 text-white px-5 py-2 rounded-md text-sm font-medium shadow-sm transition-colors disabled:opacity-70">
               {isCreating ? "Creating..." : "Create Client"}
             </button>
           </div>

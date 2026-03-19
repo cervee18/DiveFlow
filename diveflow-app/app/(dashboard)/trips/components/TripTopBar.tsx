@@ -21,7 +21,7 @@ export default function TripTopBar({
       <div className="p-3 border-b md:border-b-0 md:border-r border-slate-200 bg-slate-50 flex items-center gap-3 shrink-0 min-w-[260px]">
         <button 
           onClick={onAddTrip}
-          className="bg-blue-600 hover:bg-blue-700 text-white p-1.5 rounded-md shadow-sm transition-colors shrink-0"
+          className="bg-teal-600 hover:bg-teal-700 text-white p-1.5 rounded-md shadow-sm transition-colors shrink-0"
           title="Schedule New Trip"
         >
           <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -33,7 +33,7 @@ export default function TripTopBar({
             type="date" 
             value={selectedDate}
             onChange={(e) => onSelectDate(e.target.value)}
-            className="w-full bg-white border border-slate-200 text-slate-800 rounded-md px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent transition-all shadow-sm text-sm font-semibold cursor-pointer"
+            className="w-full bg-white border border-slate-200 text-slate-800 rounded-md px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-teal-600 focus:border-transparent transition-all shadow-sm text-sm font-semibold cursor-pointer"
           />
         </div>
       </div>
@@ -57,13 +57,13 @@ export default function TripTopBar({
                 onClick={() => onSelectTrip(trip.id)}
                 className={`shrink-0 transition-all flex flex-col items-start justify-center px-4 py-1.5 rounded-xl border min-w-[130px] text-left ${
                   isSelected 
-                    ? 'bg-blue-800 border-blue-800 text-white shadow-md' 
-                    : 'bg-white border-slate-300 text-slate-600 hover:border-blue-400 hover:bg-blue-50'
+                    ? 'bg-teal-800 border-teal-800 text-white shadow-md'
+                    : 'bg-white border-slate-300 text-slate-600 hover:border-teal-400 hover:bg-teal-50'
                 }`}
               >
                 {/* Top Line: Time & Trip Type */}
                 <div className="flex items-center gap-2 mb-0.5">
-                  <span className={`text-xs font-black ${isSelected ? 'text-blue-100' : 'text-slate-800'}`}>
+                  <span className={`text-xs font-black ${isSelected ? 'text-teal-100' : 'text-slate-800'}`}>
                     {formatTime(trip.start_time)}
                   </span>
                   <span className="text-xs font-bold truncate max-w-[120px]">
@@ -73,7 +73,7 @@ export default function TripTopBar({
 
                 {/* Bottom Line: Vessel & Spaces Left */}
                 <div className="flex items-center justify-between w-full gap-2">
-                  <span className={`text-[10px] font-medium truncate ${isSelected ? 'text-blue-200' : 'text-slate-500'}`}>
+                  <span className={`text-[10px] font-medium truncate ${isSelected ? 'text-teal-200' : 'text-slate-500'}`}>
                     {trip.vessels?.name || 'Shore'}
                   </span>
                   <span className={`text-[10px] font-black ${
