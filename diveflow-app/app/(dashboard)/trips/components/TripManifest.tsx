@@ -27,9 +27,11 @@ export default function TripManifest({
   const [diverAction, setDiverAction] = useState<{ diver: any; companions: any[]; mode: 'move' | 'add' } | null>(null);
   
   const [pendingChanges, setPendingChanges] = useState<Record<string, any>>({});
+  const [pendingClientChanges, setPendingClientChanges] = useState<Record<string, any>>({});
   const [isSaving, setIsSaving] = useState(false);
   const [nextTripMap, setNextTripMap] = useState<Record<string, string>>({});
   const [clientVisitIdMap, setClientVisitIdMap] = useState<Record<string, string>>({});
+  const [certLevels, setCertLevels] = useState<any[]>([]);
 
   // Sort manifest so group members (same visitId) are adjacent, preserving first-occurrence order
   const displayManifest = useMemo(() => {
@@ -60,10 +62,11 @@ export default function TripManifest({
       .from('trip_clients')
       .select(`
         *,
-        clients ( 
-          first_name, 
-          last_name, 
+        clients (
+          first_name,
+          last_name,
           last_dive_date,
+          cert_level,
           certification_levels!cert_level ( abbreviation )
         ),
         courses ( name )
@@ -79,8 +82,14 @@ export default function TripManifest({
       .from('equipment_categories')
       .select('name, sizes');
 
+    const { data: certData } = await supabase
+      .from('certification_levels')
+      .select('id, abbreviation')
+      .order('abbreviation', { ascending: true });
+
     if (manifestData) setManifest(manifestData);
     if (catData) setCategories(catData);
+    if (certData) setCertLevels(certData);
 
     // Compute "Next" column labels
     if (manifestData && manifestData.length > 0) {
@@ -171,15 +180,28 @@ export default function TripManifest({
     }));
   };
 
+  const handleClientChange = (clientId: string, field: string, value: any) => {
+    setPendingClientChanges(prev => ({
+      ...prev,
+      [clientId]: { ...(prev[clientId] || {}), [field]: value }
+    }));
+  };
+
   const handleSave = async () => {
-    if (Object.keys(pendingChanges).length === 0) return;
+    const hasTripChanges = Object.keys(pendingChanges).length > 0;
+    const hasClientChanges = Object.keys(pendingClientChanges).length > 0;
+    if (!hasTripChanges && !hasClientChanges) return;
     setIsSaving(true);
-    
-    const promises = Object.entries(pendingChanges).map(([id, changes]) => 
+
+    const tripPromises = Object.entries(pendingChanges).map(([id, changes]) =>
       supabase.from('trip_clients').update(changes).eq('id', id)
     );
 
-    const results = await Promise.all(promises);
+    const clientPromises = Object.entries(pendingClientChanges).map(([clientId, changes]) =>
+      supabase.from('clients').update(changes).eq('id', clientId)
+    );
+
+    const results = await Promise.all([...tripPromises, ...clientPromises]);
     const errors = results.filter(r => r.error);
 
     if (errors.length > 0) {
@@ -187,7 +209,8 @@ export default function TripManifest({
       console.error(errors);
     } else {
       setPendingChanges({});
-      await fetchData(); 
+      setPendingClientChanges({});
+      await fetchData();
     }
     setIsSaving(false);
   };
@@ -304,7 +327,7 @@ export default function TripManifest({
         </div>
         
         <div className="flex items-center gap-3">
-          {Object.keys(pendingChanges).length > 0 && (
+          {(Object.keys(pendingChanges).length > 0 || Object.keys(pendingClientChanges).length > 0) && (
             <>
               <span className="text-[10px] font-bold text-amber-600 uppercase animate-pulse">Unsaved Changes</span>
               <button 
@@ -344,7 +367,7 @@ export default function TripManifest({
                 <svg className="w-3.5 h-3.5 mx-auto text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17a2 2 0 11-4 0 2 2 0 014 0zM19 17a2 2 0 11-4 0 2 2 0 014 0zM13 16V6a1 1 0 00-1-1H4a1 1 0 00-1 1v10a1 1 0 001 1h1m8-1a1 1 0 01-1 1H9m4-1V8a1 1 0 011-1h2.586a1 1 0 01.707.293l3.414 3.414a1 1 0 01.293.707V16a1 1 0 01-1 1h-1m-6-1a1 1 0 001 1h1" /></svg>
               </th>
               <th className="px-3 py-3 text-center border-r">LD</th>
-              <th className="px-3 py-3 text-center border-r">Cert</th>
+              <th className="px-3 py-3 text-center border-r" style={{ width: '70px', minWidth: '70px', maxWidth: '70px' }}>Cert</th>
               <th className="px-3 py-3 text-center border-r">Next</th>
               <th className="px-2 py-3 text-center border-r bg-teal-50/30">BCD</th>
               <th className="px-2 py-3 text-center border-r bg-teal-50/30">Suit</th>
@@ -370,12 +393,18 @@ export default function TripManifest({
               const visitColorIndex: Record<string, number> = {};
               groupVisitIds.forEach((vid, i) => { visitColorIndex[vid] = i; });
 
+              // Cert level grouping (computed once for all rows)
+              const NONPROF_ORDER = ['DSD', 'SD', 'OWD', 'AOWD', 'Resc'];
+              const nonprofSet = new Set(NONPROF_ORDER);
+              const nonprofCertLevels = NONPROF_ORDER.map(abbr => certLevels.find(cl => cl.abbreviation === abbr)).filter(Boolean);
+              const profCertLevels = certLevels.filter(cl => !nonprofSet.has(cl.abbreviation));
+
               return isLoading && manifest.length === 0 ? (
                 <tr><td colSpan={18} className="py-10 text-center text-slate-400">Loading divers...</td></tr>
               ) : (
                 displayManifest.map((diver) => {
                   const rowChanges = pendingChanges[diver.id] || {};
-                  const isModified = !!pendingChanges[diver.id];
+                  const isModified = !!pendingChanges[diver.id] || !!pendingClientChanges[diver.client_id];
 
                   // --- Per-diver bracket position (using displayManifest so adjacency is correct) ---
                   const visitId = clientVisitIdMap[diver.client_id];
@@ -480,15 +509,57 @@ export default function TripManifest({
                       </button>
                     </td>
 
-                    {/* Last Dive & Cert */}
-                    <td className="px-3 py-2 border-r text-center font-medium">
-                      {diver.clients?.last_dive_date ? (() => {
-                        const isStale = (Date.now() - new Date(diver.clients.last_dive_date).getTime()) > 365 * 24 * 60 * 60 * 1000;
-                        return <span className={isStale ? 'text-amber-500' : 'text-slate-500'}>{formatLastDive(diver.clients.last_dive_date)}</span>;
-                      })() : <span className="text-amber-600">New</span>}
-                    </td>
-                    <td className="px-3 py-2 border-r text-center font-bold text-slate-700">
-                      {diver.courses?.name ? <span className="text-teal-700 bg-teal-100 px-1.5 py-0.5 rounded text-[10px]">{diver.courses.name}</span> : (diver.clients?.certification_levels?.abbreviation || 'OW')}
+                    {/* Last Dive */}
+                    {(() => {
+                      const effectiveLd = pendingClientChanges[diver.client_id]?.last_dive_date ?? diver.clients?.last_dive_date ?? '';
+                      const isStale = effectiveLd
+                        ? (Date.now() - new Date(effectiveLd).getTime()) > 365 * 24 * 60 * 60 * 1000
+                        : false;
+                      return (
+                        <td className="px-3 py-2 border-r text-center font-medium">
+                          <div className="relative inline-block">
+                            <span className={`text-[11px] ${isStale ? 'text-amber-500' : effectiveLd ? 'text-slate-500' : 'text-amber-600'}`}>
+                              {effectiveLd ? formatLastDive(effectiveLd) : 'New'}
+                            </span>
+                            <input
+                              type="date"
+                              value={effectiveLd}
+                              onChange={e => handleClientChange(diver.client_id, 'last_dive_date', e.target.value || null)}
+                              onKeyDown={e => e.key === 'Enter' && handleSave()}
+                              title="Click to edit last dive date"
+                              className="absolute inset-0 opacity-0 cursor-pointer w-full"
+                            />
+                          </div>
+                        </td>
+                      );
+                    })()}
+
+                    {/* Cert Level */}
+                    <td className="px-1 py-1 border-r text-center" style={{ width: '70px', minWidth: '70px', maxWidth: '70px' }}>
+                      {diver.courses?.name
+                        ? <span className="text-teal-700 bg-teal-100 px-1.5 py-0.5 rounded text-[10px]">{diver.courses.name}</span>
+                        : (
+                          <select
+                            value={pendingClientChanges[diver.client_id]?.cert_level ?? diver.clients?.cert_level ?? ''}
+                            onChange={e => handleClientChange(diver.client_id, 'cert_level', e.target.value || null)}
+                            className="w-full bg-transparent border-none focus:ring-1 focus:ring-teal-500 rounded text-[10px] font-bold text-slate-700 cursor-pointer text-center"
+                          >
+                            <option value="">-</option>
+                            <optgroup label="Recreational">
+                              {nonprofCertLevels.map((cl: any) => (
+                                <option key={cl.id} value={cl.id}>{cl.abbreviation}</option>
+                              ))}
+                            </optgroup>
+                            {profCertLevels.length > 0 && (
+                              <optgroup label="Professional">
+                                {profCertLevels.map((cl: any) => (
+                                  <option key={cl.id} value={cl.id}>{cl.abbreviation}</option>
+                                ))}
+                              </optgroup>
+                            )}
+                          </select>
+                        )
+                      }
                     </td>
 
                     {/* Next Trip */}
@@ -637,10 +708,16 @@ export default function TripManifest({
         onSuccess={(targetTrip) => {
           if (diverAction?.mode === 'move') {
             // Clear pending changes only for moved members (they leave this trip)
-            const movedIds = [diverAction.diver.id, ...(diverAction.companions.map((c: any) => c.id))];
+            const movedTripClientIds = [diverAction.diver.id, ...(diverAction.companions.map((c: any) => c.id))];
+            const movedClientIds = [diverAction.diver.client_id, ...(diverAction.companions.map((c: any) => c.client_id))];
             setPendingChanges(prev => {
               const next = { ...prev };
-              movedIds.forEach(id => { delete next[id]; });
+              movedTripClientIds.forEach(id => { delete next[id]; });
+              return next;
+            });
+            setPendingClientChanges(prev => {
+              const next = { ...prev };
+              movedClientIds.forEach(id => { delete next[id]; });
               return next;
             });
           }
