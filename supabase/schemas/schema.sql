@@ -356,8 +356,8 @@ CREATE TABLE IF NOT EXISTS "public"."trip_clients" (
     "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
     "trip_id" "uuid" NOT NULL,
     "client_id" "uuid" NOT NULL,
-    "nitrox" boolean DEFAULT false,
-    "nitrox_percentage" integer,
+    "nitrox1" boolean DEFAULT false,
+    "nitrox_percentage1" integer,
     "course_id" "uuid",
     "notes" "text",
     "mask" "text",
@@ -368,7 +368,10 @@ CREATE TABLE IF NOT EXISTS "public"."trip_clients" (
     "computer" boolean DEFAULT false,
     "pick_up" boolean DEFAULT false,
     "waiver" boolean DEFAULT false,
-    "deposit" boolean DEFAULT false
+    "deposit" boolean DEFAULT false,
+    "weights" "text",
+    "nitrox2" boolean,
+    "nitrox_percentage2" integer
 );
 
 
@@ -393,7 +396,8 @@ CREATE TABLE IF NOT EXISTS "public"."trip_types" (
     "default_start_time" time without time zone NOT NULL,
     "number_of_dives" integer DEFAULT 1 NOT NULL,
     "created_at" timestamp with time zone DEFAULT "now"(),
-    "updated_at" timestamp with time zone DEFAULT "now"()
+    "updated_at" timestamp with time zone DEFAULT "now"(),
+    "abbreviation" "text"
 );
 
 
