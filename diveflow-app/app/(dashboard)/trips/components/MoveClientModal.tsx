@@ -8,6 +8,7 @@ export default function MoveClientModal({
   onClose,
   diver,
   companions = [],
+  mode = 'move',
   currentTripId,
   currentTripDate,
   onSuccess,
@@ -16,25 +17,27 @@ export default function MoveClientModal({
   onClose: () => void;
   diver: any;
   companions?: any[];
+  mode?: 'move' | 'add';
   currentTripId: string;
   currentTripDate: string;
   onSuccess: (targetTrip: any) => void;
 }) {
   const supabase = createClient();
 
+  const isAdd = mode === 'add';
+
   const getLocalDate = (isoString: string) => {
     const d = new Date(isoString);
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   };
 
-  // step: 'members' only shown when there are companions; otherwise jump straight to 'trip'
   const [step, setStep] = useState<'members' | 'trip'>('trip');
   const [selectedMemberIds, setSelectedMemberIds] = useState<Set<string>>(new Set());
 
   const [selectedDate, setSelectedDate] = useState('');
   const [trips, setTrips] = useState<any[]>([]);
   const [isLoadingTrips, setIsLoadingTrips] = useState(false);
-  const [isMoving, setIsMoving] = useState(false);
+  const [isActing, setIsActing] = useState(false);
 
   // Reset state whenever modal opens
   useEffect(() => {
@@ -43,6 +46,7 @@ export default function MoveClientModal({
       setSelectedMemberIds(new Set([diver.id, ...companions.map((c: any) => c.id)]));
       setStep(companions.length > 0 ? 'members' : 'trip');
       setTrips([]);
+      setIsActing(false);
     }
   }, [isOpen, diver, companions, currentTripDate]);
 
@@ -74,17 +78,42 @@ export default function MoveClientModal({
     });
   };
 
-  const handleMove = async (targetTrip: any) => {
-    setIsMoving(true);
-    const ids = [...selectedMemberIds];
-    const results = await Promise.all(
-      ids.map(id => supabase.from('trip_clients').update({ trip_id: targetTrip.id }).eq('id', id))
+  const handleAction = async (targetTrip: any) => {
+    setIsActing(true);
+    const allMembers = [diver, ...companions];
+    // Build trip_client id → client_id lookup for INSERT
+    const clientIdByTripClientId: Record<string, string> = Object.fromEntries(
+      allMembers.map((m: any) => [m.id, m.client_id])
     );
-    const errors = results.filter(r => r.error);
-    if (errors.length > 0) {
-      alert('Error moving diver(s): ' + errors[0].error?.message);
-      setIsMoving(false);
+
+    const ids = [...selectedMemberIds];
+    let results;
+
+    if (isAdd) {
+      // Insert new trip_clients records (diver stays on original trip)
+      results = await Promise.all(
+        ids.map(id =>
+          supabase.from('trip_clients').insert({
+            trip_id: targetTrip.id,
+            client_id: clientIdByTripClientId[id],
+          })
+        )
+      );
     } else {
+      // Move: update existing trip_clients records
+      results = await Promise.all(
+        ids.map(id =>
+          supabase.from('trip_clients').update({ trip_id: targetTrip.id }).eq('id', id)
+        )
+      );
+    }
+
+    const errors = results.filter((r: any) => r.error);
+    if (errors.length > 0) {
+      alert(`Error ${isAdd ? 'adding' : 'moving'} diver(s): ` + (errors[0] as any).error?.message);
+      setIsActing(false);
+    } else {
+      setIsActing(false);
       onSuccess(targetTrip);
     }
   };
@@ -98,6 +127,7 @@ export default function MoveClientModal({
 
   const allMembers = [diver, ...companions];
   const clientName = `${diver.clients?.first_name} ${diver.clients?.last_name}`;
+  const accentColor = isAdd ? 'emerald' : 'teal';
 
   return (
     <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center z-[200] p-4">
@@ -107,7 +137,9 @@ export default function MoveClientModal({
         <div className="p-5 border-b border-slate-100 flex justify-between items-center bg-slate-50/50 shrink-0">
           <div>
             <h2 className="text-base font-semibold text-slate-800">
-              {companions.length > 0 ? 'Move Party' : 'Move Diver'}
+              {isAdd
+                ? (companions.length > 0 ? 'Add Party to Another Trip' : 'Add Diver to Another Trip')
+                : (companions.length > 0 ? 'Move Party' : 'Move Diver')}
             </h2>
             <p className="text-sm text-slate-500 mt-0.5">{clientName}</p>
           </div>
@@ -121,13 +153,13 @@ export default function MoveClientModal({
         {/* Step indicator (only shown when there are companions) */}
         {companions.length > 0 && (
           <div className="px-5 pt-4 shrink-0 flex items-center gap-2">
-            <div className={`flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider ${step === 'members' ? 'text-teal-600' : 'text-slate-400'}`}>
-              <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] ${step === 'members' ? 'bg-teal-600 text-white' : 'bg-slate-200 text-slate-500'}`}>1</span>
+            <div className={`flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider ${step === 'members' ? `text-${accentColor}-600` : 'text-slate-400'}`}>
+              <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] ${step === 'members' ? `bg-${accentColor}-600 text-white` : 'bg-slate-200 text-slate-500'}`}>1</span>
               Select Members
             </div>
             <div className="flex-1 h-px bg-slate-200" />
-            <div className={`flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider ${step === 'trip' ? 'text-teal-600' : 'text-slate-400'}`}>
-              <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] ${step === 'trip' ? 'bg-teal-600 text-white' : 'bg-slate-200 text-slate-500'}`}>2</span>
+            <div className={`flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider ${step === 'trip' ? `text-${accentColor}-600` : 'text-slate-400'}`}>
+              <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] ${step === 'trip' ? `bg-${accentColor}-600 text-white` : 'bg-slate-200 text-slate-500'}`}>2</span>
               Choose Trip
             </div>
           </div>
@@ -138,7 +170,7 @@ export default function MoveClientModal({
           <>
             <div className="flex-1 overflow-y-auto px-5 py-4">
               <p className="text-xs text-slate-500 mb-3">
-                {clientName} is traveling with the following party. Select who to move:
+                {clientName} is traveling with the following party. Select who to {isAdd ? 'also add' : 'move'}:
               </p>
               <div className="flex flex-col gap-2">
                 {allMembers.map((member: any) => {
@@ -149,7 +181,7 @@ export default function MoveClientModal({
                     <label
                       key={member.id}
                       className={`flex items-center gap-3 px-4 py-3 rounded-lg border cursor-pointer transition-all ${
-                        isSelected ? 'border-teal-300 bg-teal-50/50' : 'border-slate-200 bg-white hover:border-slate-300'
+                        isSelected ? `border-${accentColor}-300 bg-${accentColor}-50/50` : 'border-slate-200 bg-white hover:border-slate-300'
                       } ${isInitiator ? 'cursor-default' : ''}`}
                     >
                       <input
@@ -157,11 +189,13 @@ export default function MoveClientModal({
                         checked={isSelected}
                         onChange={() => toggleMember(member.id)}
                         disabled={isInitiator}
-                        className="rounded border-slate-300 text-teal-600 focus:ring-teal-500"
+                        className={`rounded border-slate-300 text-${accentColor}-600 focus:ring-${accentColor}-500`}
                       />
                       <span className="text-sm font-medium text-slate-800">{name}</span>
                       {isInitiator && (
-                        <span className="ml-auto text-[10px] font-semibold text-teal-600 uppercase tracking-wide">Moving</span>
+                        <span className={`ml-auto text-[10px] font-semibold text-${accentColor}-600 uppercase tracking-wide`}>
+                          {isAdd ? 'Adding' : 'Moving'}
+                        </span>
                       )}
                     </label>
                   );
@@ -175,7 +209,7 @@ export default function MoveClientModal({
               <button
                 onClick={() => setStep('trip')}
                 disabled={selectedMemberIds.size === 0}
-                className="bg-teal-600 hover:bg-teal-700 text-white px-5 py-2 rounded-md text-sm font-medium shadow-sm transition-colors disabled:opacity-50"
+                className={`bg-${accentColor}-600 hover:bg-${accentColor}-700 text-white px-5 py-2 rounded-md text-sm font-medium shadow-sm transition-colors disabled:opacity-50`}
               >
                 Continue →
               </button>
@@ -193,18 +227,18 @@ export default function MoveClientModal({
                 type="date"
                 value={selectedDate}
                 onChange={e => setSelectedDate(e.target.value)}
-                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-teal-500 outline-none"
+                className={`w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-${accentColor}-500 outline-none`}
               />
             </div>
 
-            {/* Moving summary pill */}
+            {/* Summary pill */}
             {selectedMemberIds.size > 1 && (
               <div className="px-5 pt-3 shrink-0">
-                <div className="inline-flex items-center gap-1.5 bg-teal-50 border border-teal-200 rounded-full px-3 py-1 text-[11px] font-semibold text-teal-700">
+                <div className={`inline-flex items-center gap-1.5 bg-${accentColor}-50 border border-${accentColor}-200 rounded-full px-3 py-1 text-[11px] font-semibold text-${accentColor}-700`}>
                   <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
                   </svg>
-                  Moving {selectedMemberIds.size} divers
+                  {isAdd ? 'Adding' : 'Moving'} {selectedMemberIds.size} divers
                 </div>
               </div>
             )}
@@ -224,12 +258,12 @@ export default function MoveClientModal({
                     return (
                       <button
                         key={trip.id}
-                        onClick={() => handleMove(trip)}
-                        disabled={isMoving || isFull}
+                        onClick={() => handleAction(trip)}
+                        disabled={isActing || isFull}
                         className={`w-full text-left px-4 py-3 rounded-lg border transition-all ${
                           isFull
                             ? 'border-slate-200 bg-slate-50 opacity-50 cursor-not-allowed'
-                            : 'border-slate-200 hover:border-teal-400 hover:bg-teal-50/40 active:bg-teal-100/60 cursor-pointer'
+                            : `border-slate-200 hover:border-${accentColor}-400 hover:bg-${accentColor}-50/40 active:bg-${accentColor}-100/60 cursor-pointer`
                         }`}
                       >
                         <div className="flex items-center justify-between gap-3">

@@ -24,7 +24,7 @@ export default function TripManifest({
   const [categories, setCategories] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
-  const [movingDiver, setMovingDiver] = useState<{ diver: any; companions: any[] } | null>(null);
+  const [diverAction, setDiverAction] = useState<{ diver: any; companions: any[]; mode: 'move' | 'add' } | null>(null);
   
   const [pendingChanges, setPendingChanges] = useState<Record<string, any>>({});
   const [isSaving, setIsSaving] = useState(false);
@@ -415,13 +415,30 @@ export default function TripManifest({
                         
                         {/* Row action buttons (appear on hover) */}
                         <div className="flex items-center gap-0.5 opacity-0 group-hover/row:opacity-100 transition-opacity focus-within:opacity-100">
+                          {/* Add to another trip */}
                           <button
                             onClick={() => {
                               const vid = clientVisitIdMap[diver.client_id];
                               const companions = vid
                                 ? displayManifest.filter(d => d.client_id !== diver.client_id && clientVisitIdMap[d.client_id] === vid)
                                 : [];
-                              setMovingDiver({ diver, companions });
+                              setDiverAction({ diver, companions, mode: 'add' });
+                            }}
+                            title={`Add ${diver.clients?.first_name} to another trip`}
+                            className="text-slate-300 hover:text-emerald-500 p-0.5 rounded hover:bg-emerald-50 focus:opacity-100"
+                          >
+                            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
+                            </svg>
+                          </button>
+                          {/* Move to another trip */}
+                          <button
+                            onClick={() => {
+                              const vid = clientVisitIdMap[diver.client_id];
+                              const companions = vid
+                                ? displayManifest.filter(d => d.client_id !== diver.client_id && clientVisitIdMap[d.client_id] === vid)
+                                : [];
+                              setDiverAction({ diver, companions, mode: 'move' });
                             }}
                             title={`Move ${diver.clients?.first_name} to another trip`}
                             className="text-slate-300 hover:text-teal-500 p-0.5 rounded hover:bg-teal-50 focus:opacity-100"
@@ -430,6 +447,7 @@ export default function TripManifest({
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
                             </svg>
                           </button>
+                          {/* Remove from trip */}
                           <button
                             onClick={() => handleRemoveDiver(diver)}
                             title={`Remove ${diver.clients?.first_name} from trip`}
@@ -609,23 +627,27 @@ export default function TripManifest({
         }}
       />
       <MoveClientModal
-        isOpen={!!movingDiver}
-        onClose={() => setMovingDiver(null)}
-        diver={movingDiver?.diver}
-        companions={movingDiver?.companions}
+        isOpen={!!diverAction}
+        onClose={() => setDiverAction(null)}
+        diver={diverAction?.diver}
+        companions={diverAction?.companions}
+        mode={diverAction?.mode}
         currentTripId={tripId}
         currentTripDate={tripDate}
         onSuccess={(targetTrip) => {
-          // Clear pending changes for all moved members
-          const movedIds = [movingDiver?.diver.id, ...(movingDiver?.companions.map((c: any) => c.id) || [])];
-          setPendingChanges(prev => {
-            const next = { ...prev };
-            movedIds.forEach(id => { if (id) delete next[id]; });
-            return next;
-          });
-          setMovingDiver(null);
+          if (diverAction?.mode === 'move') {
+            // Clear pending changes only for moved members (they leave this trip)
+            const movedIds = [diverAction.diver.id, ...(diverAction.companions.map((c: any) => c.id))];
+            setPendingChanges(prev => {
+              const next = { ...prev };
+              movedIds.forEach(id => { delete next[id]; });
+              return next;
+            });
+          }
+          setDiverAction(null);
           fetchData();
           if (onManifestChange) onManifestChange();
+          // Navigate to the target trip after both move and add
           if (onMovedToTrip) onMovedToTrip(targetTrip);
         }}
       />
