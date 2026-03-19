@@ -134,18 +134,20 @@ export default function AddDiverModal({ isOpen, onClose, tripId, tripDate, onSuc
   };
 
   // --------------------------------------------------------
-  // STEP 2: Execute the Insert
+  // STEP 2: Execute the Insert + pre-fill from last trip
   // --------------------------------------------------------
+  const PREFILL_FIELDS = ['bcd', 'wetsuit', 'fins', 'mask', 'regulator', 'computer', 'nitrox1', 'nitrox_percentage1', 'nitrox2', 'nitrox_percentage2', 'weights'];
+
   const executeBooking = async (clientIdsToBook: string[]) => {
     setIsProcessing(true);
-    
-    // Create an array of insert objects for bulk inserting
-    const insertData = clientIdsToBook.map(id => ({
-      trip_id: tripId,
-      client_id: id
-    }));
 
-    const { error } = await supabase.from('trip_clients').insert(insertData);
+    const insertData = clientIdsToBook.map(id => ({ trip_id: tripId, client_id: id }));
+
+    // Insert and get back the new row IDs
+    const { data: insertedRows, error } = await supabase
+      .from('trip_clients')
+      .insert(insertData)
+      .select('id, client_id');
 
     if (error) {
       if (error.code === '23505') {
@@ -154,9 +156,74 @@ export default function AddDiverModal({ isOpen, onClose, tripId, tripDate, onSuc
         alert("Error adding divers: " + error.message);
       }
       setIsProcessing(false);
-    } else {
-      onSuccess(); // Trigger table refresh and close
+      return;
     }
+
+    // Pre-fill each newly added row from the client's history
+    if (insertedRows && insertedRows.length > 0) {
+      const d = new Date(tripDate);
+      const tripDateOnly = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+      const prefillPromises: Promise<any>[] = [];
+
+      for (const row of insertedRows) {
+        // 1. Most recent prior trip → equipment defaults
+        const { data: pastTrips } = await supabase
+          .from('trip_clients')
+          .select(`${PREFILL_FIELDS.join(', ')}, trips!inner(start_time)`)
+          .eq('client_id', row.client_id)
+          .neq('trip_id', tripId)
+          .lt('trips.start_time', tripDate);
+
+        const lastTrip = (pastTrips || []).sort((a: any, b: any) =>
+          new Date(b.trips.start_time).getTime() - new Date(a.trips.start_time).getTime()
+        )[0];
+
+        // 2. pick_up → only carry if another trip within the same visit already has it
+        const { data: visitRows } = await supabase
+          .from('visit_clients')
+          .select('visit_id, visits!inner(start_date, end_date)')
+          .eq('client_id', row.client_id)
+          .lte('visits.start_date', tripDateOnly)
+          .gte('visits.end_date', tripDateOnly)
+          .limit(1);
+
+        let pick_up = false;
+        if (visitRows && visitRows.length > 0) {
+          const v = visitRows[0].visits as any;
+          const { data: visitTrips } = await supabase
+            .from('trip_clients')
+            .select('pick_up, trips!inner(start_time)')
+            .eq('client_id', row.client_id)
+            .neq('trip_id', tripId)
+            .gte('trips.start_time', v.start_date)
+            .lte('trips.start_time', v.end_date + 'T23:59:59');
+
+          pick_up = visitTrips?.some((t: any) => t.pick_up) ?? false;
+        }
+
+        // Build the update payload
+        const prefill: Record<string, any> = {};
+        if (lastTrip) {
+          PREFILL_FIELDS.forEach(field => {
+            if (lastTrip[field] !== null && lastTrip[field] !== undefined) {
+              prefill[field] = lastTrip[field];
+            }
+          });
+        }
+        if (pick_up) prefill.pick_up = true;
+
+        if (Object.keys(prefill).length > 0) {
+          prefillPromises.push(
+            supabase.from('trip_clients').update(prefill).eq('id', row.id)
+          );
+        }
+      }
+
+      if (prefillPromises.length > 0) await Promise.all(prefillPromises);
+    }
+
+    onSuccess();
   };
 
   if (!isOpen) return null;

@@ -31,6 +31,7 @@ export default function TripManifest({
   const [isSaving, setIsSaving] = useState(false);
   const [nextTripMap, setNextTripMap] = useState<Record<string, string>>({});
   const [clientVisitIdMap, setClientVisitIdMap] = useState<Record<string, string>>({});
+  const [clientVisitInfoMap, setClientVisitInfoMap] = useState<Record<string, { visitId: string; start_date: string; end_date: string }>>({});
   const [certLevels, setCertLevels] = useState<any[]>([]);
 
   // Sort manifest so group members (same visitId) are adjacent, preserving first-occurrence order
@@ -116,6 +117,7 @@ export default function TripManifest({
         visitIdByClient[clientId] = info.visitId;
       });
       setClientVisitIdMap(visitIdByClient);
+      setClientVisitInfoMap(clientVisitMap);
 
       // Batch query 2: ALL trip_clients for these clients across all time
       const { data: allClientTrips } = await supabase
@@ -193,10 +195,10 @@ export default function TripManifest({
     if (!hasTripChanges && !hasClientChanges) return;
     setIsSaving(true);
 
+    // 1. Save current-trip rows
     const tripPromises = Object.entries(pendingChanges).map(([id, changes]) =>
       supabase.from('trip_clients').update(changes).eq('id', id)
     );
-
     const clientPromises = Object.entries(pendingClientChanges).map(([clientId, changes]) =>
       supabase.from('clients').update(changes).eq('id', clientId)
     );
@@ -207,11 +209,87 @@ export default function TripManifest({
     if (errors.length > 0) {
       alert("Error saving some changes. Check the console.");
       console.error(errors);
-    } else {
-      setPendingChanges({});
-      setPendingClientChanges({});
-      await fetchData();
+      setIsSaving(false);
+      return;
     }
+
+    // 2. Offer to propagate trip_client changes to all future trips
+    if (hasTripChanges) {
+      const affectedNames = Object.keys(pendingChanges)
+        .map(id => {
+          const d = manifest.find(d => d.id === id);
+          return d ? `${d.clients?.first_name} ${d.clients?.last_name}` : null;
+        })
+        .filter(Boolean)
+        .join(', ');
+
+      const applyToFuture = window.confirm(
+        `Apply these changes to all future trips for ${affectedNames}?\n\nOK → update all upcoming bookings\nCancel → this trip only`
+      );
+
+      if (applyToFuture) {
+        const futurePromises: Promise<any>[] = [];
+
+        for (const [id, changes] of Object.entries(pendingChanges)) {
+          const diver = manifest.find(d => d.id === id);
+          if (!diver) continue;
+
+          // Separate pick_up from equipment fields — they propagate differently
+          const { pick_up, ...equipmentChanges } = changes;
+          const hasPickUp = 'pick_up' in changes;
+          const hasEquipment = Object.keys(equipmentChanges).length > 0;
+
+          const { data: futureTripClients } = await supabase
+            .from('trip_clients')
+            .select('id, trips!inner(start_time)')
+            .eq('client_id', diver.client_id)
+            .neq('trip_id', tripId)
+            .gte('trips.start_time', tripDate);
+
+          if (!futureTripClients || futureTripClients.length === 0) continue;
+          const allFutureIds = futureTripClients.map((tc: any) => tc.id);
+
+          // Equipment → all future trips
+          if (hasEquipment) {
+            futurePromises.push(
+              supabase.from('trip_clients').update(equipmentChanges).in('id', allFutureIds)
+            );
+          }
+
+          // pick_up → only future trips within the same visit
+          if (hasPickUp) {
+            const visitInfo = clientVisitInfoMap[diver.client_id];
+            const sameVisitIds = visitInfo
+              ? futureTripClients
+                  .filter((tc: any) => {
+                    const day = tc.trips.start_time.substring(0, 10);
+                    return day >= visitInfo.start_date && day <= visitInfo.end_date;
+                  })
+                  .map((tc: any) => tc.id)
+              : [];
+
+            if (sameVisitIds.length > 0) {
+              futurePromises.push(
+                supabase.from('trip_clients').update({ pick_up }).in('id', sameVisitIds)
+              );
+            }
+          }
+        }
+
+        if (futurePromises.length > 0) {
+          const futureResults = await Promise.all(futurePromises);
+          const futureErrors = futureResults.filter(r => r.error);
+          if (futureErrors.length > 0) {
+            console.error("Error propagating to future trips:", futureErrors);
+            alert("Some future trips could not be updated. Check console.");
+          }
+        }
+      }
+    }
+
+    setPendingChanges({});
+    setPendingClientChanges({});
+    await fetchData();
     setIsSaving(false);
   };
 
