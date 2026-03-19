@@ -193,6 +193,13 @@ export default function TripsPage() {
   tripDate={selectedTrip.start_time}
   capacity={selectedTrip.max_divers}
   onManifestChange={() => setRefreshTrigger(prev => prev + 1)}
+  onMovedToTrip={(trip) => {
+    const d = new Date(trip.start_time);
+    const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    setSelectedDate(dateStr);
+    setSelectedTripId(trip.id);
+    setRefreshTrigger(prev => prev + 1);
+  }}
 />
           </div>
         ) : (

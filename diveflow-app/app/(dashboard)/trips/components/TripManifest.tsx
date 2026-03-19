@@ -4,23 +4,27 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { createClient } from '@/utils/supabase/client';
 import Link from 'next/link';
 import AddDiverModal from './AddDiverModal';
+import MoveClientModal from './MoveClientModal';
 
 export default function TripManifest({
   tripId,
   tripDate,
   capacity,
-  onManifestChange
+  onManifestChange,
+  onMovedToTrip,
 }: {
   tripId: string,
   tripDate: string,
   capacity?: number,
-  onManifestChange?: () => void
+  onManifestChange?: () => void,
+  onMovedToTrip?: (trip: any) => void,
 }) {
   const supabase = createClient();
   const [manifest, setManifest] = useState<any[]>([]);
   const [categories, setCategories] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [movingDiver, setMovingDiver] = useState<{ diver: any; companions: any[] } | null>(null);
   
   const [pendingChanges, setPendingChanges] = useState<Record<string, any>>({});
   const [isSaving, setIsSaving] = useState(false);
@@ -409,16 +413,33 @@ export default function TripManifest({
                           {diver.clients?.first_name} {diver.clients?.last_name}
                         </Link>
                         
-                        {/* Remove Diver Button (Appears on Hover) */}
-                        <button 
-                          onClick={() => handleRemoveDiver(diver)}
-                          title={`Remove ${diver.clients?.first_name} from trip`}
-                          className="text-slate-300 hover:text-red-500 opacity-0 group-hover/row:opacity-100 transition-opacity p-0.5 rounded hover:bg-red-50 focus:opacity-100"
-                        >
-                          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                          </svg>
-                        </button>
+                        {/* Row action buttons (appear on hover) */}
+                        <div className="flex items-center gap-0.5 opacity-0 group-hover/row:opacity-100 transition-opacity focus-within:opacity-100">
+                          <button
+                            onClick={() => {
+                              const vid = clientVisitIdMap[diver.client_id];
+                              const companions = vid
+                                ? displayManifest.filter(d => d.client_id !== diver.client_id && clientVisitIdMap[d.client_id] === vid)
+                                : [];
+                              setMovingDiver({ diver, companions });
+                            }}
+                            title={`Move ${diver.clients?.first_name} to another trip`}
+                            className="text-slate-300 hover:text-teal-500 p-0.5 rounded hover:bg-teal-50 focus:opacity-100"
+                          >
+                            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+                            </svg>
+                          </button>
+                          <button
+                            onClick={() => handleRemoveDiver(diver)}
+                            title={`Remove ${diver.clients?.first_name} from trip`}
+                            className="text-slate-300 hover:text-red-500 p-0.5 rounded hover:bg-red-50 focus:opacity-100"
+                          >
+                            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                          </button>
+                        </div>
                       </div>
                     </td>
 
@@ -576,15 +597,36 @@ export default function TripManifest({
           </tbody>
         </table>
       </div>
-      <AddDiverModal 
+      <AddDiverModal
         isOpen={isAddModalOpen}
         onClose={() => setIsAddModalOpen(false)}
         tripId={tripId}
         tripDate={tripDate}
         onSuccess={() => {
-          fetchData(); 
+          fetchData();
           setIsAddModalOpen(false);
-          if (onManifestChange) onManifestChange(); 
+          if (onManifestChange) onManifestChange();
+        }}
+      />
+      <MoveClientModal
+        isOpen={!!movingDiver}
+        onClose={() => setMovingDiver(null)}
+        diver={movingDiver?.diver}
+        companions={movingDiver?.companions}
+        currentTripId={tripId}
+        currentTripDate={tripDate}
+        onSuccess={(targetTrip) => {
+          // Clear pending changes for all moved members
+          const movedIds = [movingDiver?.diver.id, ...(movingDiver?.companions.map((c: any) => c.id) || [])];
+          setPendingChanges(prev => {
+            const next = { ...prev };
+            movedIds.forEach(id => { if (id) delete next[id]; });
+            return next;
+          });
+          setMovingDiver(null);
+          fetchData();
+          if (onManifestChange) onManifestChange();
+          if (onMovedToTrip) onMovedToTrip(targetTrip);
         }}
       />
     </div>
