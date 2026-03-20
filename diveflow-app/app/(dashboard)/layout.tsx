@@ -40,6 +40,9 @@ export default async function DashboardLayout({
           <Link href="/trips" className="flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium text-slate-400 hover:bg-slate-800 hover:text-teal-400 transition-colors">
             Trips
           </Link>
+          <Link href="/staff" className="flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium text-slate-400 hover:bg-slate-800 hover:text-teal-400 transition-colors">
+            Staff
+          </Link>
           <Link href="#" className="flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium text-slate-600 cursor-not-allowed">
             Inventory (Soon)
           </Link>
@@ -54,10 +57,6 @@ export default async function DashboardLayout({
 
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col min-w-0">
-        <header className="h-16 bg-white border-b border-slate-200 sticky top-0 z-10 flex items-center px-8">
-          <h2 className="text-sm font-medium text-slate-500">Dive Center Management</h2>
-        </header>
-        
         {/* This is where your page.tsx content gets injected */}
         <main className="flex-1">
           {children}
