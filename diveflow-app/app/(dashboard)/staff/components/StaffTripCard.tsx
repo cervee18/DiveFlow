@@ -1,5 +1,6 @@
 'use client';
 
+import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 
 function formatTime(timestamp: string): string {
@@ -33,10 +34,12 @@ interface StaffTripCardProps {
   selectedDate: string;
   assignMode?: boolean;
   selectedStaffIds?: string[];
+  captainStaffIds?: Set<string>;
   onAssign?: () => void;
   onRemoveStaff?: (staffId: string) => void;
   onAssignActivity?: (activityId: string) => void;
   onRemoveActivityStaff?: (tripStaffId: string, tripId: string, staffId: string) => void;
+  onAssignCaptain?: (staffId: string) => void;
 }
 
 export default function StaffTripCard({
@@ -44,28 +47,32 @@ export default function StaffTripCard({
   selectedDate,
   assignMode = false,
   selectedStaffIds = [],
+  captainStaffIds = new Set(),
   onAssign,
   onRemoveStaff,
   onAssignActivity,
   onRemoveActivityStaff,
+  onAssignCaptain,
 }: StaffTripCardProps) {
   const router = useRouter();
+  const [captainMode, setCaptainMode] = useState(false);
 
   // ALL unique staff on this trip (generic + activity-specific, deduped by staffId)
-  // Used for display in the top-right chip area.
-  // Clicking × removes all their assignments from this trip.
-  const allTripStaffMap = new Map<string, { staffId: string; initials: string }>();
+  const allTripStaffMap = new Map<string, { staffId: string; initials: string; captainLicense: boolean }>();
   for (const ts of trip.trip_staff ?? []) {
     if (!ts.staff || allTripStaffMap.has(ts.staff_id)) continue;
     const initials =
       ts.staff.initials ||
       `${ts.staff.first_name?.[0] ?? ''}${ts.staff.last_name?.[0] ?? ''}`.toUpperCase();
-    allTripStaffMap.set(ts.staff_id, { staffId: ts.staff.id ?? ts.staff_id, initials });
+    allTripStaffMap.set(ts.staff_id, {
+      staffId: ts.staff.id ?? ts.staff_id,
+      initials,
+      captainLicense: !!ts.staff.captain_license,
+    });
   }
   const allTripStaff = Array.from(allTripStaffMap.values());
 
   // Generic-only staff IDs (activity_id = null) — used for assign-mode preview
-  // on card-body click so we don't mis-classify activity-only staff as "will remove"
   const genericIds = new Set(
     (trip.trip_staff ?? [])
       .filter((ts: any) => !ts.activity_id)
@@ -87,9 +94,23 @@ export default function StaffTripCard({
   const willAddToTrip      = selectedStaffIds.filter(id => !genericIds.has(id));
   const willRemoveFromTrip = selectedStaffIds.filter(id =>  genericIds.has(id));
 
+  const hasStaff = allTripStaff.length > 0;
+
   const handleClick = () => {
+    if (captainMode) { setCaptainMode(false); return; }
     if (assignMode) onAssign?.();
     else router.push(`/trips?date=${selectedDate}&tripId=${trip.id}`);
+  };
+
+  const handleStaffChipClick = (e: React.MouseEvent, staffId: string, captainLicense: boolean) => {
+    e.stopPropagation();
+    if (captainMode) {
+      if (!captainLicense) return; // silently ignore — chip is visually disabled
+      onAssignCaptain?.(staffId);
+      setCaptainMode(false);
+    } else {
+      onRemoveStaff?.(staffId);
+    }
   };
 
   return (
@@ -99,7 +120,9 @@ export default function StaffTripCard({
       onClick={handleClick}
       onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') handleClick(); }}
       className={`w-full text-left rounded-xl p-3 shadow-sm border transition-all cursor-pointer ${
-        assignMode
+        captainMode
+          ? 'bg-white border-blue-400 ring-2 ring-blue-100'
+          : assignMode
           ? 'bg-white border-slate-200 hover:border-teal-400 hover:ring-2 hover:ring-teal-100 hover:shadow-md'
           : 'bg-white border-slate-200 hover:shadow-md hover:border-teal-300'
       }`}
@@ -130,33 +153,79 @@ export default function StaffTripCard({
           )}
         </div>
 
-        {/* All-trip staff chips (generic + activity-assigned, deduped) */}
-        <div className="flex flex-wrap justify-end gap-1 shrink-0">
-          {allTripStaff.length === 0 && willAddToTrip.length === 0 && (
-            <span className="text-[11px] text-slate-300 italic leading-none mt-0.5">—</span>
-          )}
-          {allTripStaff.map(s => {
-            const isWillRemove = assignMode && willRemoveFromTrip.includes(s.staffId);
-            return (
-              <button
-                key={s.staffId}
-                title={isWillRemove ? `Remove ${s.initials}` : `Click to remove ${s.initials}`}
-                onClick={e => { e.stopPropagation(); onRemoveStaff?.(s.staffId); }}
-                className={`group inline-flex items-center justify-center w-6 h-6 rounded-full text-[10px] font-bold leading-none transition-colors ${
-                  isWillRemove
-                    ? 'bg-red-100 text-red-500 ring-1 ring-red-300'
-                    : 'bg-teal-100 text-teal-700 hover:bg-red-100 hover:text-red-500'
-                }`}
-              >
-                <span className={isWillRemove ? 'hidden' : 'group-hover:hidden'}>{s.initials}</span>
-                <span className={isWillRemove ? '' : 'hidden group-hover:inline'}>×</span>
-              </button>
-            );
-          })}
-          {assignMode && willAddToTrip.length > 0 && (
-            <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-teal-500 text-white text-[10px] font-bold leading-none ring-1 ring-teal-400">
-              +{willAddToTrip.length}
-            </span>
+        {/* Staff chips + Captain button */}
+        <div className="flex flex-col items-end gap-1 shrink-0">
+          {/* Staff chips */}
+          <div className="flex flex-wrap justify-end gap-1">
+            {allTripStaff.length === 0 && willAddToTrip.length === 0 && (
+              <span className="text-[11px] text-slate-300 italic leading-none mt-0.5">—</span>
+            )}
+            {allTripStaff.map(s => {
+              const isCaptain    = captainStaffIds.has(s.staffId);
+              const isWillRemove = !captainMode && assignMode && willRemoveFromTrip.includes(s.staffId);
+              const isDisabled   = captainMode && !s.captainLicense;
+
+              let chipClass = '';
+              if (isWillRemove) {
+                chipClass = 'bg-red-100 text-red-500 ring-1 ring-red-300';
+              } else if (isDisabled) {
+                chipClass = 'bg-slate-100 text-slate-300 cursor-not-allowed opacity-50';
+              } else if (isCaptain) {
+                chipClass = captainMode
+                  ? 'bg-blue-700 text-white ring-2 ring-blue-400 hover:bg-blue-800'
+                  : 'bg-blue-700 text-white hover:bg-blue-800';
+              } else if (captainMode) {
+                chipClass = 'bg-teal-100 text-teal-700 ring-1 ring-blue-300 hover:bg-blue-600 hover:text-white hover:ring-blue-500';
+              } else {
+                chipClass = 'bg-teal-100 text-teal-700 hover:bg-red-100 hover:text-red-500';
+              }
+
+              return (
+                <button
+                  key={s.staffId}
+                  disabled={isDisabled}
+                  title={
+                    isDisabled
+                      ? `${s.initials} has no captain license`
+                      : captainMode
+                      ? `Set ${s.initials} as Captain`
+                      : isWillRemove
+                      ? `Remove ${s.initials}`
+                      : `Click to remove ${s.initials}`
+                  }
+                  onClick={e => handleStaffChipClick(e, s.staffId, s.captainLicense)}
+                  className={`group inline-flex items-center justify-center w-6 h-6 rounded-full text-[10px] font-bold leading-none transition-colors ${chipClass}`}
+                >
+                  {captainMode ? (
+                    <span>{s.initials}</span>
+                  ) : (
+                    <>
+                      <span className={isWillRemove ? 'hidden' : 'group-hover:hidden'}>{s.initials}</span>
+                      <span className={isWillRemove ? '' : 'hidden group-hover:inline'}>×</span>
+                    </>
+                  )}
+                </button>
+              );
+            })}
+            {assignMode && willAddToTrip.length > 0 && (
+              <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-teal-500 text-white text-[10px] font-bold leading-none ring-1 ring-teal-400">
+                +{willAddToTrip.length}
+              </span>
+            )}
+          </div>
+
+          {/* Captain button — only when there's staff and not in assign mode */}
+          {hasStaff && !assignMode && (
+            <button
+              onClick={e => { e.stopPropagation(); setCaptainMode(prev => !prev); }}
+              className={`text-[9px] font-bold px-1.5 py-0.5 rounded transition-colors leading-none ${
+                captainMode
+                  ? 'bg-blue-600 text-white hover:bg-blue-700'
+                  : 'bg-slate-100 text-slate-400 hover:bg-blue-100 hover:text-blue-600'
+              }`}
+            >
+              {captainMode ? '✕ cancel' : '⚓ Captain'}
+            </button>
           )}
         </div>
       </div>

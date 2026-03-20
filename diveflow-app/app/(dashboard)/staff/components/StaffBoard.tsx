@@ -25,6 +25,7 @@ interface StaffBoardProps {
   onRemoveFromJob: (jobTypeId: string, staffId: string, halfDay: 'AM' | 'PM') => void;
   onActivityAssign: (tripId: string, activityId: string) => void;
   onRemoveActivityStaff: (tripStaffId: string, tripId: string, staffId: string) => void;
+  onAssignCaptain: (tripId: string, staffId: string) => void;
 }
 
 function memberInitials(member: DailyJob['staff']): string {
@@ -132,6 +133,7 @@ function Column({
   onRemoveFromJob,
   onActivityAssign,
   onRemoveActivityStaff,
+  onAssignCaptain,
 }: {
   title: string;
   subtitle: string;
@@ -148,6 +150,7 @@ function Column({
   onRemoveFromJob: (jobTypeId: string, staffId: string, halfDay: 'AM' | 'PM') => void;
   onActivityAssign: (tripId: string, activityId: string) => void;
   onRemoveActivityStaff: (tripStaffId: string, tripId: string, staffId: string) => void;
+  onAssignCaptain: (tripId: string, staffId: string) => void;
 }) {
   // Group job assignments by job_type_id
   const byType: Record<string, DailyJob[]> = {};
@@ -155,6 +158,9 @@ function Column({
     if (!byType[job.job_type_id]) byType[job.job_type_id] = [];
     byType[job.job_type_id].push(job);
   }
+
+  // Captain job type id — used to compute per-trip captain sets
+  const captainJtId = jobTypes.find(jt => jt.name === 'Captain')?.id;
 
   // These job types are either auto-synced from trips or auto-generated —
   // they should not appear as manual assignment cards in the grid.
@@ -222,19 +228,31 @@ function Column({
               </div>
             ) : (
               <div className="grid grid-cols-2 gap-2">
-                {trips.map(trip => (
-                  <StaffTripCard
-                    key={trip.id}
-                    trip={trip}
-                    selectedDate={selectedDate}
-                    assignMode={assignMode}
-                    selectedStaffIds={selectedStaffIds}
-                    onAssign={() => onTripAssign(trip.id)}
-                    onRemoveStaff={staffId => onRemoveStaff(trip.id, staffId)}
-                    onAssignActivity={activityId => onActivityAssign(trip.id, activityId)}
-                    onRemoveActivityStaff={onRemoveActivityStaff}
-                  />
-                ))}
+                {trips.map(trip => {
+                  // Staff whose sdj row for this trip is Captain
+                  const captainStaffIds = new Set(
+                    captainJtId
+                      ? jobAssignments
+                          .filter(j => j.trip_id === trip.id && j.job_type_id === captainJtId)
+                          .map(j => j.staff_id)
+                      : []
+                  );
+                  return (
+                    <StaffTripCard
+                      key={trip.id}
+                      trip={trip}
+                      selectedDate={selectedDate}
+                      assignMode={assignMode}
+                      selectedStaffIds={selectedStaffIds}
+                      captainStaffIds={captainStaffIds}
+                      onAssign={() => onTripAssign(trip.id)}
+                      onRemoveStaff={staffId => onRemoveStaff(trip.id, staffId)}
+                      onAssignActivity={activityId => onActivityAssign(trip.id, activityId)}
+                      onRemoveActivityStaff={onRemoveActivityStaff}
+                      onAssignCaptain={staffId => onAssignCaptain(trip.id, staffId)}
+                    />
+                  );
+                })}
               </div>
             )}
           </>
@@ -259,6 +277,7 @@ export default function StaffBoard({
   onRemoveFromJob,
   onActivityAssign,
   onRemoveActivityStaff,
+  onAssignCaptain,
 }: StaffBoardProps) {
   return (
     <div className="flex flex-1 min-h-0 overflow-hidden">
@@ -278,6 +297,7 @@ export default function StaffBoard({
         onRemoveFromJob={onRemoveFromJob}
         onActivityAssign={onActivityAssign}
         onRemoveActivityStaff={onRemoveActivityStaff}
+        onAssignCaptain={onAssignCaptain}
       />
       <Column
         title="Afternoon & Night"
@@ -295,6 +315,7 @@ export default function StaffBoard({
         onRemoveFromJob={onRemoveFromJob}
         onActivityAssign={onActivityAssign}
         onRemoveActivityStaff={onRemoveActivityStaff}
+        onAssignCaptain={onAssignCaptain}
       />
     </div>
   );

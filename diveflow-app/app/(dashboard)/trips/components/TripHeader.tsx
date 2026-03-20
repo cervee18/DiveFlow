@@ -26,19 +26,25 @@ export default function TripHeader({ trip, onEdit, onDelete }: any) {
       {/* Right Side: Staff, Vessel, Actions */}
       <div className="flex items-center gap-5 shrink-0">
         
-        {/* Staff Chips */}
+        {/* Staff Chips — deduplicated by staff_id (a staff member can have multiple trip_staff rows) */}
         <div className="flex items-center gap-1.5">
-          {trip.trip_staff && trip.trip_staff.length > 0 ? (
-            trip.trip_staff.map((ts: any) => (
-              <span 
-                key={ts.staff.id} 
+          {trip.trip_staff && trip.trip_staff.length > 0 ? (() => {
+            const seen = new Set<string>();
+            const unique = (trip.trip_staff as any[]).filter(ts => {
+              if (!ts.staff || seen.has(ts.staff.id)) return false;
+              seen.add(ts.staff.id);
+              return true;
+            });
+            return unique.length > 0 ? unique.map((ts: any) => (
+              <span
+                key={ts.staff.id}
                 className="inline-flex items-center justify-center min-w-[28px] h-7 px-1.5 rounded-full bg-slate-100 text-slate-700 text-xs font-bold border border-slate-200 cursor-default hover:bg-slate-200 transition-colors"
-                title={`${ts.staff.first_name} ${ts.staff.last_name} • ${ts.roles?.name || 'Unassigned'}`} 
+                title={`${ts.staff.first_name} ${ts.staff.last_name}`}
               >
                 {ts.staff.initials}
               </span>
-            ))
-          ) : (
+            )) : <span className="text-xs text-slate-400 italic">No Staff assigned</span>;
+          })() : (
             <span className="text-xs text-slate-400 italic">No Staff assigned</span>
           )}
         </div>
