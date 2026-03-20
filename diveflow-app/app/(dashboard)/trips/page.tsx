@@ -6,23 +6,32 @@ import TripTopBar from './components/TripTopBar';
 import TripHeader from './components/TripHeader';
 import TripFormModal from './components/TripFormModal';
 import TripManifest from './components/TripManifest';
-import { useSearchParams } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 
 export default function TripsPage() {
   const supabase = createClient();
+  const router   = useRouter();
   
   // -- State --
   const [selectedDate, setSelectedDate] = useState(() => {
-    const today = new Date();
-    const localOffset = today.getTimezoneOffset() * 60000;
-    return new Date(today.getTime() - localOffset).toISOString().split('T')[0];
+    if (typeof window === 'undefined') {
+      const today = new Date();
+      return new Date(today.getTime() - today.getTimezoneOffset() * 60000).toISOString().split('T')[0];
+    }
+    const params = new URLSearchParams(window.location.search);
+    const today  = new Date();
+    const todayStr = new Date(today.getTime() - today.getTimezoneOffset() * 60000).toISOString().split('T')[0];
+    return params.get('date') ?? localStorage.getItem('diveflow_date') ?? todayStr;
   });
-  const [selectedTripId, setSelectedTripId] = useState<string | null>(null);
-  
+  const [selectedTripId, setSelectedTripId] = useState<string | null>(() => {
+    if (typeof window === 'undefined') return null;
+    return new URLSearchParams(window.location.search).get('tripId');
+  });
+
   const [trips, setTrips] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [userOrgId, setUserOrgId] = useState<string | null>(null);
-  
+
   const [vessels, setVessels] = useState<any[]>([]);
   const [tripTypes, setTripTypes] = useState<any[]>([]);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
@@ -33,15 +42,14 @@ export default function TripsPage() {
   const [editingTrip, setEditingTrip] = useState<any>(null);
   const [isSaving, setIsSaving] = useState(false);
 
-// -- Catch URL Parameters on Mount --
+  // Keep URL in sync and share date with other pages via localStorage
   useEffect(() => {
-    const urlParams = new URLSearchParams(window.location.search);
-    const dateParam = urlParams.get('date');
-    const tripIdParam = urlParams.get('tripId');
-    
-    if (dateParam) setSelectedDate(dateParam);
-    if (tripIdParam) setSelectedTripId(tripIdParam);
-  }, []);
+    const params = new URLSearchParams();
+    params.set('date', selectedDate);
+    if (selectedTripId) params.set('tripId', selectedTripId);
+    router.replace(`?${params.toString()}`, { scroll: false });
+    localStorage.setItem('diveflow_date', selectedDate);
+  }, [selectedDate, selectedTripId]);
 
   // -- Data Fetching --
   useEffect(() => {

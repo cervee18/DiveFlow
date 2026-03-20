@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { useRouter } from 'next/navigation';
 import { createClient } from '@/utils/supabase/client';
 
 import StaffTopBar from './components/StaffTopBar';
@@ -10,8 +11,13 @@ import { getTodayStr, localHour } from './components/dateUtils';
 
 export default function StaffPage() {
   const supabase = createClient();
+  const router   = useRouter();
 
-  const [selectedDate,     setSelectedDate]     = useState(getTodayStr);
+  const [selectedDate,     setSelectedDate]     = useState(() => {
+    if (typeof window === 'undefined') return getTodayStr();
+    const params = new URLSearchParams(window.location.search);
+    return params.get('date') ?? localStorage.getItem('diveflow_date') ?? getTodayStr();
+  });
   const [trips,            setTrips]            = useState<any[]>([]);
   const [jobTypes,         setJobTypes]         = useState<any[]>([]);
   const [dailyJobs,        setDailyJobs]        = useState<any[]>([]);
@@ -23,6 +29,12 @@ export default function StaffPage() {
   // Keep a ref to allStaff so callbacks can access it without stale closure
   const allStaffRef = useRef<any[]>([]);
   useEffect(() => { allStaffRef.current = allStaff; }, [allStaff]);
+
+  // Keep URL in sync and share date with other pages via localStorage
+  useEffect(() => {
+    router.replace(`?date=${selectedDate}`, { scroll: false });
+    localStorage.setItem('diveflow_date', selectedDate);
+  }, [selectedDate]);
 
   // Fetch organisation id once
   useEffect(() => {

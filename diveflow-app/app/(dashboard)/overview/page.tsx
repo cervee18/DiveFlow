@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import { useRouter } from 'next/navigation';
 import { createClient } from '@/utils/supabase/client';
 
 import OverviewTopBar from './components/OverviewTopBar';
@@ -10,8 +11,13 @@ import { getTodayStr, shiftDate, localDateStr } from './components/dateUtils';
 
 export default function OverviewPage() {
   const supabase = createClient();
+  const router   = useRouter();
 
-  const [windowStart,   setWindowStart]   = useState(getTodayStr);
+  const [windowStart,   setWindowStart]   = useState(() => {
+    if (typeof window === 'undefined') return getTodayStr();
+    const params = new URLSearchParams(window.location.search);
+    return params.get('date') ?? localStorage.getItem('diveflow_date') ?? getTodayStr();
+  });
   const [trips,         setTrips]         = useState<any[]>([]);
   const [isLoading,     setIsLoading]     = useState(false);
   const [userOrgId,     setUserOrgId]     = useState<string | null>(null);
@@ -22,6 +28,12 @@ export default function OverviewPage() {
 
   const days      = Array.from({ length: 15 }, (_, i) => shiftDate(windowStart, i));
   const windowEnd = shiftDate(windowStart, 15);
+
+  // Keep URL in sync and share date with other pages via localStorage
+  useEffect(() => {
+    router.replace(`?date=${windowStart}`, { scroll: false });
+    localStorage.setItem('diveflow_date', windowStart);
+  }, [windowStart]);
 
   // Fetch org
   useEffect(() => {
