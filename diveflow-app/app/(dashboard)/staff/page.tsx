@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { createClient } from '@/utils/supabase/client';
 
 import StaffTopBar from './components/StaffTopBar';
@@ -20,6 +20,10 @@ export default function StaffPage() {
   const [isLoading,        setIsLoading]        = useState(false);
   const [userOrgId,        setUserOrgId]        = useState<string | null>(null);
 
+  // Keep a ref to allStaff so callbacks can access it without stale closure
+  const allStaffRef = useRef<any[]>([]);
+  useEffect(() => { allStaffRef.current = allStaff; }, [allStaff]);
+
   // Fetch organisation id once
   useEffect(() => {
     async function getOrg() {
@@ -36,7 +40,7 @@ export default function StaffPage() {
     getOrg();
   }, [supabase]);
 
-  // Fetch job types + staff list once per org (rarely change)
+  // Fetch job types + staff list once per org (global types have organization_id = null)
   useEffect(() => {
     if (!userOrgId) return;
     async function fetchStaticData() {
@@ -44,7 +48,7 @@ export default function StaffPage() {
         supabase
           .from('job_types')
           .select('id, name, sort_order')
-          .eq('organization_id', userOrgId)
+          .or(`organization_id.eq.${userOrgId},organization_id.is.null`)
           .order('sort_order'),
         supabase
           .from('staff')
@@ -52,13 +56,80 @@ export default function StaffPage() {
           .eq('organization_id', userOrgId)
           .order('first_name'),
       ]);
-      if (jobTypesRes.data) setJobTypes(jobTypesRes.data);
+      if (jobTypesRes.data) {
+        // Deduplicate by name (case-insensitive), preferring org-specific over global.
+        // Handles three cases:
+        //   1. Two org-specific rows with the same name → keep the first
+        //   2. Org-specific + global with same name → keep org-specific
+        //   3. Org-specific "Holiday" + global "Holidays" → both kept (different names)
+        const byName = new Map<string, any>();
+        for (const jt of jobTypesRes.data) {
+          const key  = jt.name.toLowerCase();
+          const prev = byName.get(key);
+          if (!prev) {
+            byName.set(key, jt);
+          } else if (prev.organization_id === null && jt.organization_id !== null) {
+            // Replace global with org-specific
+            byName.set(key, jt);
+          }
+          // If both are org-specific or both are global, keep the first one
+        }
+        setJobTypes(
+          Array.from(byName.values()).sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
+        );
+      }
       if (staffRes.data)    setAllStaff(staffRes.data);
     }
     fetchStaticData();
   }, [userOrgId, supabase]);
 
-  // Fetch trips + daily job assignments whenever date or org changes
+  // ─── Helpers ──────────────────────────────────────────────────────────────
+
+  /** Returns 'AM' or 'PM' based on trip start_time string (HH:MM:SS) */
+  function halfDayOf(startTime: string | null): 'AM' | 'PM' {
+    return startTime && localHour(startTime) < 12 ? 'AM' : 'PM';
+  }
+
+  /** Looks up a job type ID by exact name (case-insensitive). */
+  function jobTypeId(name: string, fallback?: string): string | undefined {
+    return jobTypes.find(jt => jt.name.toLowerCase() === name.toLowerCase())?.id ?? fallback;
+  }
+
+  /**
+   * After fetching staff_daily_job rows, insert "Unassigned" rows for any
+   * staff member that has no row at all for a given half-day on selectedDate.
+   * Returns true if any rows were inserted (caller should re-fetch).
+   */
+  async function generateMissingUnassigned(
+    freshJobs: any[],
+    orgId: string,
+    date: string,
+    staff: any[],
+    unassignedId: string,
+  ): Promise<boolean> {
+    const covered = new Set(freshJobs.map(j => `${j.staff_id}_${j['AM/PM']}`));
+    const toInsert = [];
+    for (const s of staff) {
+      for (const half of ['AM', 'PM'] as const) {
+        if (!covered.has(`${s.id}_${half}`)) {
+          toInsert.push({
+            organization_id: orgId,
+            staff_id: s.id,
+            job_type_id: unassignedId,
+            job_date: date,
+            'AM/PM': half,
+            trip_id: null,
+          });
+        }
+      }
+    }
+    if (toInsert.length === 0) return false;
+    await supabase.from('staff_daily_job').insert(toInsert);
+    return true;
+  }
+
+  // ─── Data Fetching ────────────────────────────────────────────────────────
+
   const fetchDayData = useCallback(async () => {
     if (!userOrgId) return;
     setIsLoading(true);
@@ -72,10 +143,10 @@ export default function StaffPage() {
         .from('trips')
         .select(`
           id, label, start_time, max_divers,
-          trip_clients ( id ),
+          trip_clients ( id, activity_id, activities ( id, name, is_default ) ),
           vessels      ( name, abbreviation ),
           trip_types   ( name, number_of_dives ),
-          trip_staff   ( staff_id, staff ( id, initials, first_name, last_name ) )
+          trip_staff   ( id, staff_id, activity_id, staff ( id, initials, first_name, last_name ) )
         `)
         .eq('organization_id', userOrgId)
         .gte('start_time', dayStart.toISOString())
@@ -90,61 +161,118 @@ export default function StaffPage() {
     ]);
 
     if (!tripsRes.error && tripsRes.data) {
-      setTrips(tripsRes.data.map(t => ({
-        ...t,
-        booked_divers: t.trip_clients?.length ?? 0,
-      })));
+      setTrips(tripsRes.data.map(t => {
+        const activityMap = new Map<string, string>();
+        for (const tc of t.trip_clients ?? []) {
+          if (tc.activity_id && tc.activities && !tc.activities.is_default) {
+            activityMap.set(tc.activity_id, tc.activities.name);
+          }
+        }
+        return {
+          ...t,
+          booked_divers: t.trip_clients?.length ?? 0,
+          activities: Array.from(activityMap.entries()).map(([id, name]) => ({ id, name })),
+        };
+      }));
     }
-    if (!jobsRes.error && jobsRes.data) {
-      setDailyJobs(jobsRes.data);
+
+    let freshJobs = jobsRes.data ?? [];
+    if (!jobsRes.error) {
+      // Generate Unassigned rows for any staff member missing AM/PM coverage
+      const unassignedId = jobTypes.find(jt => jt.name === 'Unassigned')?.id;
+      if (unassignedId && allStaffRef.current.length > 0) {
+        const inserted = await generateMissingUnassigned(
+          freshJobs, userOrgId, selectedDate, allStaffRef.current, unassignedId
+        );
+        if (inserted) {
+          // Re-fetch to include the newly inserted rows
+          const { data } = await supabase
+            .from('staff_daily_job')
+            .select(`*, staff ( id, initials, first_name, last_name )`)
+            .eq('organization_id', userOrgId)
+            .eq('job_date', selectedDate);
+          freshJobs = data ?? freshJobs;
+        }
+      }
+      setDailyJobs(freshJobs);
     }
 
     setIsLoading(false);
-  }, [selectedDate, userOrgId, supabase]);
+  }, [selectedDate, userOrgId, jobTypes, supabase]);
 
   useEffect(() => { fetchDayData(); }, [fetchDayData]);
 
-  // Assign / unassign selected staff to a trip (toggle per staff member)
+  // ─── Assignment Handlers ──────────────────────────────────────────────────
+
+  /** Generic trip assignment — also syncs a Crew row to staff_daily_job. */
   const handleTripAssign = useCallback(async (tripId: string) => {
-    if (selectedStaffIds.length === 0) return;
+    if (!userOrgId || selectedStaffIds.length === 0) return;
 
     const trip = trips.find(t => t.id === tripId);
-    const existingIds = new Set((trip?.trip_staff ?? []).map((ts: any) => ts.staff_id));
+    const existingIds = new Set(
+      (trip?.trip_staff ?? [])
+        .filter((ts: any) => !ts.activity_id)
+        .map((ts: any) => ts.staff_id)
+    );
 
     const toAdd    = selectedStaffIds.filter(id => !existingIds.has(id));
     const toRemove = selectedStaffIds.filter(id =>  existingIds.has(id));
+    const half     = halfDayOf(trip?.start_time);
+    const crewId   = jobTypeId('Crew');
 
     const ops: Promise<any>[] = [];
 
     if (toAdd.length > 0) {
-      ops.push(
-        supabase.from('trip_staff').insert(
-          toAdd.map(staff_id => ({ trip_id: tripId, staff_id, role_id: null }))
-        )
-      );
+      ops.push(supabase.from('trip_staff').insert(
+        toAdd.map(staff_id => ({ trip_id: tripId, staff_id, role_id: null }))
+      ));
+      if (crewId) {
+        ops.push(supabase.from('staff_daily_job').insert(
+          toAdd.map(staff_id => ({
+            organization_id: userOrgId,
+            staff_id,
+            job_type_id: crewId,
+            job_date: selectedDate,
+            'AM/PM': half,
+            trip_id: tripId,
+          }))
+        ));
+        // Replace the Unassigned row for this half-day with the Crew row
+        const unassignedId = jobTypeId('Unassigned');
+        if (unassignedId) {
+          ops.push(supabase.from('staff_daily_job').delete()
+            .in('staff_id', toAdd)
+            .eq('job_type_id', unassignedId)
+            .eq('job_date', selectedDate)
+            .eq('AM/PM', half)
+          );
+        }
+      }
     }
+
     for (const staff_id of toRemove) {
-      ops.push(
-        supabase.from('trip_staff').delete()
-          .eq('trip_id', tripId)
-          .eq('staff_id', staff_id)
-      );
+      ops.push(supabase.from('trip_staff').delete()
+        .eq('trip_id', tripId).eq('staff_id', staff_id));
+      ops.push(supabase.from('staff_daily_job').delete()
+        .eq('trip_id', tripId).eq('staff_id', staff_id).eq('job_date', selectedDate));
     }
 
     await Promise.all(ops);
     setSelectedStaffIds([]);
     await fetchDayData();
-  }, [selectedStaffIds, trips, supabase, fetchDayData]);
+  }, [userOrgId, selectedStaffIds, trips, selectedDate, jobTypes, supabase, fetchDayData]);
 
-  // Remove a single staff member from a trip directly
+  /** Remove a staff member from a trip entirely (all trip_staff + all sdj rows for that trip). */
   const handleRemoveStaff = useCallback(async (tripId: string, staffId: string) => {
-    await supabase.from('trip_staff').delete()
-      .eq('trip_id', tripId)
-      .eq('staff_id', staffId);
+    await Promise.all([
+      supabase.from('trip_staff').delete().eq('trip_id', tripId).eq('staff_id', staffId),
+      supabase.from('staff_daily_job').delete()
+        .eq('trip_id', tripId).eq('staff_id', staffId).eq('job_date', selectedDate),
+    ]);
     await fetchDayData();
-  }, [supabase, fetchDayData]);
+  }, [selectedDate, supabase, fetchDayData]);
 
-  // Assign / unassign selected staff to a daily job slot (toggle per staff member)
+  /** Manual job card assignment (Reception, Sick, etc.) — no trip linkage. */
   const handleJobAssign = useCallback(async (jobTypeId: string, halfDay: 'AM' | 'PM') => {
     if (!userOrgId || selectedStaffIds.length === 0) return;
 
@@ -157,19 +285,27 @@ export default function StaffPage() {
     const toRemove = relevantJobs.filter((j: any) => selectedStaffIds.includes(j.staff_id));
 
     const ops: Promise<any>[] = [];
-
     if (toAdd.length > 0) {
-      ops.push(
-        supabase.from('staff_daily_job').insert(
-          toAdd.map(staff_id => ({
-            organization_id: userOrgId,
-            staff_id,
-            job_type_id: jobTypeId,
-            job_date: selectedDate,
-            'AM/PM': halfDay,
-          }))
-        )
-      );
+      ops.push(supabase.from('staff_daily_job').insert(
+        toAdd.map(staff_id => ({
+          organization_id: userOrgId,
+          staff_id,
+          job_type_id: jobTypeId,
+          job_date: selectedDate,
+          'AM/PM': halfDay,
+          trip_id: null,
+        }))
+      ));
+      // Replace the Unassigned row for this half-day
+      const unassignedId = jobTypes.find(jt => jt.name === 'Unassigned')?.id;
+      if (unassignedId) {
+        ops.push(supabase.from('staff_daily_job').delete()
+          .in('staff_id', toAdd)
+          .eq('job_type_id', unassignedId)
+          .eq('job_date', selectedDate)
+          .eq('AM/PM', halfDay)
+        );
+      }
     }
     for (const job of toRemove) {
       ops.push(supabase.from('staff_daily_job').delete().eq('id', job.id));
@@ -180,17 +316,147 @@ export default function StaffPage() {
     await fetchDayData();
   }, [userOrgId, selectedStaffIds, dailyJobs, selectedDate, supabase, fetchDayData]);
 
-  // Remove a single staff member from a daily job slot directly
-  const handleRemoveFromJob = useCallback(async (jobId: string) => {
-    await supabase.from('staff_daily_job').delete().eq('id', jobId);
-    await fetchDayData();
-  }, [supabase, fetchDayData]);
+  /**
+   * Activity assignment — inserts trip_staff with activity_id and a matching
+   * staff_daily_job row using the job type whose name matches the activity.
+   */
+  const handleActivityAssign = useCallback(async (tripId: string, activityId: string) => {
+    if (!userOrgId || selectedStaffIds.length === 0) return;
 
-  // Split trips by hour
+    const trip      = trips.find(t => t.id === tripId);
+    const existing  = (trip?.trip_staff ?? []).filter((ts: any) => ts.activity_id === activityId);
+    const existingIds = new Set(existing.map((ts: any) => ts.staff_id));
+
+    const toAdd    = selectedStaffIds.filter(id => !existingIds.has(id));
+    const toRemove = existing.filter((ts: any) => selectedStaffIds.includes(ts.staff_id));
+
+    const half      = halfDayOf(trip?.start_time);
+    const actName   = trip?.activities?.find((a: any) => a.id === activityId)?.name ?? '';
+    const actJobId  = jobTypeId(actName) ?? jobTypeId('Crew');
+
+    const ops: Promise<any>[] = [];
+
+    if (toAdd.length > 0) {
+      ops.push(supabase.from('trip_staff').insert(
+        toAdd.map(staff_id => ({ trip_id: tripId, staff_id, activity_id: activityId, role_id: null }))
+      ));
+      if (actJobId) {
+        ops.push(supabase.from('staff_daily_job').insert(
+          toAdd.map(staff_id => ({
+            organization_id: userOrgId,
+            staff_id,
+            job_type_id: actJobId,
+            job_date: selectedDate,
+            'AM/PM': half,
+            trip_id: tripId,
+          }))
+        ));
+        // Replace the Unassigned row for this half-day
+        const unassignedId = jobTypeId('Unassigned');
+        if (unassignedId) {
+          ops.push(supabase.from('staff_daily_job').delete()
+            .in('staff_id', toAdd)
+            .eq('job_type_id', unassignedId)
+            .eq('job_date', selectedDate)
+            .eq('AM/PM', half)
+          );
+        }
+      }
+    }
+    for (const ts of toRemove) {
+      ops.push(supabase.from('trip_staff').delete().eq('id', ts.id));
+      if (actJobId) {
+        ops.push(supabase.from('staff_daily_job').delete()
+          .eq('trip_id', tripId).eq('staff_id', ts.staff_id)
+          .eq('job_type_id', actJobId).eq('job_date', selectedDate));
+      }
+    }
+
+    await Promise.all(ops);
+    setSelectedStaffIds([]);
+    await fetchDayData();
+  }, [userOrgId, selectedStaffIds, trips, selectedDate, jobTypes, supabase, fetchDayData]);
+
+  /**
+   * Remove one activity-specific trip_staff row.
+   * If the staff has no generic trip row, adds a generic one + a Crew sdj row
+   * so they remain on the trip. Also removes the activity sdj row.
+   */
+  const handleRemoveActivityStaff = useCallback(async (
+    tripStaffId: string,
+    tripId: string,
+    staffId: string,
+  ) => {
+    const trip      = trips.find(t => t.id === tripId);
+    const tsRow     = (trip?.trip_staff ?? []).find((ts: any) => ts.id === tripStaffId);
+    const actName   = trip?.activities?.find((a: any) => a.id === tsRow?.activity_id)?.name ?? '';
+    const actJobId  = jobTypeId(actName) ?? jobTypeId('Crew');
+    const hasGeneric = (trip?.trip_staff ?? []).some(
+      (ts: any) => ts.staff_id === staffId && !ts.activity_id
+    );
+    const half = halfDayOf(trip?.start_time);
+    const crewId = jobTypeId('Crew');
+
+    const ops: Promise<any>[] = [
+      supabase.from('trip_staff').delete().eq('id', tripStaffId),
+    ];
+    // Remove the activity-specific sdj row
+    if (actJobId) {
+      ops.push(supabase.from('staff_daily_job').delete()
+        .eq('trip_id', tripId).eq('staff_id', staffId)
+        .eq('job_type_id', actJobId).eq('job_date', selectedDate));
+    }
+    // Keep on trip if no generic row
+    if (!hasGeneric) {
+      ops.push(supabase.from('trip_staff').insert(
+        { trip_id: tripId, staff_id: staffId, role_id: null }
+      ));
+      if (crewId && userOrgId) {
+        ops.push(supabase.from('staff_daily_job').insert({
+          organization_id: userOrgId,
+          staff_id: staffId,
+          job_type_id: crewId,
+          job_date: selectedDate,
+          'AM/PM': half,
+          trip_id: tripId,
+        }));
+      }
+    }
+
+    await Promise.all(ops);
+    await fetchDayData();
+  }, [userOrgId, trips, selectedDate, jobTypes, supabase, fetchDayData]);
+
+  /**
+   * Remove a staff chip from a job card.
+   * Deletes ALL staff_daily_job rows for that staff+jobType+halfDay+date.
+   * If any of those rows had a trip_id, also removes the generic trip_staff row.
+   */
+  const handleRemoveFromJob = useCallback(async (
+    jobTypeId: string,
+    staffId: string,
+    halfDay: 'AM' | 'PM',
+  ) => {
+    const rows = dailyJobs.filter(
+      j => j.job_type_id === jobTypeId && j.staff_id === staffId && j['AM/PM'] === halfDay
+    );
+    const ops: Promise<any>[] = rows.map(j =>
+      supabase.from('staff_daily_job').delete().eq('id', j.id)
+    );
+    for (const j of rows) {
+      if (j.trip_id) {
+        ops.push(supabase.from('trip_staff').delete()
+          .eq('trip_id', j.trip_id).eq('staff_id', staffId).is('activity_id', null));
+      }
+    }
+    await Promise.all(ops);
+    await fetchDayData();
+  }, [dailyJobs, supabase, fetchDayData]);
+
+  // ─── Derived data ─────────────────────────────────────────────────────────
+
   const morningTrips   = trips.filter(t => localHour(t.start_time) < 12);
   const afternoonTrips = trips.filter(t => localHour(t.start_time) >= 12);
-
-  // Split job assignments by AM/PM
   const amJobs = dailyJobs.filter(j => j['AM/PM'] === 'AM');
   const pmJobs = dailyJobs.filter(j => j['AM/PM'] === 'PM');
 
@@ -216,6 +482,8 @@ export default function StaffPage() {
           onRemoveStaff={handleRemoveStaff}
           onJobAssign={handleJobAssign}
           onRemoveFromJob={handleRemoveFromJob}
+          onActivityAssign={handleActivityAssign}
+          onRemoveActivityStaff={handleRemoveActivityStaff}
         />
         <StaffPanel
           staff={allStaff}

@@ -134,5 +134,16 @@ INSERT INTO public.job_types (organization_id, name, color, sort_order) VALUES
   ('13826d8a-653e-459a-a779-967a45c6a9a4', 'Operations',   '#0d9488', 2),
   ('13826d8a-653e-459a-a779-967a45c6a9a4', 'Sick',         '#ef4444', 3),
   ('13826d8a-653e-459a-a779-967a45c6a9a4', 'Holiday',      '#f59e0b', 4),
-  ('13826d8a-653e-459a-a779-967a45c6a9a4', 'Off',          '#94a3b8', 5);
+  ('13826d8a-653e-459a-a779-967a45c6a9a4', 'Off',          '#94a3b8', 5),
+  ('13826d8a-653e-459a-a779-967a45c6a9a4', 'Crew',         '#0ea5e9', 6),
+  ('13826d8a-653e-459a-a779-967a45c6a9a4', 'Captain',      '#1e40af', 7),
+  ('13826d8a-653e-459a-a779-967a45c6a9a4', 'Private',      '#7c3aed', 8),
+  ('13826d8a-653e-459a-a779-967a45c6a9a4', 'Course',       '#059669', 9);
+
+-- ----------------------------------------------------------
+-- 5. AM/PM column (added post-creation directly in Supabase)
+--    Run this if the column doesn't exist yet in your instance.
+-- ----------------------------------------------------------
+ALTER TABLE public.staff_daily_job
+  ADD COLUMN IF NOT EXISTS "AM/PM" text CHECK ("AM/PM" IN ('AM', 'PM'));
 

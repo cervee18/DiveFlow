@@ -5,6 +5,7 @@ interface DailyJob {
   id: string;
   job_type_id: string;
   staff_id: string;
+  trip_id: string | null;
   'AM/PM': string | null;
   staff: { id: string; initials: string | null; first_name: string | null; last_name: string | null } | null;
 }
@@ -21,7 +22,9 @@ interface StaffBoardProps {
   onTripAssign: (tripId: string) => void;
   onRemoveStaff: (tripId: string, staffId: string) => void;
   onJobAssign: (jobTypeId: string, halfDay: 'AM' | 'PM') => void;
-  onRemoveFromJob: (jobId: string) => void;
+  onRemoveFromJob: (jobTypeId: string, staffId: string, halfDay: 'AM' | 'PM') => void;
+  onActivityAssign: (tripId: string, activityId: string) => void;
+  onRemoveActivityStaff: (tripStaffId: string, tripId: string, staffId: string) => void;
 }
 
 function memberInitials(member: DailyJob['staff']): string {
@@ -40,15 +43,25 @@ function JobCard({
 }: {
   jobType: JobType;
   assignments: DailyJob[];
+  halfDay: 'AM' | 'PM';
   assignMode: boolean;
   selectedStaffIds: string[];
   onAssign: () => void;
-  onRemoveFromJob: (jobId: string) => void;
+  onRemoveFromJob: (jobTypeId: string, staffId: string, halfDay: 'AM' | 'PM') => void;
 }) {
+  // Deduplicate by staff_id — same person on two trips in same half-day
+  // creates multiple rows but appears once in the card.
+  const seen = new Set<string>();
+  const uniqueAssignments = assignments.filter(j => {
+    if (seen.has(j.staff_id)) return false;
+    seen.add(j.staff_id);
+    return true;
+  });
+
   const assignedStaffIds = new Set(assignments.map(j => j.staff_id));
   const willAdd    = selectedStaffIds.filter(id => !assignedStaffIds.has(id));
   const willRemove = selectedStaffIds.filter(id =>  assignedStaffIds.has(id));
-  const showDivider = assignments.length > 0 || (assignMode && willAdd.length > 0);
+  const showDivider = uniqueAssignments.length > 0 || (assignMode && willAdd.length > 0);
 
   return (
     <div
@@ -66,26 +79,27 @@ function JobCard({
 
       {showDivider && <span className="w-px h-4 bg-slate-300 shrink-0" />}
 
-      {/* Chips */}
+      {/* Chips — one per unique staff member */}
       <div className="flex flex-wrap gap-1">
-        {assignments.length === 0 && willAdd.length === 0 && (
+        {uniqueAssignments.length === 0 && willAdd.length === 0 && (
           <span className="text-[11px] text-slate-400 italic">—</span>
         )}
 
-        {assignments.map(job => {
+        {uniqueAssignments.map(job => {
           const isWillRemove = assignMode && willRemove.includes(job.staff_id);
+          const initials = memberInitials(job.staff);
           return (
             <button
-              key={job.id}
-              title={isWillRemove ? `Remove ${memberInitials(job.staff)}` : `Click to remove ${memberInitials(job.staff)}`}
-              onClick={e => { e.stopPropagation(); onRemoveFromJob(job.id); }}
+              key={job.staff_id}
+              title={isWillRemove ? `Remove ${initials}` : `Click to remove ${initials}`}
+              onClick={e => { e.stopPropagation(); onRemoveFromJob(jobType.id, job.staff_id, halfDay); }}
               className={`group inline-flex items-center justify-center w-6 h-6 rounded-full text-[10px] font-bold leading-none transition-colors ${
                 isWillRemove
                   ? 'bg-red-100 text-red-500 ring-1 ring-red-300'
                   : 'bg-slate-300 text-slate-700 hover:bg-red-100 hover:text-red-500'
               }`}
             >
-              <span className={isWillRemove ? 'hidden' : 'group-hover:hidden'}>{memberInitials(job.staff)}</span>
+              <span className={isWillRemove ? 'hidden' : 'group-hover:hidden'}>{initials}</span>
               <span className={isWillRemove ? '' : 'hidden group-hover:inline'}>×</span>
             </button>
           );
@@ -116,6 +130,8 @@ function Column({
   onRemoveStaff,
   onJobAssign,
   onRemoveFromJob,
+  onActivityAssign,
+  onRemoveActivityStaff,
 }: {
   title: string;
   subtitle: string;
@@ -129,7 +145,9 @@ function Column({
   onTripAssign: (tripId: string) => void;
   onRemoveStaff: (tripId: string, staffId: string) => void;
   onJobAssign: (jobTypeId: string, halfDay: 'AM' | 'PM') => void;
-  onRemoveFromJob: (jobId: string) => void;
+  onRemoveFromJob: (jobTypeId: string, staffId: string, halfDay: 'AM' | 'PM') => void;
+  onActivityAssign: (tripId: string, activityId: string) => void;
+  onRemoveActivityStaff: (tripStaffId: string, tripId: string, staffId: string) => void;
 }) {
   // Group job assignments by job_type_id
   const byType: Record<string, DailyJob[]> = {};
@@ -137,6 +155,11 @@ function Column({
     if (!byType[job.job_type_id]) byType[job.job_type_id] = [];
     byType[job.job_type_id].push(job);
   }
+
+  // These job types are either auto-synced from trips or auto-generated —
+  // they should not appear as manual assignment cards in the grid.
+  const TRIP_ONLY_JOBS = new Set(['Captain', 'Private', 'Course', 'Crew', 'Unassigned']);
+  const gridJobTypes = jobTypes.filter(jt => !TRIP_ONLY_JOBS.has(jt.name));
 
   const assignMode = selectedStaffIds.length > 0;
 
@@ -167,13 +190,14 @@ function Column({
         ) : (
           <>
             {/* Job type cards — 2-column grid */}
-            {jobTypes.length > 0 && (
+            {gridJobTypes.length > 0 && (
               <div className="grid grid-cols-2 gap-2">
-                {jobTypes.map(jt => (
+                {gridJobTypes.map(jt => (
                   <JobCard
                     key={jt.id}
                     jobType={jt}
                     assignments={byType[jt.id] ?? []}
+                    halfDay={halfDay}
                     assignMode={assignMode}
                     selectedStaffIds={selectedStaffIds}
                     onAssign={() => onJobAssign(jt.id, halfDay)}
@@ -207,6 +231,8 @@ function Column({
                     selectedStaffIds={selectedStaffIds}
                     onAssign={() => onTripAssign(trip.id)}
                     onRemoveStaff={staffId => onRemoveStaff(trip.id, staffId)}
+                    onAssignActivity={activityId => onActivityAssign(trip.id, activityId)}
+                    onRemoveActivityStaff={onRemoveActivityStaff}
                   />
                 ))}
               </div>
@@ -231,6 +257,8 @@ export default function StaffBoard({
   onRemoveStaff,
   onJobAssign,
   onRemoveFromJob,
+  onActivityAssign,
+  onRemoveActivityStaff,
 }: StaffBoardProps) {
   return (
     <div className="flex flex-1 min-h-0 overflow-hidden">
@@ -248,6 +276,8 @@ export default function StaffBoard({
         onRemoveStaff={onRemoveStaff}
         onJobAssign={onJobAssign}
         onRemoveFromJob={onRemoveFromJob}
+        onActivityAssign={onActivityAssign}
+        onRemoveActivityStaff={onRemoveActivityStaff}
       />
       <Column
         title="Afternoon & Night"
@@ -263,6 +293,8 @@ export default function StaffBoard({
         onRemoveStaff={onRemoveStaff}
         onJobAssign={onJobAssign}
         onRemoveFromJob={onRemoveFromJob}
+        onActivityAssign={onActivityAssign}
+        onRemoveActivityStaff={onRemoveActivityStaff}
       />
     </div>
   );
