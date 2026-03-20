@@ -571,7 +571,8 @@ CREATE TABLE IF NOT EXISTS "public"."vessels" (
     "name" "text" NOT NULL,
     "capacity" integer NOT NULL,
     "created_at" timestamp with time zone DEFAULT "now"(),
-    "updated_at" timestamp with time zone DEFAULT "now"()
+    "updated_at" timestamp with time zone DEFAULT "now"(),
+    "abbreviation" "text"
 );
 
 
