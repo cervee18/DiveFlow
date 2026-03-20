@@ -1,7 +1,7 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { localDateStr, formatTime } from './dateUtils';
+import { localDateStr } from './dateUtils';
 
 function getTypeAccent(typeName: string | undefined) {
   const name = (typeName ?? '').toLowerCase();
@@ -56,7 +56,7 @@ export default function OverviewTripCard({
   return (
     <button
       onClick={handleClick}
-      className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded-lg border text-left transition-all ${
+      className={`w-full flex items-center gap-1.5 px-2 py-2.5 rounded-lg border text-left transition-all ${
         selectionMode
           ? isSelected
             ? 'bg-teal-50 border-teal-400 ring-1 ring-teal-300'
@@ -65,7 +65,7 @@ export default function OverviewTripCard({
       }`}
     >
       {/* Type colour accent */}
-      <span className={`shrink-0 w-1 h-4 rounded-full ${accent.bar}`} />
+      <span className={`shrink-0 w-1 h-6 rounded-full ${accent.bar}`} />
 
       {/* Type abbreviation */}
       <span className={`shrink-0 text-[9px] font-bold uppercase tracking-wide ${accent.text} w-7`}>
@@ -73,13 +73,8 @@ export default function OverviewTripCard({
       </span>
 
       {/* Vessel */}
-      <span className="text-[11px] font-semibold text-slate-700 shrink-0 w-8">
+      <span className="text-[11px] font-semibold text-slate-700 shrink-0 flex-1">
         {vessel}
-      </span>
-
-      {/* Time */}
-      <span className="text-[10px] text-slate-400 tabular-nums flex-1">
-        {formatTime(trip.start_time)}
       </span>
 
       {/* Mini fill bar */}
