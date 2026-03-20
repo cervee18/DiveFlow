@@ -33,6 +33,7 @@ export default function TripManifest({
   const [clientVisitIdMap, setClientVisitIdMap] = useState<Record<string, string>>({});
   const [clientVisitInfoMap, setClientVisitInfoMap] = useState<Record<string, { visitId: string; start_date: string; end_date: string }>>({});
   const [certLevels, setCertLevels] = useState<any[]>([]);
+  const [activities, setActivities] = useState<any[]>([]);
 
   // Sort manifest so group members (same visitId) are adjacent, preserving first-occurrence order
   const displayManifest = useMemo(() => {
@@ -70,7 +71,8 @@ export default function TripManifest({
           cert_level,
           certification_levels!cert_level ( abbreviation )
         ),
-        courses ( name )
+        courses ( name ),
+        activities ( name )
       `)
       .eq('trip_id', tripId)
       .order('id', { ascending: true });
@@ -88,9 +90,15 @@ export default function TripManifest({
       .select('id, abbreviation')
       .order('abbreviation', { ascending: true });
 
+    const { data: activityData } = await supabase
+      .from('activities')
+      .select('id, name')
+      .order('name', { ascending: true });
+
     if (manifestData) setManifest(manifestData);
     if (catData) setCategories(catData);
     if (certData) setCertLevels(certData);
+    if (activityData) setActivities(activityData);
 
     // Compute "Next" column labels
     if (manifestData && manifestData.length > 0) {
@@ -214,9 +222,15 @@ export default function TripManifest({
     }
 
     // 2. Offer to propagate trip_client changes to all future trips
-    if (hasTripChanges) {
-      const affectedNames = Object.keys(pendingChanges)
-        .map(id => {
+    // Only ask if at least one diver has propagatable fields (not just trip-specific ones)
+    const TRIP_ONLY_FIELDS = new Set(['waiver', 'deposit', 'notes', 'activity_id']);
+    const propagatableEntries = Object.entries(pendingChanges).filter(([, changes]) =>
+      Object.keys(changes).some(k => !TRIP_ONLY_FIELDS.has(k)) // has equipment or pick_up
+    );
+
+    if (hasTripChanges && propagatableEntries.length > 0) {
+      const affectedNames = propagatableEntries
+        .map(([id]) => {
           const d = manifest.find(d => d.id === id);
           return d ? `${d.clients?.first_name} ${d.clients?.last_name}` : null;
         })
@@ -228,61 +242,28 @@ export default function TripManifest({
       );
 
       if (applyToFuture) {
-        const futurePromises: Promise<any>[] = [];
-
-        for (const [id, changes] of Object.entries(pendingChanges)) {
+        const rpcPromises = propagatableEntries.map(([id, changes]) => {
           const diver = manifest.find(d => d.id === id);
-          if (!diver) continue;
+          if (!diver) return Promise.resolve({ error: null });
 
-          // Separate pick_up from equipment fields — they propagate differently
-          const { pick_up, ...equipmentChanges } = changes;
+          const { pick_up, waiver, deposit, notes, activity_id, ...equipmentChanges } = changes;
           const hasPickUp = 'pick_up' in changes;
-          const hasEquipment = Object.keys(equipmentChanges).length > 0;
 
-          const { data: futureTripClients } = await supabase
-            .from('trip_clients')
-            .select('id, trips!inner(start_time)')
-            .eq('client_id', diver.client_id)
-            .neq('trip_id', tripId)
-            .gte('trips.start_time', tripDate);
+          return supabase.rpc('propagate_trip_client_changes', {
+            p_client_id:       diver.client_id,
+            p_current_trip_id: tripId,
+            p_trip_date:       tripDate,
+            p_equipment:       Object.keys(equipmentChanges).length > 0 ? equipmentChanges : {},
+            p_pick_up:         hasPickUp ? pick_up : null,
+          });
+        });
 
-          if (!futureTripClients || futureTripClients.length === 0) continue;
-          const allFutureIds = futureTripClients.map((tc: any) => tc.id);
-
-          // Equipment → all future trips
-          if (hasEquipment) {
-            futurePromises.push(
-              supabase.from('trip_clients').update(equipmentChanges).in('id', allFutureIds)
-            );
-          }
-
-          // pick_up → only future trips within the same visit
-          if (hasPickUp) {
-            const visitInfo = clientVisitInfoMap[diver.client_id];
-            const sameVisitIds = visitInfo
-              ? futureTripClients
-                  .filter((tc: any) => {
-                    const day = tc.trips.start_time.substring(0, 10);
-                    return day >= visitInfo.start_date && day <= visitInfo.end_date;
-                  })
-                  .map((tc: any) => tc.id)
-              : [];
-
-            if (sameVisitIds.length > 0) {
-              futurePromises.push(
-                supabase.from('trip_clients').update({ pick_up }).in('id', sameVisitIds)
-              );
-            }
-          }
-        }
-
-        if (futurePromises.length > 0) {
-          const futureResults = await Promise.all(futurePromises);
-          const futureErrors = futureResults.filter(r => r.error);
-          if (futureErrors.length > 0) {
-            console.error("Error propagating to future trips:", futureErrors);
-            alert("Some future trips could not be updated. Check console.");
-          }
+        const rpcResults = await Promise.all(rpcPromises);
+        const rpcErrors = rpcResults.filter(r => r.error);
+        if (rpcErrors.length > 0) {
+          const messages = rpcErrors.map(r => r.error?.message ?? JSON.stringify(r.error)).join('\n');
+          console.error("Error propagating to future trips:", messages);
+          alert("Some future trips could not be updated:\n\n" + messages);
         }
       }
     }
@@ -446,7 +427,6 @@ export default function TripManifest({
               </th>
               <th className="px-3 py-3 text-center border-r">LD</th>
               <th className="px-3 py-3 text-center border-r" style={{ width: '70px', minWidth: '70px', maxWidth: '70px' }}>Cert</th>
-              <th className="px-3 py-3 text-center border-r">Next</th>
               <th className="px-2 py-3 text-center border-r bg-teal-50/30">BCD</th>
               <th className="px-2 py-3 text-center border-r bg-teal-50/30">Suit</th>
               <th className="px-2 py-3 text-center border-r bg-teal-50/30">Fins</th>
@@ -456,6 +436,9 @@ export default function TripManifest({
               <th className="px-2 py-3 text-center border-r">T1</th>
               <th className="px-2 py-3 text-center border-r">T2</th>
               <th className="px-2 py-3 text-center border-r">Wei.</th>
+              <th className="px-2 py-3 text-center border-r" title="Private Instructor">Priv</th>
+              <th className="px-3 py-3 text-center border-r" style={{ width: '100px', minWidth: '100px', maxWidth: '100px' }}>Activity</th>
+              <th className="px-3 py-3 text-center border-r">Next</th>
               <th className="px-3 py-3 w-48">Notes</th>
             </tr>
           </thead>
@@ -478,7 +461,7 @@ export default function TripManifest({
               const profCertLevels = certLevels.filter(cl => !nonprofSet.has(cl.abbreviation));
 
               return isLoading && manifest.length === 0 ? (
-                <tr><td colSpan={18} className="py-10 text-center text-slate-400">Loading divers...</td></tr>
+                <tr><td colSpan={20} className="py-10 text-center text-slate-400">Loading divers...</td></tr>
               ) : (
                 displayManifest.map((diver) => {
                   const rowChanges = pendingChanges[diver.id] || {};
@@ -640,11 +623,6 @@ export default function TripManifest({
                       }
                     </td>
 
-                    {/* Next Trip */}
-                    <td className="px-2 py-2 border-r text-center">
-                      {nextTripMap[diver.client_id] ? renderNextChip(nextTripMap[diver.client_id]) : <span className="text-[10px] text-slate-300">—</span>}
-                    </td>
-
                     {/* Equipment Dropdowns */}
                     {['bcd', 'wetsuit', 'fins', 'mask'].map(gear => (
                       <td key={gear} className="px-1 py-1 border-r bg-teal-50/10 hover:bg-white transition-colors">
@@ -724,6 +702,41 @@ export default function TripManifest({
                       <input type="text" value={rowChanges.weights ?? diver.weights ?? ''} onChange={e => handleChange(diver.id, 'weights', e.target.value === '' ? null : e.target.value)} onKeyDown={e => e.key === 'Enter' && handleSave()} placeholder="-" className="w-12 text-[10px] font-bold text-slate-700 bg-transparent border-none focus:ring-1 focus:ring-teal-500 rounded p-0.5 text-center placeholder:text-slate-300"/>
                     </td>
 
+                    {/* Private instructor */}
+                    <td className="px-2 py-2 border-r text-center">
+                      <input
+                        type="checkbox"
+                        checked={rowChanges.private ?? diver.private ?? false}
+                        onChange={e => handleChange(diver.id, 'private', e.target.checked)}
+                        title="Private instructor"
+                        className="rounded border-slate-300 text-violet-600 focus:ring-violet-500 cursor-pointer"
+                      />
+                    </td>
+
+                    {/* Activity */}
+                    <td className="px-1 py-1 border-r text-center" style={{ width: '100px', minWidth: '100px', maxWidth: '100px' }}>
+                      {diver.courses?.name
+                        ? <span className="text-teal-700 bg-teal-100 px-1.5 py-0.5 rounded text-[10px]">{diver.courses.name}</span>
+                        : (
+                          <select
+                            value={rowChanges.activity_id ?? diver.activity_id ?? ''}
+                            onChange={e => handleChange(diver.id, 'activity_id', e.target.value || null)}
+                            className="w-full bg-transparent border-none focus:ring-1 focus:ring-violet-500 rounded text-[10px] font-bold text-slate-700 cursor-pointer text-center"
+                          >
+                            <option value="">-</option>
+                            {activities.map((a: any) => (
+                              <option key={a.id} value={a.id}>{a.name}</option>
+                            ))}
+                          </select>
+                        )
+                      }
+                    </td>
+
+                    {/* Next Trip */}
+                    <td className="px-2 py-2 border-r text-center">
+                      {nextTripMap[diver.client_id] ? renderNextChip(nextTripMap[diver.client_id]) : <span className="text-[10px] text-slate-300">—</span>}
+                    </td>
+
                     {/* Notes */}
                     <td className="px-2 py-1">
                       <input type="text" value={rowChanges.notes ?? diver.notes ?? ''} onChange={e => handleChange(diver.id, 'notes', e.target.value)} onKeyDown={e => e.key === 'Enter' && handleSave()} placeholder="Add note..." className="w-full min-w-[150px] bg-transparent border-none focus:ring-1 focus:ring-teal-500 px-2 py-1 text-slate-500 italic placeholder:text-slate-300 rounded"/>
@@ -751,7 +764,7 @@ export default function TripManifest({
                       Add Diver
                     </button>
                   </td>
-                  {Array.from({ length: 16 }).map((_, j) => (
+                  {Array.from({ length: 18 }).map((_, j) => (
                     <td key={j} className="px-2 py-2">
                       <span className="block h-[18px]" />
                     </td>
@@ -760,7 +773,7 @@ export default function TripManifest({
               ));
             })()}
             {/* Filler row — stretches to fill remaining container height */}
-            <tr className="h-full"><td colSpan={18} /></tr>
+            <tr className="h-full"><td colSpan={20} /></tr>
           </tbody>
         </table>
       </div>
