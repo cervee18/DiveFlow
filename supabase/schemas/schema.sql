@@ -56,7 +56,8 @@ ALTER TYPE "public"."subscription_plan_type" OWNER TO "postgres";
 
 CREATE TYPE "public"."user_role" AS ENUM (
     'client',
-    'staff',
+    'staff_1',
+    'staff_2',
     'admin'
 );
 
