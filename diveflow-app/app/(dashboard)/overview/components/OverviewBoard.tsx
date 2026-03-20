@@ -34,7 +34,7 @@ export default function OverviewBoard({
             return (
               <div
                 key={day}
-                className={`w-52 border-r border-slate-200 last:border-r-0 px-3 py-3 ${isToday ? 'bg-teal-500' : 'bg-slate-50'}`}
+                className={`w-44 border-r border-slate-200 last:border-r-0 px-3 py-3 ${isToday ? 'bg-teal-500' : 'bg-slate-50'}`}
               >
                 <div className="flex items-baseline justify-between gap-1">
                   <span className={`text-[10px] font-bold uppercase tracking-wider ${isToday ? 'text-teal-100' : 'text-slate-400'}`}>
@@ -67,9 +67,9 @@ export default function OverviewBoard({
               return (
                 <div
                   key={day}
-                  className="flex flex-col w-52 border-r border-slate-200 last:border-r-0"
+                  className="flex flex-col w-44 border-r border-slate-200 last:border-r-0"
                 >
-                  <div className="p-2 space-y-2 bg-slate-50/40">
+                  <div className="p-1.5 space-y-1 bg-slate-50/40">
                     {isLoading ? (
                       <div className="h-16 bg-slate-100 animate-pulse rounded-lg" />
                     ) : dayTrips.length === 0 ? (
