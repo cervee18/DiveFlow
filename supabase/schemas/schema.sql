@@ -226,7 +226,9 @@ SET default_table_access_method = "heap";
 
 CREATE TABLE IF NOT EXISTS "public"."activities" (
     "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
-    "name" "text" NOT NULL
+    "name" "text" NOT NULL,
+    "Requires_private" boolean,
+    "is_default" boolean DEFAULT false NOT NULL
 );
 
 
@@ -386,6 +388,19 @@ CREATE TABLE IF NOT EXISTS "public"."inventory" (
 ALTER TABLE "public"."inventory" OWNER TO "postgres";
 
 
+CREATE TABLE IF NOT EXISTS "public"."job_types" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "organization_id" "uuid",
+    "name" "text" NOT NULL,
+    "color" "text",
+    "sort_order" integer DEFAULT 0,
+    "created_at" timestamp with time zone DEFAULT "now"()
+);
+
+
+ALTER TABLE "public"."job_types" OWNER TO "postgres";
+
+
 CREATE TABLE IF NOT EXISTS "public"."locations" (
     "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
     "organization_id" "uuid" NOT NULL,
@@ -481,6 +496,21 @@ CREATE TABLE IF NOT EXISTS "public"."staff" (
 ALTER TABLE "public"."staff" OWNER TO "postgres";
 
 
+CREATE TABLE IF NOT EXISTS "public"."staff_daily_job" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "organization_id" "uuid" NOT NULL,
+    "staff_id" "uuid" NOT NULL,
+    "job_type_id" "uuid" NOT NULL,
+    "job_date" "date" NOT NULL,
+    "created_at" timestamp with time zone DEFAULT "now"(),
+    "AM/PM" "text",
+    "trip_id" "uuid"
+);
+
+
+ALTER TABLE "public"."staff_daily_job" OWNER TO "postgres";
+
+
 CREATE TABLE IF NOT EXISTS "public"."staff_specialties" (
     "staff_id" "uuid" NOT NULL,
     "specialty_id" "uuid" NOT NULL
@@ -522,7 +552,8 @@ CREATE TABLE IF NOT EXISTS "public"."trip_staff" (
     "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
     "trip_id" "uuid" NOT NULL,
     "staff_id" "uuid" NOT NULL,
-    "role_id" "uuid"
+    "role_id" "uuid",
+    "activity_id" "uuid"
 );
 
 
@@ -572,7 +603,8 @@ CREATE TABLE IF NOT EXISTS "public"."vessels" (
     "capacity" integer NOT NULL,
     "created_at" timestamp with time zone DEFAULT "now"(),
     "updated_at" timestamp with time zone DEFAULT "now"(),
-    "abbreviation" "text"
+    "abbreviation" "text",
+    "need_captain" boolean
 );
 
 
@@ -679,6 +711,11 @@ ALTER TABLE ONLY "public"."inventory"
 
 
 
+ALTER TABLE ONLY "public"."job_types"
+    ADD CONSTRAINT "job_types_pkey" PRIMARY KEY ("id");
+
+
+
 ALTER TABLE ONLY "public"."locations"
     ADD CONSTRAINT "locations_pkey" PRIMARY KEY ("id");
 
@@ -714,6 +751,11 @@ ALTER TABLE ONLY "public"."specialties"
 
 
 
+ALTER TABLE ONLY "public"."staff_daily_job"
+    ADD CONSTRAINT "staff_daily_job_pkey" PRIMARY KEY ("id");
+
+
+
 ALTER TABLE ONLY "public"."staff"
     ADD CONSTRAINT "staff_email_key" UNIQUE ("email");
 
@@ -741,11 +783,6 @@ ALTER TABLE ONLY "public"."trip_clients"
 
 ALTER TABLE ONLY "public"."trip_staff"
     ADD CONSTRAINT "trip_staff_pkey" PRIMARY KEY ("id");
-
-
-
-ALTER TABLE ONLY "public"."trip_staff"
-    ADD CONSTRAINT "trip_staff_trip_id_staff_id_key" UNIQUE ("trip_id", "staff_id");
 
 
 
@@ -831,6 +868,10 @@ CREATE INDEX "idx_inventory_org" ON "public"."inventory" USING "btree" ("organiz
 
 
 
+CREATE INDEX "idx_job_types_org" ON "public"."job_types" USING "btree" ("organization_id", "sort_order");
+
+
+
 CREATE INDEX "idx_locations_organization" ON "public"."locations" USING "btree" ("organization_id");
 
 
@@ -840,6 +881,14 @@ CREATE INDEX "idx_profiles_organization" ON "public"."profiles" USING "btree" ("
 
 
 CREATE INDEX "idx_profiles_role" ON "public"."profiles" USING "btree" ("role");
+
+
+
+CREATE INDEX "idx_staff_daily_job_date" ON "public"."staff_daily_job" USING "btree" ("organization_id", "job_date");
+
+
+
+CREATE INDEX "idx_staff_daily_job_trip" ON "public"."staff_daily_job" USING "btree" ("trip_id") WHERE ("trip_id" IS NOT NULL);
 
 
 
@@ -872,6 +921,10 @@ CREATE INDEX "idx_trip_clients_client" ON "public"."trip_clients" USING "btree" 
 
 
 CREATE INDEX "idx_trip_clients_trip" ON "public"."trip_clients" USING "btree" ("trip_id");
+
+
+
+CREATE INDEX "idx_trip_staff_activity" ON "public"."trip_staff" USING "btree" ("trip_id", "activity_id");
 
 
 
@@ -936,6 +989,14 @@ CREATE INDEX "idx_visits_organization" ON "public"."visits" USING "btree" ("orga
 
 
 CREATE INDEX "idx_visits_start_date" ON "public"."visits" USING "btree" ("start_date");
+
+
+
+CREATE UNIQUE INDEX "trip_staff_activity_unique" ON "public"."trip_staff" USING "btree" ("trip_id", "staff_id", "activity_id") WHERE ("activity_id" IS NOT NULL);
+
+
+
+CREATE UNIQUE INDEX "trip_staff_generic_unique" ON "public"."trip_staff" USING "btree" ("trip_id", "staff_id") WHERE ("activity_id" IS NULL);
 
 
 
@@ -1041,6 +1102,11 @@ ALTER TABLE ONLY "public"."inventory"
 
 
 
+ALTER TABLE ONLY "public"."job_types"
+    ADD CONSTRAINT "job_types_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "public"."organizations"("id") ON DELETE CASCADE;
+
+
+
 ALTER TABLE ONLY "public"."locations"
     ADD CONSTRAINT "locations_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "public"."organizations"("id") ON DELETE CASCADE;
 
@@ -1058,6 +1124,26 @@ ALTER TABLE ONLY "public"."profiles"
 
 ALTER TABLE ONLY "public"."staff"
     ADD CONSTRAINT "staff_certification_level_id_fkey" FOREIGN KEY ("certification_level_id") REFERENCES "public"."certification_levels"("id") ON DELETE SET NULL;
+
+
+
+ALTER TABLE ONLY "public"."staff_daily_job"
+    ADD CONSTRAINT "staff_daily_job_job_type_id_fkey" FOREIGN KEY ("job_type_id") REFERENCES "public"."job_types"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."staff_daily_job"
+    ADD CONSTRAINT "staff_daily_job_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "public"."organizations"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."staff_daily_job"
+    ADD CONSTRAINT "staff_daily_job_staff_id_fkey" FOREIGN KEY ("staff_id") REFERENCES "public"."staff"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."staff_daily_job"
+    ADD CONSTRAINT "staff_daily_job_trip_id_fkey" FOREIGN KEY ("trip_id") REFERENCES "public"."trips"("id") ON DELETE SET NULL;
 
 
 
@@ -1103,6 +1189,11 @@ ALTER TABLE ONLY "public"."trip_clients"
 
 ALTER TABLE ONLY "public"."trip_clients"
     ADD CONSTRAINT "trip_clients_trip_id_fkey" FOREIGN KEY ("trip_id") REFERENCES "public"."trips"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."trip_staff"
+    ADD CONSTRAINT "trip_staff_activity_id_fkey" FOREIGN KEY ("activity_id") REFERENCES "public"."activities"("id") ON DELETE SET NULL;
 
 
 
@@ -1179,6 +1270,66 @@ ALTER TABLE ONLY "public"."visits"
 ALTER TABLE ONLY "public"."visits"
     ADD CONSTRAINT "visits_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "public"."organizations"("id") ON DELETE CASCADE;
 
+
+
+ALTER TABLE "public"."job_types" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "org members can delete job_types" ON "public"."job_types" FOR DELETE USING (("organization_id" IN ( SELECT "profiles"."organization_id"
+   FROM "public"."profiles"
+  WHERE ("profiles"."id" = "auth"."uid"()))));
+
+
+
+CREATE POLICY "org members can delete staff_daily_job" ON "public"."staff_daily_job" FOR DELETE USING (("organization_id" IN ( SELECT "profiles"."organization_id"
+   FROM "public"."profiles"
+  WHERE ("profiles"."id" = "auth"."uid"()))));
+
+
+
+CREATE POLICY "org members can insert job_types" ON "public"."job_types" FOR INSERT WITH CHECK (("organization_id" IN ( SELECT "profiles"."organization_id"
+   FROM "public"."profiles"
+  WHERE ("profiles"."id" = "auth"."uid"()))));
+
+
+
+CREATE POLICY "org members can insert staff_daily_job" ON "public"."staff_daily_job" FOR INSERT WITH CHECK (("organization_id" IN ( SELECT "profiles"."organization_id"
+   FROM "public"."profiles"
+  WHERE ("profiles"."id" = "auth"."uid"()))));
+
+
+
+CREATE POLICY "org members can select job_types" ON "public"."job_types" FOR SELECT USING (("organization_id" IN ( SELECT "profiles"."organization_id"
+   FROM "public"."profiles"
+  WHERE ("profiles"."id" = "auth"."uid"()))));
+
+
+
+CREATE POLICY "org members can select staff_daily_job" ON "public"."staff_daily_job" FOR SELECT USING (("organization_id" IN ( SELECT "profiles"."organization_id"
+   FROM "public"."profiles"
+  WHERE ("profiles"."id" = "auth"."uid"()))));
+
+
+
+CREATE POLICY "org members can update job_types" ON "public"."job_types" FOR UPDATE USING (("organization_id" IN ( SELECT "profiles"."organization_id"
+   FROM "public"."profiles"
+  WHERE ("profiles"."id" = "auth"."uid"()))));
+
+
+
+CREATE POLICY "org members can update staff_daily_job" ON "public"."staff_daily_job" FOR UPDATE USING (("organization_id" IN ( SELECT "profiles"."organization_id"
+   FROM "public"."profiles"
+  WHERE ("profiles"."id" = "auth"."uid"()))));
+
+
+
+CREATE POLICY "org members can view job_types" ON "public"."job_types" FOR SELECT USING ((("organization_id" IS NULL) OR ("organization_id" IN ( SELECT "profiles"."organization_id"
+   FROM "public"."profiles"
+  WHERE ("profiles"."id" = "auth"."uid"())))));
+
+
+
+ALTER TABLE "public"."staff_daily_job" ENABLE ROW LEVEL SECURITY;
 
 
 GRANT USAGE ON SCHEMA "public" TO "postgres";
@@ -1278,6 +1429,12 @@ GRANT ALL ON TABLE "public"."inventory" TO "service_role";
 
 
 
+GRANT ALL ON TABLE "public"."job_types" TO "anon";
+GRANT ALL ON TABLE "public"."job_types" TO "authenticated";
+GRANT ALL ON TABLE "public"."job_types" TO "service_role";
+
+
+
 GRANT ALL ON TABLE "public"."locations" TO "anon";
 GRANT ALL ON TABLE "public"."locations" TO "authenticated";
 GRANT ALL ON TABLE "public"."locations" TO "service_role";
@@ -1311,6 +1468,12 @@ GRANT ALL ON TABLE "public"."specialties" TO "service_role";
 GRANT ALL ON TABLE "public"."staff" TO "anon";
 GRANT ALL ON TABLE "public"."staff" TO "authenticated";
 GRANT ALL ON TABLE "public"."staff" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."staff_daily_job" TO "anon";
+GRANT ALL ON TABLE "public"."staff_daily_job" TO "authenticated";
+GRANT ALL ON TABLE "public"."staff_daily_job" TO "service_role";
 
 
 
