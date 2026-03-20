@@ -34,7 +34,7 @@ export default function ClientProfileForm({
       address_zip: formData.get("address_zip"),
       address_country: formData.get("address_country"),
       cert_organization: formData.get("cert_organization"),
-      cert_level: formData.get("cert_level"),
+      cert_level: formData.get("cert_level") || null,
       cert_number: formData.get("cert_number"),
       nitrox_cert_number: formData.get("nitrox_cert_number"),
       last_dive_date: formData.get("last_dive_date") || null,
@@ -70,7 +70,7 @@ export default function ClientProfileForm({
                   : "bg-slate-100 text-slate-500 border-slate-200"
               }`}
             >
-              {certLevels.find(c => c.name === selectedClient.cert_level)?.abbreviation || selectedClient.cert_level}
+              {certLevels.find(c => c.id === selectedClient.cert_level)?.abbreviation || selectedClient.cert_level}
             </span>
           )}
         </h2>
@@ -122,7 +122,7 @@ export default function ClientProfileForm({
                 <option value="">No Certification Listed</option>
                 <optgroup label="Recreational">
                   {certLevels.filter(l => !l.is_professional).map(l => (
-                    <option key={l.id} value={l.name}>{l.name} ({l.abbreviation})</option>
+                    <option key={l.id} value={l.id}>{l.name} ({l.abbreviation})</option>
                   ))}
                 </optgroup>
                 <optgroup label="Professional">

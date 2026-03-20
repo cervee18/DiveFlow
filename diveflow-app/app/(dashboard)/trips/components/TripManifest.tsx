@@ -10,12 +10,14 @@ export default function TripManifest({
   tripId,
   tripDate,
   capacity,
+  numberOfDives = 1,
   onManifestChange,
   onMovedToTrip,
 }: {
   tripId: string,
   tripDate: string,
   capacity?: number,
+  numberOfDives?: number,
   onManifestChange?: () => void,
   onMovedToTrip?: (trip: any) => void,
 }) {
@@ -427,14 +429,14 @@ export default function TripManifest({
               </th>
               <th className="px-3 py-3 text-center border-r">LD</th>
               <th className="px-3 py-3 text-center border-r" style={{ width: '70px', minWidth: '70px', maxWidth: '70px' }}>Cert</th>
-              <th className="px-2 py-3 text-center border-r bg-teal-50/30">BCD</th>
+              {numberOfDives > 0 && <th className="px-2 py-3 text-center border-r bg-teal-50/30">BCD</th>}
               <th className="px-2 py-3 text-center border-r bg-teal-50/30">Suit</th>
               <th className="px-2 py-3 text-center border-r bg-teal-50/30">Fins</th>
               <th className="px-2 py-3 text-center border-r bg-teal-50/30">Mask</th>
-              <th className="px-2 py-3 text-center border-r">Reg</th>
-              <th className="px-2 py-3 text-center border-r">Comp</th>
-              <th className="px-2 py-3 text-center border-r">T1</th>
-              <th className="px-2 py-3 text-center border-r">T2</th>
+              {numberOfDives > 0 && <th className="px-2 py-3 text-center border-r">Reg</th>}
+              {numberOfDives > 0 && <th className="px-2 py-3 text-center border-r">Comp</th>}
+              {numberOfDives >= 1 && <th className="px-2 py-3 text-center border-r">T1</th>}
+              {numberOfDives >= 2 && <th className="px-2 py-3 text-center border-r">T2</th>}
               <th className="px-2 py-3 text-center border-r">Wei.</th>
               <th className="px-2 py-3 text-center border-r" title="Private Instructor">Priv</th>
               <th className="px-3 py-3 text-center border-r" style={{ width: '100px', minWidth: '100px', maxWidth: '100px' }}>Activity</th>
@@ -460,8 +462,9 @@ export default function TripManifest({
               const nonprofCertLevels = NONPROF_ORDER.map(abbr => certLevels.find(cl => cl.abbreviation === abbr)).filter(Boolean);
               const profCertLevels = certLevels.filter(cl => !nonprofSet.has(cl.abbreviation));
 
+              const totalCols = 18 + Math.min(numberOfDives, 2) - (numberOfDives === 0 ? 3 : 0);
               return isLoading && manifest.length === 0 ? (
-                <tr><td colSpan={20} className="py-10 text-center text-slate-400">Loading divers...</td></tr>
+                <tr><td colSpan={totalCols} className="py-10 text-center text-slate-400">Loading divers...</td></tr>
               ) : (
                 displayManifest.map((diver) => {
                   const rowChanges = pendingChanges[diver.id] || {};
@@ -624,7 +627,7 @@ export default function TripManifest({
                     </td>
 
                     {/* Equipment Dropdowns */}
-                    {['bcd', 'wetsuit', 'fins', 'mask'].map(gear => (
+                    {(numberOfDives > 0 ? ['bcd', 'wetsuit', 'fins', 'mask'] : ['wetsuit', 'fins', 'mask']).map(gear => (
                       <td key={gear} className="px-1 py-1 border-r bg-teal-50/10 hover:bg-white transition-colors">
                         <select value={rowChanges[gear] ?? diver[gear] ?? ''} onChange={e => handleChange(diver.id, gear, e.target.value)} className="w-full bg-transparent border-none focus:ring-1 focus:ring-teal-500 rounded text-[10px] font-bold text-slate-700 cursor-pointer appearance-none text-center">
                           <option value="">-</option>
@@ -634,15 +637,15 @@ export default function TripManifest({
                     ))}
 
                     {/* Boolean Equipment */}
-                    <td className="px-2 py-2 border-r text-center">
+                    {numberOfDives > 0 && <td className="px-2 py-2 border-r text-center">
                       <input type="checkbox" checked={rowChanges.regulator ?? diver.regulator ?? false} onChange={e => handleChange(diver.id, 'regulator', e.target.checked)} className="rounded border-slate-300 text-teal-600 focus:ring-teal-500 cursor-pointer" />
-                    </td>
-                    <td className="px-2 py-2 border-r text-center">
+                    </td>}
+                    {numberOfDives > 0 && <td className="px-2 py-2 border-r text-center">
                       <input type="checkbox" checked={rowChanges.computer ?? diver.computer ?? false} onChange={e => handleChange(diver.id, 'computer', e.target.checked)} className="rounded border-slate-300 text-teal-600 focus:ring-teal-500 cursor-pointer" />
-                    </td>
+                    </td>}
 
                     {/* Tank 1 Chip */}
-                    <td className="px-2 py-1 border-r text-center">
+                    {numberOfDives >= 1 && <td className="px-2 py-1 border-r text-center">
                       {(rowChanges.nitrox1 ?? diver.nitrox1) ? (
                         <div
                           title="Click to revert to Air"
@@ -667,10 +670,10 @@ export default function TripManifest({
                           Air
                         </button>
                       )}
-                    </td>
+                    </td>}
 
                     {/* Tank 2 Chip */}
-                    <td className="px-2 py-1 border-r text-center">
+                    {numberOfDives >= 2 && <td className="px-2 py-1 border-r text-center">
                       {(rowChanges.nitrox2 ?? diver.nitrox2) ? (
                         <div
                           title="Click to revert to Air"
@@ -695,7 +698,7 @@ export default function TripManifest({
                           Air
                         </button>
                       )}
-                    </td>
+                    </td>}
 
                     {/* Weights */}
                     <td className="px-2 py-1 border-r text-center">
@@ -764,7 +767,7 @@ export default function TripManifest({
                       Add Diver
                     </button>
                   </td>
-                  {Array.from({ length: 18 }).map((_, j) => (
+                  {Array.from({ length: 16 + Math.min(numberOfDives, 2) - (numberOfDives === 0 ? 3 : 0) }).map((_, j) => (
                     <td key={j} className="px-2 py-2">
                       <span className="block h-[18px]" />
                     </td>
@@ -773,7 +776,7 @@ export default function TripManifest({
               ));
             })()}
             {/* Filler row — stretches to fill remaining container height */}
-            <tr className="h-full"><td colSpan={20} /></tr>
+            <tr className="h-full"><td colSpan={18 + Math.min(numberOfDives, 2) - (numberOfDives === 0 ? 3 : 0)} /></tr>
           </tbody>
         </table>
       </div>

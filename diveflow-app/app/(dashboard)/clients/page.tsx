@@ -75,7 +75,7 @@ function ClientsContent() {
 
   useEffect(() => {
     async function performSearch() {
-      if (!searchQuery.trim() || !userOrgId) {
+      if (searchQuery.trim().length < 2 || !userOrgId) {
         setSearchResults([]);
         return;
       }
@@ -174,20 +174,22 @@ function ClientsContent() {
 
   return (
     <div className="p-8 max-w-7xl mx-auto w-full flex flex-col gap-8 h-[calc(100vh-4rem)] relative">
-      <ClientTopBar 
+      <ClientTopBar
         searchQuery={searchQuery}
         setSearchQuery={setSearchQuery}
         searchResults={searchResults}
         isSearching={isSearching}
+        certLevels={certLevels}
         onSelectClient={handleSelectClient}
         onOpenAddModal={() => setIsModalOpen(true)}
       />
 
       {/* Main Content Area */}
       {!selectedClient ? (
-        <RecentClientsGrid 
-          recentClients={recentClients} 
-          onSelectClient={handleSelectClient} 
+        <RecentClientsGrid
+          recentClients={recentClients}
+          certLevels={certLevels}
+          onSelectClient={handleSelectClient}
         />
       ) : (
         <div className="flex gap-6 items-start flex-1 min-h-0">

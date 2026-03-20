@@ -192,6 +192,7 @@ export default function TripsPage() {
   tripId={selectedTrip.id}
   tripDate={selectedTrip.start_time}
   capacity={selectedTrip.max_divers}
+  numberOfDives={selectedTrip.trip_types?.number_of_dives ?? 1}
   onManifestChange={() => setRefreshTrigger(prev => prev + 1)}
   onMovedToTrip={(trip) => {
     const d = new Date(trip.start_time);

@@ -1,9 +1,10 @@
 interface RecentClientsGridProps {
   recentClients: any[];
+  certLevels: any[];
   onSelectClient: (client: any) => void;
 }
 
-export default function RecentClientsGrid({ recentClients, onSelectClient }: RecentClientsGridProps) {
+export default function RecentClientsGrid({ recentClients, certLevels, onSelectClient }: RecentClientsGridProps) {
   return (
     <div className="overflow-y-auto pb-8">
       <h2 className="text-sm font-semibold text-slate-500 uppercase tracking-wider mb-4">Recently Added Divers</h2>
@@ -19,7 +20,7 @@ export default function RecentClientsGrid({ recentClients, onSelectClient }: Rec
               <p className="text-sm text-slate-500">{client.email}</p>
             </div>
             <div className="mt-2 inline-block px-2 py-1 bg-slate-100 rounded text-xs font-medium text-slate-600 w-fit">
-              {client.cert_level || "No Certification Listed"}
+              {certLevels.find(c => c.id === client.cert_level)?.abbreviation || "No Certification Listed"}
             </div>
           </button>
         ))}

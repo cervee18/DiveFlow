@@ -5,6 +5,7 @@ interface ClientTopBarProps {
   setSearchQuery: (q: string) => void;
   searchResults: any[];
   isSearching: boolean;
+  certLevels: any[];
   onSelectClient: (client: any) => void;
   onOpenAddModal: () => void;
 }
@@ -14,6 +15,7 @@ export default function ClientTopBar({
   setSearchQuery,
   searchResults,
   isSearching,
+  certLevels,
   onSelectClient,
   onOpenAddModal
 }: ClientTopBarProps) {
@@ -41,7 +43,7 @@ export default function ClientTopBar({
     setSearchQuery(val);
     
     // Automatically show the dropdown if there's text, hide it if empty
-    if (val.trim()) {
+    if (val.trim().length >= 2) {
       setShowDropdown(true);
     } else {
       setShowDropdown(false);
@@ -62,7 +64,7 @@ export default function ClientTopBar({
             placeholder="Search by diver name or email..."
             value={searchQuery}
             onChange={handleInputChange}
-            onFocus={() => searchQuery.trim() && setShowDropdown(true)}
+            onFocus={() => searchQuery.trim().length >= 2 && setShowDropdown(true)}
             className="w-full px-4 py-3 pl-11 bg-white border border-slate-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-teal-500 text-slate-800"
           />
           <svg className="absolute left-4 top-3.5 h-5 w-5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -89,7 +91,7 @@ export default function ClientTopBar({
                         <p className="text-xs text-slate-500">{client.email}</p>
                       </div>
                       <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
-                        {client.cert_level || "No Cert"}
+                        {certLevels.find(c => c.id === client.cert_level)?.abbreviation || "No Cert"}
                       </span>
                     </button>
                   </li>
