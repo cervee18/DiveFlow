@@ -1,11 +1,12 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/utils/supabase/server";
 
-export default function LoginPage({
+export default async function LoginPage({
   searchParams,
 }: {
-  searchParams: { message: string };
+  searchParams: Promise<{ message: string }>;
 }) {
+  const { message } = await searchParams;
 
   const signIn = async (formData: FormData) => {
     "use server";
@@ -68,9 +69,9 @@ export default function LoginPage({
             />
           </div>
 
-          {searchParams?.message && (
+          {message && (
             <p className="text-red-600 text-sm text-center bg-red-50 p-2 rounded border border-red-100">
-              {searchParams.message}
+              {message}
             </p>
           )}
 

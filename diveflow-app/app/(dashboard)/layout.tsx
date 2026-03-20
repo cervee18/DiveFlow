@@ -1,18 +1,34 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { headers } from "next/headers";
 import { createClient } from "@/utils/supabase/server";
+import { getAuthContext, isStaff } from "@/utils/auth";
+
+// Routes that require staff-level access (non-clients)
+const STAFF_ONLY_PATHS = ['/overview', '/clients', '/trips', '/staff'];
 
 export default async function DashboardLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  const supabase = await createClient();
-  const { data: { user }, error } = await supabase.auth.getUser();
+  const { user, role } = await getAuthContext();
 
-  if (error || !user) {
-    redirect("/login");
+  // Protect staff-only routes from client-role users
+  const headersList = await headers();
+  const pathname = headersList.get('x-pathname') ?? '/';
+  const isStaffOnlyPath = STAFF_ONLY_PATHS.some(p => pathname.startsWith(p));
+
+  if (!isStaff(role) && isStaffOnlyPath) {
+    redirect('/');
   }
+
+  const signOut = async () => {
+    "use server";
+    const supabase = await createClient();
+    await supabase.auth.signOut();
+    redirect("/login");
+  };
 
   return (
     <div className="min-h-screen flex bg-slate-50">
@@ -31,33 +47,45 @@ export default async function DashboardLayout({
           <Link href="/" className="flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium text-slate-400 hover:bg-slate-800 hover:text-teal-400 transition-colors">
             Dashboard
           </Link>
-          <Link href="/overview" className="flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium text-slate-400 hover:bg-slate-800 hover:text-teal-400 transition-colors">
-            Overview
-          </Link>
-          <Link href="/clients" className="flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium text-slate-400 hover:bg-slate-800 hover:text-teal-400 transition-colors">
-            Clients
-          </Link>
-          <Link href="/trips" className="flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium text-slate-400 hover:bg-slate-800 hover:text-teal-400 transition-colors">
-            Trips
-          </Link>
-          <Link href="/staff" className="flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium text-slate-400 hover:bg-slate-800 hover:text-teal-400 transition-colors">
-            Staff
-          </Link>
-          <Link href="#" className="flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium text-slate-600 cursor-not-allowed">
-            Inventory (Soon)
-          </Link>
+
+          {isStaff(role) && (
+            <>
+              <Link href="/overview" className="flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium text-slate-400 hover:bg-slate-800 hover:text-teal-400 transition-colors">
+                Overview
+              </Link>
+              <Link href="/clients" className="flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium text-slate-400 hover:bg-slate-800 hover:text-teal-400 transition-colors">
+                Clients
+              </Link>
+              <Link href="/trips" className="flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium text-slate-400 hover:bg-slate-800 hover:text-teal-400 transition-colors">
+                Trips
+              </Link>
+              <Link href="/staff" className="flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium text-slate-400 hover:bg-slate-800 hover:text-teal-400 transition-colors">
+                Staff
+              </Link>
+              <Link href="#" className="flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium text-slate-600 cursor-not-allowed">
+                Inventory (Soon)
+              </Link>
+            </>
+          )}
         </nav>
 
-        <div className="p-4 border-t border-slate-700/50">
+        <div className="p-4 border-t border-slate-700/50 flex flex-col gap-2">
           <div className="text-xs font-medium text-slate-400 truncate px-2">
             {user.email}
           </div>
+          <form action={signOut}>
+            <button
+              type="submit"
+              className="w-full text-left px-3 py-2 rounded-md text-sm font-medium text-slate-400 hover:bg-slate-800 hover:text-red-400 transition-colors"
+            >
+              Sign Out
+            </button>
+          </form>
         </div>
       </aside>
 
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col min-w-0">
-        {/* This is where your page.tsx content gets injected */}
         <main className="flex-1">
           {children}
         </main>
