@@ -4,6 +4,7 @@ interface JobType { id: string; name: string; sort_order: number; }
 interface DailyJob {
   id: string;
   job_type_id: string;
+  staff_id: string;
   'AM/PM': string | null;
   staff: { id: string; initials: string | null; first_name: string | null; last_name: string | null } | null;
 }
@@ -16,37 +17,85 @@ interface StaffBoardProps {
   jobTypes: JobType[];
   isLoading: boolean;
   selectedDate: string;
+  selectedStaffIds: string[];
+  onTripAssign: (tripId: string) => void;
+  onRemoveStaff: (tripId: string, staffId: string) => void;
+  onJobAssign: (jobTypeId: string, halfDay: 'AM' | 'PM') => void;
+  onRemoveFromJob: (jobId: string) => void;
 }
 
-function staffInitials(member: DailyJob['staff']): string {
+function memberInitials(member: DailyJob['staff']): string {
   if (!member) return '?';
   if (member.initials) return member.initials;
   return `${member.first_name?.[0] ?? ''}${member.last_name?.[0] ?? ''}`.toUpperCase() || '?';
 }
 
-// Compact job-type card: slate background to distinguish from white trip cards
-function JobCard({ jobType, assignments }: { jobType: JobType; assignments: DailyJob[] }) {
+function JobCard({
+  jobType,
+  assignments,
+  assignMode,
+  selectedStaffIds,
+  onAssign,
+  onRemoveFromJob,
+}: {
+  jobType: JobType;
+  assignments: DailyJob[];
+  assignMode: boolean;
+  selectedStaffIds: string[];
+  onAssign: () => void;
+  onRemoveFromJob: (jobId: string) => void;
+}) {
+  const assignedStaffIds = new Set(assignments.map(j => j.staff_id));
+  const willAdd    = selectedStaffIds.filter(id => !assignedStaffIds.has(id));
+  const willRemove = selectedStaffIds.filter(id =>  assignedStaffIds.has(id));
+  const showDivider = assignments.length > 0 || (assignMode && willAdd.length > 0);
+
   return (
-    <div className="flex items-center gap-2.5 px-3 py-2 rounded-lg bg-slate-100 border border-slate-200">
+    <div
+      onClick={assignMode ? onAssign : undefined}
+      className={`flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-100 border transition-all ${
+        assignMode
+          ? 'border-slate-300 hover:border-teal-400 hover:ring-2 hover:ring-teal-100 cursor-pointer'
+          : 'border-slate-200'
+      }`}
+    >
+      {/* Job name */}
       <span className="text-xs font-bold text-slate-500 whitespace-nowrap shrink-0">
         {jobType.name}
       </span>
-      {assignments.length > 0 && (
-        <span className="w-px h-4 bg-slate-300 shrink-0" />
-      )}
+
+      {showDivider && <span className="w-px h-4 bg-slate-300 shrink-0" />}
+
+      {/* Chips */}
       <div className="flex flex-wrap gap-1">
-        {assignments.length === 0 ? (
+        {assignments.length === 0 && willAdd.length === 0 && (
           <span className="text-[11px] text-slate-400 italic">—</span>
-        ) : (
-          assignments.map(job => (
-            <span
+        )}
+
+        {assignments.map(job => {
+          const isWillRemove = assignMode && willRemove.includes(job.staff_id);
+          return (
+            <button
               key={job.id}
-              title={`${job.staff?.first_name ?? ''} ${job.staff?.last_name ?? ''}`.trim()}
-              className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-slate-300 text-slate-700 text-[10px] font-bold leading-none"
+              title={isWillRemove ? `Remove ${memberInitials(job.staff)}` : `Click to remove ${memberInitials(job.staff)}`}
+              onClick={e => { e.stopPropagation(); onRemoveFromJob(job.id); }}
+              className={`group inline-flex items-center justify-center w-6 h-6 rounded-full text-[10px] font-bold leading-none transition-colors ${
+                isWillRemove
+                  ? 'bg-red-100 text-red-500 ring-1 ring-red-300'
+                  : 'bg-slate-300 text-slate-700 hover:bg-red-100 hover:text-red-500'
+              }`}
             >
-              {staffInitials(job.staff)}
-            </span>
-          ))
+              <span className={isWillRemove ? 'hidden' : 'group-hover:hidden'}>{memberInitials(job.staff)}</span>
+              <span className={isWillRemove ? '' : 'hidden group-hover:inline'}>×</span>
+            </button>
+          );
+        })}
+
+        {/* Preview: staff that will be added */}
+        {assignMode && willAdd.length > 0 && (
+          <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-teal-500 text-white text-[10px] font-bold leading-none ring-1 ring-teal-400">
+            +{willAdd.length}
+          </span>
         )}
       </div>
     </div>
@@ -56,19 +105,31 @@ function JobCard({ jobType, assignments }: { jobType: JobType; assignments: Dail
 function Column({
   title,
   subtitle,
+  halfDay,
   trips,
   jobTypes,
   jobAssignments,
   isLoading,
   selectedDate,
+  selectedStaffIds,
+  onTripAssign,
+  onRemoveStaff,
+  onJobAssign,
+  onRemoveFromJob,
 }: {
   title: string;
   subtitle: string;
+  halfDay: 'AM' | 'PM';
   trips: any[];
   jobTypes: JobType[];
   jobAssignments: DailyJob[];
   isLoading: boolean;
   selectedDate: string;
+  selectedStaffIds: string[];
+  onTripAssign: (tripId: string) => void;
+  onRemoveStaff: (tripId: string, staffId: string) => void;
+  onJobAssign: (jobTypeId: string, halfDay: 'AM' | 'PM') => void;
+  onRemoveFromJob: (jobId: string) => void;
 }) {
   // Group job assignments by job_type_id
   const byType: Record<string, DailyJob[]> = {};
@@ -76,6 +137,8 @@ function Column({
     if (!byType[job.job_type_id]) byType[job.job_type_id] = [];
     byType[job.job_type_id].push(job);
   }
+
+  const assignMode = selectedStaffIds.length > 0;
 
   return (
     <div className="flex flex-col flex-1 min-w-0 min-h-0 border-r border-slate-200 last:border-r-0">
@@ -111,6 +174,10 @@ function Column({
                     key={jt.id}
                     jobType={jt}
                     assignments={byType[jt.id] ?? []}
+                    assignMode={assignMode}
+                    selectedStaffIds={selectedStaffIds}
+                    onAssign={() => onJobAssign(jt.id, halfDay)}
+                    onRemoveFromJob={onRemoveFromJob}
                   />
                 ))}
               </div>
@@ -121,7 +188,7 @@ function Column({
               <div className="border-t border-slate-200 my-1" />
             )}
 
-            {/* Trip cards */}
+            {/* Trip cards — 2-column grid */}
             {trips.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-10 text-slate-300">
                 <svg className="w-7 h-7 mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
@@ -130,9 +197,19 @@ function Column({
                 <span className="text-sm">No trips</span>
               </div>
             ) : (
-              trips.map(trip => (
-                <StaffTripCard key={trip.id} trip={trip} selectedDate={selectedDate} />
-              ))
+              <div className="grid grid-cols-2 gap-2">
+                {trips.map(trip => (
+                  <StaffTripCard
+                    key={trip.id}
+                    trip={trip}
+                    selectedDate={selectedDate}
+                    assignMode={assignMode}
+                    selectedStaffIds={selectedStaffIds}
+                    onAssign={() => onTripAssign(trip.id)}
+                    onRemoveStaff={staffId => onRemoveStaff(trip.id, staffId)}
+                  />
+                ))}
+              </div>
             )}
           </>
         )}
@@ -149,26 +226,43 @@ export default function StaffBoard({
   jobTypes,
   isLoading,
   selectedDate,
+  selectedStaffIds,
+  onTripAssign,
+  onRemoveStaff,
+  onJobAssign,
+  onRemoveFromJob,
 }: StaffBoardProps) {
   return (
     <div className="flex flex-1 min-h-0 overflow-hidden">
       <Column
         title="Morning"
         subtitle="before 12:00"
+        halfDay="AM"
         trips={morningTrips}
         jobTypes={jobTypes}
         jobAssignments={amJobs}
         isLoading={isLoading}
         selectedDate={selectedDate}
+        selectedStaffIds={selectedStaffIds}
+        onTripAssign={onTripAssign}
+        onRemoveStaff={onRemoveStaff}
+        onJobAssign={onJobAssign}
+        onRemoveFromJob={onRemoveFromJob}
       />
       <Column
         title="Afternoon & Night"
         subtitle="12:00 and later"
+        halfDay="PM"
         trips={afternoonTrips}
         jobTypes={jobTypes}
         jobAssignments={pmJobs}
         isLoading={isLoading}
         selectedDate={selectedDate}
+        selectedStaffIds={selectedStaffIds}
+        onTripAssign={onTripAssign}
+        onRemoveStaff={onRemoveStaff}
+        onJobAssign={onJobAssign}
+        onRemoveFromJob={onRemoveFromJob}
       />
     </div>
   );

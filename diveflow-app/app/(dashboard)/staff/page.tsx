@@ -5,17 +5,20 @@ import { createClient } from '@/utils/supabase/client';
 
 import StaffTopBar from './components/StaffTopBar';
 import StaffBoard  from './components/StaffBoard';
+import StaffPanel  from './components/StaffPanel';
 import { getTodayStr, localHour } from './components/dateUtils';
 
 export default function StaffPage() {
   const supabase = createClient();
 
-  const [selectedDate, setSelectedDate] = useState(getTodayStr);
-  const [trips,        setTrips]        = useState<any[]>([]);
-  const [jobTypes,     setJobTypes]     = useState<any[]>([]);
-  const [dailyJobs,    setDailyJobs]    = useState<any[]>([]);
-  const [isLoading,    setIsLoading]    = useState(false);
-  const [userOrgId,    setUserOrgId]    = useState<string | null>(null);
+  const [selectedDate,     setSelectedDate]     = useState(getTodayStr);
+  const [trips,            setTrips]            = useState<any[]>([]);
+  const [jobTypes,         setJobTypes]         = useState<any[]>([]);
+  const [dailyJobs,        setDailyJobs]        = useState<any[]>([]);
+  const [allStaff,         setAllStaff]         = useState<any[]>([]);
+  const [selectedStaffIds, setSelectedStaffIds] = useState<string[]>([]);
+  const [isLoading,        setIsLoading]        = useState(false);
+  const [userOrgId,        setUserOrgId]        = useState<string | null>(null);
 
   // Fetch organisation id once
   useEffect(() => {
@@ -33,18 +36,26 @@ export default function StaffPage() {
     getOrg();
   }, [supabase]);
 
-  // Fetch job types once per org (rarely change)
+  // Fetch job types + staff list once per org (rarely change)
   useEffect(() => {
     if (!userOrgId) return;
-    async function fetchJobTypes() {
-      const { data } = await supabase
-        .from('job_types')
-        .select('id, name, sort_order')
-        .eq('organization_id', userOrgId)
-        .order('sort_order');
-      if (data) setJobTypes(data);
+    async function fetchStaticData() {
+      const [jobTypesRes, staffRes] = await Promise.all([
+        supabase
+          .from('job_types')
+          .select('id, name, sort_order')
+          .eq('organization_id', userOrgId)
+          .order('sort_order'),
+        supabase
+          .from('staff')
+          .select('id, first_name, last_name, initials')
+          .eq('organization_id', userOrgId)
+          .order('first_name'),
+      ]);
+      if (jobTypesRes.data) setJobTypes(jobTypesRes.data);
+      if (staffRes.data)    setAllStaff(staffRes.data);
     }
-    fetchJobTypes();
+    fetchStaticData();
   }, [userOrgId, supabase]);
 
   // Fetch trips + daily job assignments whenever date or org changes
@@ -71,7 +82,6 @@ export default function StaffPage() {
         .lte('start_time', dayEnd.toISOString())
         .order('start_time', { ascending: true }),
 
-      // Select * to safely include the 'AM/PM' column without PostgREST parsing issues
       supabase
         .from('staff_daily_job')
         .select(`*, staff ( id, initials, first_name, last_name )`)
@@ -94,11 +104,93 @@ export default function StaffPage() {
 
   useEffect(() => { fetchDayData(); }, [fetchDayData]);
 
-  // Split trips by hour — morning < 12:00, afternoon/night >= 12:00
+  // Assign / unassign selected staff to a trip (toggle per staff member)
+  const handleTripAssign = useCallback(async (tripId: string) => {
+    if (selectedStaffIds.length === 0) return;
+
+    const trip = trips.find(t => t.id === tripId);
+    const existingIds = new Set((trip?.trip_staff ?? []).map((ts: any) => ts.staff_id));
+
+    const toAdd    = selectedStaffIds.filter(id => !existingIds.has(id));
+    const toRemove = selectedStaffIds.filter(id =>  existingIds.has(id));
+
+    const ops: Promise<any>[] = [];
+
+    if (toAdd.length > 0) {
+      ops.push(
+        supabase.from('trip_staff').insert(
+          toAdd.map(staff_id => ({ trip_id: tripId, staff_id, role_id: null }))
+        )
+      );
+    }
+    for (const staff_id of toRemove) {
+      ops.push(
+        supabase.from('trip_staff').delete()
+          .eq('trip_id', tripId)
+          .eq('staff_id', staff_id)
+      );
+    }
+
+    await Promise.all(ops);
+    setSelectedStaffIds([]);
+    await fetchDayData();
+  }, [selectedStaffIds, trips, supabase, fetchDayData]);
+
+  // Remove a single staff member from a trip directly
+  const handleRemoveStaff = useCallback(async (tripId: string, staffId: string) => {
+    await supabase.from('trip_staff').delete()
+      .eq('trip_id', tripId)
+      .eq('staff_id', staffId);
+    await fetchDayData();
+  }, [supabase, fetchDayData]);
+
+  // Assign / unassign selected staff to a daily job slot (toggle per staff member)
+  const handleJobAssign = useCallback(async (jobTypeId: string, halfDay: 'AM' | 'PM') => {
+    if (!userOrgId || selectedStaffIds.length === 0) return;
+
+    const relevantJobs = dailyJobs.filter(
+      j => j.job_type_id === jobTypeId && j['AM/PM'] === halfDay
+    );
+    const existingStaffIds = new Set(relevantJobs.map((j: any) => j.staff_id));
+
+    const toAdd    = selectedStaffIds.filter(id => !existingStaffIds.has(id));
+    const toRemove = relevantJobs.filter((j: any) => selectedStaffIds.includes(j.staff_id));
+
+    const ops: Promise<any>[] = [];
+
+    if (toAdd.length > 0) {
+      ops.push(
+        supabase.from('staff_daily_job').insert(
+          toAdd.map(staff_id => ({
+            organization_id: userOrgId,
+            staff_id,
+            job_type_id: jobTypeId,
+            job_date: selectedDate,
+            'AM/PM': halfDay,
+          }))
+        )
+      );
+    }
+    for (const job of toRemove) {
+      ops.push(supabase.from('staff_daily_job').delete().eq('id', job.id));
+    }
+
+    await Promise.all(ops);
+    setSelectedStaffIds([]);
+    await fetchDayData();
+  }, [userOrgId, selectedStaffIds, dailyJobs, selectedDate, supabase, fetchDayData]);
+
+  // Remove a single staff member from a daily job slot directly
+  const handleRemoveFromJob = useCallback(async (jobId: string) => {
+    await supabase.from('staff_daily_job').delete().eq('id', jobId);
+    await fetchDayData();
+  }, [supabase, fetchDayData]);
+
+  // Split trips by hour
   const morningTrips   = trips.filter(t => localHour(t.start_time) < 12);
   const afternoonTrips = trips.filter(t => localHour(t.start_time) >= 12);
 
-  // Split job assignments by AM/PM column value
+  // Split job assignments by AM/PM
   const amJobs = dailyJobs.filter(j => j['AM/PM'] === 'AM');
   const pmJobs = dailyJobs.filter(j => j['AM/PM'] === 'PM');
 
@@ -110,15 +202,30 @@ export default function StaffPage() {
         totalTrips={trips.length}
         isLoading={isLoading}
       />
-      <StaffBoard
-        morningTrips={morningTrips}
-        afternoonTrips={afternoonTrips}
-        amJobs={amJobs}
-        pmJobs={pmJobs}
-        jobTypes={jobTypes}
-        isLoading={isLoading}
-        selectedDate={selectedDate}
-      />
+      <div className="flex flex-1 min-h-0 overflow-hidden">
+        <StaffBoard
+          morningTrips={morningTrips}
+          afternoonTrips={afternoonTrips}
+          amJobs={amJobs}
+          pmJobs={pmJobs}
+          jobTypes={jobTypes}
+          isLoading={isLoading}
+          selectedDate={selectedDate}
+          selectedStaffIds={selectedStaffIds}
+          onTripAssign={handleTripAssign}
+          onRemoveStaff={handleRemoveStaff}
+          onJobAssign={handleJobAssign}
+          onRemoveFromJob={handleRemoveFromJob}
+        />
+        <StaffPanel
+          staff={allStaff}
+          selectedIds={selectedStaffIds}
+          onToggle={id => setSelectedStaffIds(prev =>
+            prev.includes(id) ? prev.filter(s => s !== id) : [...prev, id]
+          )}
+          onClear={() => setSelectedStaffIds([])}
+        />
+      </div>
     </div>
   );
 }
