@@ -1,4 +1,5 @@
-import { parseDayLabel } from './dateUtils';
+import { useState, useEffect } from 'react';
+import { parseDayLabel, getTodayStr } from './dateUtils';
 import OverviewTripCard from './OverviewTripCard';
 
 interface Vessel { id: string; name: string; abbreviation?: string | null; }
@@ -37,6 +38,10 @@ export default function OverviewBoard({
   onAddTrip,
   onOpenTrip,
 }: OverviewBoardProps) {
+  // Deferred to client to avoid server/client date mismatch hydration error
+  const [todayStr, setTodayStr] = useState('');
+  useEffect(() => { setTodayStr(getTodayStr()); }, []);
+
   // Card heights (px) — must match the actual rendered sizes
   const CARD_H       = 49; // trip, no label: border(2) + py-2.5*2(20) + h-6(24) + bottom-bar(3)
   const CARD_H_LABEL = 71; // trip, with label: +22px (label strip)
@@ -92,7 +97,8 @@ export default function OverviewBoard({
         {/* Header row — never scrolls vertically */}
         <div className="flex pl-6 shrink-0 border-b border-slate-200">
           {days.map((day, i) => {
-            const { dow, day: dayNum, mon, isToday, isTomorrow } = parseDayLabel(day);
+            const { dow, day: dayNum, mon, isTomorrow } = parseDayLabel(day);
+            const isToday = todayStr !== '' && day === todayStr;
             const dayTrips = tripsByDay[day] ?? [];
             const hasTrips = dayTrips.length > 0;
             const colBg = i % 2 === 0 ? 'bg-white' : 'bg-slate-50';

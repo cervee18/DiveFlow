@@ -86,7 +86,7 @@ export default function OverviewPage() {
         id, label, start_time, max_divers, entry_mode, vessel_id,
         trip_clients ( id ),
         vessels ( name, abbreviation ),
-        trip_types ( name, number_of_dives )
+        trip_types ( name, abbreviation, color, type, number_of_dives )
       `)
       .eq('organization_id', userOrgId)
       .gte('start_time', start.toISOString())

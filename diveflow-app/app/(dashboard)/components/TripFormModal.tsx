@@ -132,11 +132,38 @@ export default function TripFormModal({
   const [tripTypes, setTripTypes] = useState<any[]>([]);
 
   // ── Controlled form fields ────────────────────────────────────────────────
-  const [formDate,     setFormDate]     = useState('');
-  const [formTime,     setFormTime]     = useState('08:00');
-  const [formDuration, setFormDuration] = useState(240);
-  const [formCapacity, setFormCapacity] = useState(14);
-  const [formVesselId, setFormVesselId] = useState('');
+  const [formDate,       setFormDate]       = useState('');
+  const [formTime,       setFormTime]       = useState('08:00');
+  const [formDuration,   setFormDuration]   = useState(240);
+  const [formCapacity,   setFormCapacity]   = useState(14);
+  const [formVesselId,   setFormVesselId]   = useState('');
+  const [formTripTypeId, setFormTripTypeId] = useState('');
+  const [selectedCategory, setSelectedCategory] = useState('');
+
+  // Fixed display order for type categories
+  const CATEGORY_ORDER = ['Diving', 'Snorkel', 'Pool', 'Class'];
+
+  // Normalise legacy / inconsistent type values to match CATEGORY_ORDER labels
+  const TYPE_ALIASES: Record<string, string> = {
+    dive: 'Diving', diving: 'Diving', snorkel: 'Snorkel',
+    pool: 'Pool', class: 'Class',
+  };
+  const normalizedTripTypes = useMemo(
+    () => tripTypes.map(t => ({
+      ...t,
+      type: TYPE_ALIASES[(t.type ?? '').toLowerCase()] ?? t.type ?? 'Diving',
+    })),
+    [tripTypes]
+  );
+
+  // Categories that actually have trip types defined
+  const availableCategories = useMemo(
+    () => CATEGORY_ORDER.filter(c => normalizedTripTypes.some(t => t.type === c)),
+    [normalizedTripTypes]
+  );
+
+  // Pool and Class trips don't use a vessel or entry mode
+  const isNonWaterTrip = selectedCategory === 'Pool' || selectedCategory === 'Class';
 
   // ── Repeat state (add mode only) ──────────────────────────────────────────
   const [isRepeat,   setIsRepeat]   = useState(false);
@@ -175,8 +202,9 @@ export default function TripFormModal({
       const [{ data: vData }, { data: tData }] = await Promise.all([
         supabase.from('vessels').select('id, name, capacity')
           .eq('organization_id', profile.organization_id).order('name'),
-        supabase.from('trip_types').select('*')
-          .eq('organization_id', profile.organization_id).order('default_start_time'),
+        supabase.from('trip_types')
+          .select('id, name, abbreviation, type, default_start_time, number_of_dives')
+          .eq('organization_id', profile.organization_id).order('name'),
       ]);
 
       if (vData) setVessels(vData);
@@ -200,15 +228,24 @@ export default function TripFormModal({
       setFormDuration(tripData.duration_minutes);
       setFormCapacity(tripData.max_divers ?? 14);
       setFormVesselId(tripData.vessel_id ?? '');
+      // Restore type picker state
+      const existingType = normalizedTripTypes.find(t => t.id === tripData.trip_type_id);
+      setFormTripTypeId(tripData.trip_type_id ?? '');
+      setSelectedCategory(existingType?.type ?? '');
     } else if (mode === 'add') {
       const date = selectedDate ?? '';
       setFormDate(date);
+      // Default to first type in first available category
+      const firstCat = CATEGORY_ORDER.find(c => normalizedTripTypes.some(t => t.type === c)) ?? '';
+      const firstType = normalizedTripTypes.find(t => t.type === firstCat);
+      setSelectedCategory(firstCat);
+      setFormTripTypeId(firstType?.id ?? '');
       if (selectedTime) {
         setFormTime(selectedTime);
-        if (tripTypes.length > 0) setFormDuration(tripTypes[0].number_of_dives * 120);
-      } else if (tripTypes.length > 0) {
-        setFormTime(tripTypes[0].default_start_time.substring(0, 5));
-        setFormDuration(tripTypes[0].number_of_dives * 120);
+        if (firstType) setFormDuration(firstType.number_of_dives * 120);
+      } else if (firstType) {
+        setFormTime(firstType.default_start_time.substring(0, 5));
+        setFormDuration(firstType.number_of_dives * 120);
       }
       setFormCapacity(14);
       setFormVesselId('');
@@ -314,8 +351,9 @@ export default function TripFormModal({
   }, [isRepeat, repeatDays, formVesselId, formDate, formTime, formDuration, orgId]);
 
   // ── Field change handlers ─────────────────────────────────────────────────
-  const handleTypeChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const t = tripTypes.find(t => t.id === e.target.value);
+  const handleTypeSelect = (id: string) => {
+    setFormTripTypeId(id);
+    const t = tripTypes.find(t => t.id === id);
     if (t) {
       setFormTime(t.default_start_time.substring(0, 5));
       setFormDuration(t.number_of_dives * 120);
@@ -340,11 +378,11 @@ export default function TripFormModal({
     const basePayload = {
       organization_id:  orgId,
       label:            (fd.get('label') as string) || null,
-      trip_type_id:     fd.get('trip_type_id'),
-      entry_mode:       fd.get('entry_mode'),
+      trip_type_id:     formTripTypeId,
+      entry_mode:       isNonWaterTrip ? null : (fd.get('entry_mode') as string) || null,
       duration_minutes: Number(fd.get('duration_minutes')),
       max_divers:       Number(fd.get('max_divers')),
-      vessel_id:        (fd.get('vessel_id') as string) || null,
+      vessel_id:        isNonWaterTrip ? null : (fd.get('vessel_id') as string) || null,
     };
 
     let error: any = null;
@@ -389,6 +427,20 @@ export default function TripFormModal({
     onClose();
   };
 
+  // ── Body scroll lock ──────────────────────────────────────────────────────
+  useEffect(() => {
+    document.body.style.overflow = isOpen ? 'hidden' : '';
+    return () => { document.body.style.overflow = ''; };
+  }, [isOpen]);
+
+  // ── Escape key to close ───────────────────────────────────────────────────
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', handleKey);
+    return () => window.removeEventListener('keydown', handleKey);
+  }, [isOpen, onClose]);
+
   if (!isOpen) return null;
 
   // Conflicting selected days for the summary banner
@@ -397,51 +449,83 @@ export default function TripFormModal({
     : [];
 
   return (
-    <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center z-[100] p-4">
-      <div className="bg-white rounded-xl shadow-xl border border-slate-200 w-full max-w-lg overflow-hidden flex flex-col max-h-full">
+    <>
+      {/* Backdrop */}
+      <div className="fixed inset-0 bg-black/30 z-[99]" aria-hidden="true" onClick={onClose} />
 
+      {/* Side panel */}
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={mode === 'add' ? 'Schedule New Trip' : 'Edit Trip'}
+        className="fixed inset-y-0 right-0 z-[100] flex flex-col w-[480px] bg-white shadow-2xl"
+      >
         {/* Header */}
-        <div className="p-5 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
+        <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between shrink-0">
           <h2 className="text-lg font-semibold text-slate-800">
             {mode === 'add' ? 'Schedule New Trip' : 'Edit Trip'}
           </h2>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 transition-colors">
-            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+          <button
+            onClick={onClose}
+            className="text-slate-400 hover:text-slate-700 transition-colors p-1.5 rounded-md hover:bg-slate-100"
+          >
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
             </svg>
           </button>
         </div>
 
         {/* Form */}
-        <form onSubmit={handleSubmit} className="p-6 flex flex-col gap-5 overflow-y-auto">
+        <form onSubmit={handleSubmit} className="flex-1 flex flex-col min-h-0">
+        <div className="flex-1 overflow-y-auto p-6 flex flex-col gap-5">
 
-          {/* Trip type + entry mode */}
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Trip Type *</label>
-              <select
-                name="trip_type_id"
-                defaultValue={tripData?.trip_type_id || (tripTypes[0]?.id ?? '')}
-                onChange={handleTypeChange}
-                required
-                className="w-full px-3 py-2 border rounded-md border-slate-300 focus:ring-2 focus:ring-teal-500 outline-none bg-white"
-              >
-                {tripTypes.map(t => (
-                  <option key={t.id} value={t.id}>{t.name}</option>
-                ))}
-              </select>
+          {/* Trip type picker */}
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-2">Trip Type *</label>
+
+            {/* Step 1 — category tabs */}
+            <div className="flex gap-1.5 mb-2">
+              {availableCategories.map(cat => (
+                <button
+                  key={cat}
+                  type="button"
+                  onClick={() => {
+                    setSelectedCategory(cat);
+                    const first = normalizedTripTypes.find(t => t.type === cat);
+                    if (first) handleTypeSelect(first.id);
+                    if (cat === 'Pool' || cat === 'Class') setFormVesselId('');
+                  }}
+                  className={`px-3 py-1 rounded-md text-xs font-semibold transition-colors ${
+                    selectedCategory === cat
+                      ? 'bg-teal-600 text-white'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                >
+                  {cat}
+                </button>
+              ))}
             </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Entry Mode *</label>
-              <select
-                name="entry_mode"
-                defaultValue={tripData?.entry_mode || 'Boat'}
-                className="w-full px-3 py-2 border rounded-md border-slate-300 focus:ring-2 focus:ring-teal-500 outline-none bg-white"
-              >
-                <option value="Boat">Boat</option>
-                <option value="Shore">Shore</option>
-                <option value="Both">Both</option>
-              </select>
+
+            {/* Step 2 — type chips for selected category */}
+            <div className="flex flex-wrap gap-1.5 min-h-[2rem]">
+              {normalizedTripTypes
+                .filter(t => t.type === selectedCategory)
+                .map(t => (
+                  <button
+                    key={t.id}
+                    type="button"
+                    onClick={() => handleTypeSelect(t.id)}
+                    title={t.name}
+                    className={`px-2.5 py-1 rounded-md text-xs font-semibold transition-colors border ${
+                      formTripTypeId === t.id
+                        ? 'bg-teal-50 text-teal-700 border-teal-400 ring-1 ring-teal-300'
+                        : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300 hover:bg-slate-50'
+                    }`}
+                  >
+                    {t.abbreviation || t.name}
+                  </button>
+                ))
+              }
             </div>
           </div>
 
@@ -499,8 +583,8 @@ export default function TripFormModal({
             )}
           </div>
 
-          {/* Start time + duration (always visible) */}
-          <div className="grid grid-cols-2 gap-4">
+          {/* Start time + duration (+ entry mode for water trips) */}
+          <div className={`grid gap-4 ${isNonWaterTrip ? 'grid-cols-2' : 'grid-cols-3'}`}>
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">Start Time *</label>
               <input
@@ -523,6 +607,20 @@ export default function TripFormModal({
                 className="w-full px-3 py-2 border rounded-md border-slate-300 focus:ring-2 focus:ring-teal-500 outline-none"
               />
             </div>
+            {!isNonWaterTrip && (
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Entry Mode *</label>
+                <select
+                  name="entry_mode"
+                  defaultValue={tripData?.entry_mode || 'Boat'}
+                  className="w-full px-3 py-2 border rounded-md border-slate-300 focus:ring-2 focus:ring-teal-500 outline-none bg-white"
+                >
+                  <option value="Boat">Boat</option>
+                  <option value="Shore">Shore</option>
+                  <option value="Both">Both</option>
+                </select>
+              </div>
+            )}
           </div>
 
           {/* Label + capacity */}
@@ -550,8 +648,8 @@ export default function TripFormModal({
             </div>
           </div>
 
-          {/* Vessel selector + conflict feedback */}
-          <div>
+          {/* Vessel selector + conflict feedback — hidden for Pool / Class */}
+          {!isNonWaterTrip && <div>
             <label className="block text-sm font-medium text-slate-700 mb-1">Assign Vessel</label>
             <select
               name="vessel_id"
@@ -629,36 +727,38 @@ export default function TripFormModal({
                   : 'Vessel is available at this time'}
               </p>
             )}
-          </div>
+          </div>}
 
-          {/* Actions */}
-          <div className="pt-4 mt-2 border-t border-slate-100 flex justify-end gap-3 shrink-0">
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 rounded-md transition-colors"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={
-                isSaving ||
-                isCheckingConflict ||
-                hasConflictInSelection ||
-                (isRepeat && repeatDays.length === 0)
-              }
-              className="bg-teal-600 hover:bg-teal-700 text-white px-5 py-2 rounded-md text-sm font-medium shadow-sm transition-colors disabled:opacity-70 disabled:cursor-not-allowed"
-            >
-              {isSaving
-                ? 'Saving…'
-                : isRepeat
-                  ? `Create ${repeatDays.length} Trip${repeatDays.length !== 1 ? 's' : ''}`
-                  : mode === 'add' ? 'Create Trip' : 'Save Changes'}
-            </button>
-          </div>
+        </div>{/* end scrollable fields */}
+
+        {/* Sticky footer */}
+        <div className="px-6 py-4 border-t border-slate-200 flex justify-end gap-3 shrink-0 bg-white">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 rounded-md transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            disabled={
+              isSaving ||
+              isCheckingConflict ||
+              hasConflictInSelection ||
+              (isRepeat && repeatDays.length === 0)
+            }
+            className="bg-teal-600 hover:bg-teal-700 text-white px-5 py-2 rounded-md text-sm font-medium shadow-sm transition-colors disabled:opacity-70 disabled:cursor-not-allowed"
+          >
+            {isSaving
+              ? 'Saving…'
+              : isRepeat
+                ? `Create ${repeatDays.length} Trip${repeatDays.length !== 1 ? 's' : ''}`
+                : mode === 'add' ? 'Create Trip' : 'Save Changes'}
+          </button>
+        </div>
         </form>
       </div>
-    </div>
+    </>
   );
 }

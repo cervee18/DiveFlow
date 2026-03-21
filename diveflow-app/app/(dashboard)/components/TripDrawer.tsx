@@ -67,7 +67,7 @@ export default function TripDrawer({
     const { data, error } = await supabase
       .from('trips')
       .select(`
-        id, label, start_time, duration_minutes, max_divers, vessel_id,
+        id, label, start_time, duration_minutes, max_divers, vessel_id, trip_type_id,
         vessels ( name, abbreviation ),
         trip_types ( id, name, default_start_time, number_of_dives ),
         trip_staff ( roles ( name ), staff ( id, first_name, last_name, initials ) )

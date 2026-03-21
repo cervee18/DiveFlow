@@ -3,12 +3,25 @@
 import { useRouter } from 'next/navigation';
 import { localDateStr } from './dateUtils';
 
-function getTypeAccent(typeName: string | undefined) {
-  const name = (typeName ?? '').toLowerCase();
-  if (name.includes('night'))   return { bar: 'bg-indigo-400', text: 'text-indigo-600', abbr: 'Night' };
-  if (name.includes('snorkel')) return { bar: 'bg-sky-400',    text: 'text-sky-600',    abbr: 'Snkl'  };
-  if (name.includes('pm'))      return { bar: 'bg-amber-400',  text: 'text-amber-600',  abbr: 'PM'    };
-  return                               { bar: 'bg-teal-400',   text: 'text-teal-600',   abbr: 'AM'    };
+// Static map required — Tailwind purges dynamically-constructed class names
+const COLOR_MAP: Record<string, { text: string; cardBg: string; cardBorder: string; cardHover: string }> = {
+  teal:    { text: 'text-teal-700',    cardBg: 'bg-teal-50',    cardBorder: 'border-teal-200',    cardHover: 'hover:bg-teal-100'    },
+  blue:    { text: 'text-blue-700',    cardBg: 'bg-blue-50',    cardBorder: 'border-blue-200',    cardHover: 'hover:bg-blue-100'    },
+  purple:  { text: 'text-purple-700',  cardBg: 'bg-purple-50',  cardBorder: 'border-purple-200',  cardHover: 'hover:bg-purple-100'  },
+  sky:     { text: 'text-sky-700',     cardBg: 'bg-sky-50',     cardBorder: 'border-sky-200',     cardHover: 'hover:bg-sky-100'     },
+  indigo:  { text: 'text-indigo-700',  cardBg: 'bg-indigo-50',  cardBorder: 'border-indigo-200',  cardHover: 'hover:bg-indigo-100'  },
+  amber:   { text: 'text-amber-700',   cardBg: 'bg-amber-50',   cardBorder: 'border-amber-200',   cardHover: 'hover:bg-amber-100'   },
+  rose:    { text: 'text-rose-700',    cardBg: 'bg-rose-50',    cardBorder: 'border-rose-200',    cardHover: 'hover:bg-rose-100'    },
+  emerald: { text: 'text-emerald-700', cardBg: 'bg-emerald-50', cardBorder: 'border-emerald-200', cardHover: 'hover:bg-emerald-100' },
+  cyan:    { text: 'text-cyan-700',    cardBg: 'bg-cyan-50',    cardBorder: 'border-cyan-200',    cardHover: 'hover:bg-cyan-100'    },
+  orange:  { text: 'text-orange-700',  cardBg: 'bg-orange-50',  cardBorder: 'border-orange-200',  cardHover: 'hover:bg-orange-100'  },
+};
+
+const FALLBACK = { text: 'text-teal-700', cardBg: 'bg-teal-50', cardBorder: 'border-teal-200', cardHover: 'hover:bg-teal-100' };
+
+function getTypeAccent(color: string | undefined) {
+  const mapped = COLOR_MAP[(color ?? '').toLowerCase()];
+  return mapped ?? FALLBACK;
 }
 
 function BottomBar({ booked, capacity }: { booked: number; capacity: number | null }) {
@@ -40,8 +53,18 @@ export default function OverviewTripCard({
 }: OverviewTripCardProps) {
   const router = useRouter();
   const date   = localDateStr(trip.start_time);
-  const accent = getTypeAccent(trip.trip_types?.name);
-  const vessel = trip.vessels?.abbreviation || trip.vessels?.name || '—';
+  const accent = getTypeAccent(trip.trip_types?.color);
+
+  // Pool and Class trips have no vessel — detect by type field
+  const tripType = (trip.trip_types?.type ?? '').toLowerCase();
+  const isNonWater = tripType === 'pool' || tripType === 'class';
+
+  // Left label: "TC 2T" for water trips, "Pool" / "Class" for non-water
+  const vesselAbbr   = trip.vessels?.abbreviation || trip.vessels?.name || '';
+  const typeAbbr     = trip.trip_types?.abbreviation || trip.trip_types?.name || '';
+  const leftLabel    = isNonWater
+    ? typeAbbr
+    : [vesselAbbr, typeAbbr].filter(Boolean).join(' ') || '—';
 
 const handleClick = () => {
     if (selectionMode) {
@@ -63,8 +86,8 @@ const handleClick = () => {
         selectionMode
           ? isSelected
             ? 'bg-teal-50 border-teal-400 ring-1 ring-teal-300'
-            : 'bg-white border-slate-200 hover:border-teal-200 hover:bg-teal-50/30'
-          : 'bg-white border-slate-200 hover:shadow-sm hover:border-slate-300'
+            : `${accent.cardBg} ${accent.cardBorder} hover:brightness-95`
+          : `${accent.cardBg} ${accent.cardBorder} ${accent.cardHover} hover:shadow-sm`
       }`}
     >
       {/* Label strip — only rendered when the trip has a label */}
@@ -77,18 +100,10 @@ const handleClick = () => {
       )}
 
       {/* Main content row */}
-      <div className="relative flex items-center gap-1.5 px-2 py-2.5 w-full">
-        {/* Type colour accent */}
-        <span className={`shrink-0 w-1 h-6 rounded-full ${accent.bar}`} />
-
-        {/* Type abbreviation */}
-        <span className={`shrink-0 text-[9px] font-bold uppercase tracking-wide ${accent.text} w-7`}>
-          {accent.abbr}
-        </span>
-
-        {/* Vessel — absolutely centred within the main row */}
-        <span className="absolute left-1/2 -translate-x-1/2 text-[11px] font-semibold text-slate-700 pointer-events-none">
-          {vessel}
+      <div className="flex items-center gap-1 px-2 py-2.5 w-full">
+        {/* Left label: "TC 2T" for water trips, "Pool" / "Class" for non-water */}
+        <span className={`shrink-0 text-[10px] font-bold uppercase tracking-wide leading-none ${accent.text}`}>
+          {leftLabel}
         </span>
 
         {/* Spacer */}
