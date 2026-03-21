@@ -8,6 +8,7 @@ import OverviewTopBar from './components/OverviewTopBar';
 import OverviewBoard  from './components/OverviewBoard';
 import BulkAddPanel   from './components/BulkAddPanel';
 import TripFormModal  from '@/app/(dashboard)/components/TripFormModal';
+import TripDrawer     from '@/app/(dashboard)/components/TripDrawer';
 import { getTodayStr, shiftDate, localDateStr } from './components/dateUtils';
 
 export default function OverviewPage() {
@@ -20,6 +21,7 @@ export default function OverviewPage() {
     return params.get('date') ?? localStorage.getItem('diveflow_date') ?? getTodayStr();
   });
   const [trips,         setTrips]         = useState<any[]>([]);
+  const [vessels,       setVessels]       = useState<any[]>([]);
   const [isLoading,     setIsLoading]     = useState(false);
   const [userOrgId,     setUserOrgId]     = useState<string | null>(null);
 
@@ -30,6 +32,10 @@ export default function OverviewPage() {
   // Add-trip modal
   const [isModalOpen,  setIsModalOpen]  = useState(false);
   const [modalDate,    setModalDate]    = useState<string | undefined>();
+  const [modalTime,    setModalTime]    = useState<string | undefined>();
+
+  // Trip drawer
+  const [drawerTripId, setDrawerTripId] = useState<string | null>(null);
 
   const days      = Array.from({ length: 15 }, (_, i) => shiftDate(windowStart, i));
   const windowEnd = shiftDate(windowStart, 15);
@@ -53,6 +59,17 @@ export default function OverviewPage() {
     getOrg();
   }, [supabase]);
 
+  // Fetch vessels once when org is known
+  useEffect(() => {
+    if (!userOrgId) return;
+    supabase
+      .from('vessels')
+      .select('id, name, abbreviation')
+      .eq('organization_id', userOrgId)
+      .order('name')
+      .then(({ data }) => { if (data) setVessels(data); });
+  }, [userOrgId]);
+
   // Fetch trips for the 15-day window
   const fetchTrips = useCallback(async () => {
     if (!userOrgId) return;
@@ -66,7 +83,7 @@ export default function OverviewPage() {
     const { data, error } = await supabase
       .from('trips')
       .select(`
-        id, label, start_time, max_divers, entry_mode,
+        id, label, start_time, max_divers, entry_mode, vessel_id,
         trip_clients ( id ),
         vessels ( name, abbreviation ),
         trip_types ( name, number_of_dives )
@@ -123,11 +140,13 @@ export default function OverviewPage() {
         <OverviewBoard
           days={days}
           tripsByDay={tripsByDay}
+          vessels={vessels}
           isLoading={isLoading}
           selectionMode={isPanelOpen}
           selectedTripIds={selectedTripIds}
           onTripToggle={handleTripToggle}
-          onAddTrip={(date) => { setModalDate(date); setIsModalOpen(true); }}
+          onAddTrip={(date, time) => { setModalDate(date); setModalTime(time); setIsModalOpen(true); }}
+          onOpenTrip={setDrawerTripId}
         />
 
         {isPanelOpen && (
@@ -147,8 +166,17 @@ export default function OverviewPage() {
         isOpen={isModalOpen}
         mode="add"
         selectedDate={modalDate}
+        selectedTime={modalTime}
         onClose={() => setIsModalOpen(false)}
         onSuccess={fetchTrips}
+      />
+
+      <TripDrawer
+        isOpen={drawerTripId !== null}
+        tripId={drawerTripId}
+        onClose={() => setDrawerTripId(null)}
+        onSuccess={fetchTrips}
+        onMovedToTrip={(trip) => setDrawerTripId(trip.id)}
       />
     </div>
   );

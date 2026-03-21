@@ -27,6 +27,8 @@ interface OverviewTripCardProps {
   selectionMode?: boolean;
   isSelected?: boolean;
   onToggle?: () => void;
+  /** When provided, clicking a trip card calls this instead of navigating to /trips */
+  onOpenTrip?: (tripId: string) => void;
 }
 
 export default function OverviewTripCard({
@@ -34,6 +36,7 @@ export default function OverviewTripCard({
   selectionMode = false,
   isSelected = false,
   onToggle,
+  onOpenTrip,
 }: OverviewTripCardProps) {
   const router = useRouter();
   const date   = localDateStr(trip.start_time);
@@ -43,9 +46,11 @@ export default function OverviewTripCard({
 const handleClick = () => {
     if (selectionMode) {
       onToggle?.();
+    } else if (onOpenTrip) {
+      onOpenTrip(trip.id);
     } else {
-      // Pre-sync local storage so the Trips page doesn't fall back 
-      // to a stale date and overwrite the URL during soft navigation
+      // Fallback: navigate to the Trips page (pre-sync localStorage so it
+      // doesn't fall back to a stale date and overwrite the URL).
       localStorage.setItem('diveflow_date', date);
       router.push(`/trips?date=${date}&tripId=${trip.id}`);
     }

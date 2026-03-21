@@ -7,6 +7,7 @@ interface TripFormModalProps {
   isOpen: boolean;
   mode: 'add' | 'edit';
   selectedDate?: string;   // pre-fills the date field in add mode
+  selectedTime?: string;   // pre-fills the start time (HH:MM) in add mode
   tripData?: any;          // full trip row for edit mode
   onClose: () => void;
   onSuccess: () => void;   // called after a successful save
@@ -118,6 +119,7 @@ export default function TripFormModal({
   isOpen,
   mode,
   selectedDate,
+  selectedTime,
   tripData,
   onClose,
   onSuccess,
@@ -201,14 +203,17 @@ export default function TripFormModal({
     } else if (mode === 'add') {
       const date = selectedDate ?? '';
       setFormDate(date);
-      if (tripTypes.length > 0) {
+      if (selectedTime) {
+        setFormTime(selectedTime);
+        if (tripTypes.length > 0) setFormDuration(tripTypes[0].number_of_dives * 120);
+      } else if (tripTypes.length > 0) {
         setFormTime(tripTypes[0].default_start_time.substring(0, 5));
         setFormDuration(tripTypes[0].number_of_dives * 120);
       }
       setFormCapacity(14);
       setFormVesselId('');
     }
-  }, [isOpen, mode, tripData, tripTypes, selectedDate]);
+  }, [isOpen, mode, tripData, tripTypes, selectedDate, selectedTime]);
 
   // ── Toggle repeat mode ────────────────────────────────────────────────────
   const handleToggleRepeat = (on: boolean) => {

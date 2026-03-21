@@ -1,41 +1,86 @@
 import { parseDayLabel } from './dateUtils';
 import OverviewTripCard from './OverviewTripCard';
 
+interface Vessel { id: string; name: string; abbreviation?: string | null; }
+
 interface OverviewBoardProps {
   days: string[];
   tripsByDay: Record<string, any[]>;
+  vessels: Vessel[];
   isLoading: boolean;
   selectionMode?: boolean;
   selectedTripIds?: string[];
   onTripToggle?: (tripId: string) => void;
-  onAddTrip?: (date: string) => void;
+  onAddTrip?: (date: string, suggestedTime?: string) => void;
+  /** When provided, clicking a trip card opens it in the TripDrawer instead of navigating */
+  onOpenTrip?: (tripId: string) => void;
+}
+
+// ── Idle vessel card ──────────────────────────────────────────────────────────
+function IdleVesselCard({ name }: { name: string }) {
+  return (
+    <div className="w-full px-2 py-1 rounded-md border border-dashed border-slate-200 bg-white flex items-center gap-1.5">
+      <span className="w-1.5 h-1.5 rounded-full bg-slate-300 shrink-0" />
+      <span className="text-[10px] font-medium text-slate-400 truncate">{name}</span>
+    </div>
+  );
 }
 
 export default function OverviewBoard({
   days,
   tripsByDay,
+  vessels,
   isLoading,
   selectionMode = false,
   selectedTripIds = [],
   onTripToggle,
   onAddTrip,
+  onOpenTrip,
 }: OverviewBoardProps) {
-  // Card heights (px) — must match the actual rendered sizes in OverviewTripCard
-  const CARD_H       = 49; // no label: border(2) + py-2.5*2(20) + h-6(24) + bottom-bar(3)
-  const CARD_H_LABEL = 71; // with label: +pt-1.5(6)+pb-1(4)+text(~12) = +22
-  const SECTION_LABEL_H = 14; // "Morning" / "Afternoon" <p> height
+  // Card heights (px) — must match the actual rendered sizes
+  const CARD_H       = 49; // trip, no label: border(2) + py-2.5*2(20) + h-6(24) + bottom-bar(3)
+  const CARD_H_LABEL = 71; // trip, with label: +22px (label strip)
+  const IDLE_CARD_H  = 26; // idle vessel: border(2) + py-1*2(8) + text(~16)
+  const SECTION_LABEL_H = 14; // section heading <p> height
   const GAP = 4; // space-y-1
 
-  // Height of a column's AM section — 0 if it has no AM trips
-  const amSectionHeight = (trips: any[]) => {
-    const am = trips.filter(t => new Date(t.start_time).getHours() < 13);
-    if (!am.length) return 0;
-    const cards = am.reduce((s, t) => s + (t.label ? CARD_H_LABEL : CARD_H), 0);
-    return SECTION_LABEL_H + GAP + cards + (am.length - 1) * GAP;
+  // Three time slots — night dives (≥ 18:00) don't block afternoon vessel availability
+  const AM_END    = 12; // 00:00–11:59 → morning
+  const PM_END    = 18; // 12:00–17:59 → afternoon  ≥ 18:00 → night
+  type Slot = 'am' | 'pm' | 'night';
+  const slotFor = (iso: string): Slot => {
+    const h = new Date(iso).getHours();
+    if (h < AM_END) return 'am';
+    if (h < PM_END) return 'pm';
+    return 'night';
   };
 
-  // Tallest AM section across all days — every column's AM block is at least this tall
-  const maxAmHeight = Math.max(0, ...days.map(day => amSectionHeight(tripsByDay[day] ?? [])));
+  // Vessels not assigned to any trip in a given slot
+  const idleVessels = (trips: any[], slot: Slot) => {
+    const usedIds = new Set(
+      trips.filter(t => slotFor(t.start_time) === slot)
+           .map((t: any) => t.vessel_id)
+           .filter(Boolean)
+    );
+    return vessels.filter(v => !usedIds.has(v.id));
+  };
+
+  // Height of a section (trip cards + idle vessel cards).
+  // Night sections never show idle vessel cards (not operationally relevant).
+  const sectionHeight = (trips: any[], slot: Slot) => {
+    const slotTrips = trips.filter(t => slotFor(t.start_time) === slot);
+    const idle      = slot !== 'night' ? idleVessels(trips, slot) : [];
+    const total     = slotTrips.length + idle.length;
+    if (total === 0) return 0;
+    const tripH = slotTrips.reduce((s, t) => s + (t.label ? CARD_H_LABEL : CARD_H), 0);
+    const idleH = idle.length * IDLE_CARD_H;
+    // space-y-1: label + each card each get one preceding GAP except the label itself
+    return SECTION_LABEL_H + total * GAP + tripH + idleH;
+  };
+
+  // Tallest AM / PM section across all days — used to align the dividers
+  const maxAmHeight = Math.max(0, ...days.map(day => sectionHeight(tripsByDay[day] ?? [], 'am')));
+  const maxPmHeight = Math.max(0, ...days.map(day => sectionHeight(tripsByDay[day] ?? [], 'pm')));
 
   return (
     // overflow-x-auto on outer handles horizontal scroll.
@@ -92,17 +137,28 @@ export default function OverviewBoard({
                     {isLoading ? (
                       <div className="h-16 bg-slate-100 animate-pulse rounded-lg" />
                     ) : (() => {
-                      const am = dayTrips.filter(t => new Date(t.start_time).getHours() < 13);
-                      const pm = dayTrips.filter(t => new Date(t.start_time).getHours() >= 13);
+                      const am    = dayTrips.filter(t => slotFor(t.start_time) === 'am');
+                      const pm    = dayTrips.filter(t => slotFor(t.start_time) === 'pm');
+                      const night = dayTrips.filter(t => slotFor(t.start_time) === 'night');
+                      const idleAm  = idleVessels(dayTrips, 'am');
+                      const idlePm  = idleVessels(dayTrips, 'pm');
+                      const hasAmContent    = am.length > 0 || idleAm.length > 0;
+                      const hasPmContent    = pm.length > 0 || idlePm.length > 0;
+                      const hasNightContent = night.length > 0;
                       return (
                         <>
-                          {/* AM section — minHeight set to the tallest AM section across
-                              all columns so the PM divider aligns regardless of label */}
+                          {/* AM section — minHeight aligns Afternoon dividers across columns */}
                           {maxAmHeight > 0 && (
                             <div className="space-y-1" style={{ minHeight: maxAmHeight }}>
-                              <p className={`px-1 pt-0.5 text-[8px] font-bold uppercase tracking-wider ${am.length > 0 ? 'text-slate-300' : 'invisible'}`}>
-                                Morning
-                              </p>
+                              <div className={`flex items-center justify-between px-1 pt-0.5 ${hasAmContent ? '' : 'invisible'}`}>
+                                <span className="text-[8px] font-bold uppercase tracking-wider text-slate-300">Morning</span>
+                                {!selectionMode && onAddTrip && (
+                                  <button type="button" onClick={() => onAddTrip(day, '07:45')}
+                                    className="opacity-0 group-hover/col:opacity-100 transition-opacity w-3.5 h-3.5 flex items-center justify-center rounded text-slate-400 hover:text-teal-600 hover:bg-teal-50">
+                                    <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" /></svg>
+                                  </button>
+                                )}
+                              </div>
                               {am.map(trip => (
                                 <OverviewTripCard
                                   key={trip.id}
@@ -110,17 +166,27 @@ export default function OverviewBoard({
                                   selectionMode={selectionMode}
                                   isSelected={selectedTripIds.includes(trip.id)}
                                   onToggle={() => onTripToggle?.(trip.id)}
+                                  onOpenTrip={onOpenTrip}
                                 />
+                              ))}
+                              {idleAm.map(v => (
+                                <IdleVesselCard key={v.id} name={v.abbreviation || v.name} />
                               ))}
                             </div>
                           )}
 
-                          {/* PM section */}
-                          {pm.length > 0 && (
-                            <div className="space-y-1 mt-2">
-                              <p className={`px-1 pt-0.5 text-[8px] font-bold uppercase tracking-wider text-slate-300 ${maxAmHeight > 0 ? 'border-t border-slate-200 pt-2' : ''}`}>
-                                Afternoon
-                              </p>
+                          {/* PM section — minHeight aligns Night dividers across columns */}
+                          {(hasPmContent || maxPmHeight > 0) && (
+                            <div className="space-y-1 mt-2" style={{ minHeight: maxPmHeight || undefined }}>
+                              <div className={`flex items-center justify-between px-1 pt-0.5 ${hasPmContent ? '' : 'invisible'} ${maxAmHeight > 0 ? 'border-t border-slate-200 pt-2' : ''}`}>
+                                <span className="text-[8px] font-bold uppercase tracking-wider text-slate-300">Afternoon</span>
+                                {!selectionMode && onAddTrip && (
+                                  <button type="button" onClick={() => onAddTrip(day, '13:00')}
+                                    className="opacity-0 group-hover/col:opacity-100 transition-opacity w-3.5 h-3.5 flex items-center justify-center rounded text-slate-400 hover:text-teal-600 hover:bg-teal-50">
+                                    <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" /></svg>
+                                  </button>
+                                )}
+                              </div>
                               {pm.map(trip => (
                                 <OverviewTripCard
                                   key={trip.id}
@@ -128,13 +194,42 @@ export default function OverviewBoard({
                                   selectionMode={selectionMode}
                                   isSelected={selectedTripIds.includes(trip.id)}
                                   onToggle={() => onTripToggle?.(trip.id)}
+                                  onOpenTrip={onOpenTrip}
+                                />
+                              ))}
+                              {idlePm.map(v => (
+                                <IdleVesselCard key={v.id} name={v.abbreviation || v.name} />
+                              ))}
+                            </div>
+                          )}
+
+                          {/* Night section — no idle vessels (not operationally relevant) */}
+                          {hasNightContent && (
+                            <div className="space-y-1 mt-2">
+                              <div className="flex items-center justify-between px-1 pt-0.5 border-t border-slate-200 pt-2">
+                                <span className="text-[8px] font-bold uppercase tracking-wider text-slate-300">Night</span>
+                                {!selectionMode && onAddTrip && (
+                                  <button type="button" onClick={() => onAddTrip(day, '18:30')}
+                                    className="opacity-0 group-hover/col:opacity-100 transition-opacity w-3.5 h-3.5 flex items-center justify-center rounded text-slate-400 hover:text-teal-600 hover:bg-teal-50">
+                                    <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" /></svg>
+                                  </button>
+                                )}
+                              </div>
+                              {night.map(trip => (
+                                <OverviewTripCard
+                                  key={trip.id}
+                                  trip={trip}
+                                  selectionMode={selectionMode}
+                                  isSelected={selectedTripIds.includes(trip.id)}
+                                  onToggle={() => onTripToggle?.(trip.id)}
+                                  onOpenTrip={onOpenTrip}
                                 />
                               ))}
                             </div>
                           )}
 
                           {/* Empty day */}
-                          {dayTrips.length === 0 && (
+                          {dayTrips.length === 0 && vessels.length === 0 && (
                             <div className="py-6 flex justify-center">
                               <span className="text-slate-300 text-xs">—</span>
                             </div>
@@ -143,18 +238,6 @@ export default function OverviewBoard({
                       );
                     })()}
 
-                    {/* Add-trip button — pinned to column bottom, visible on hover */}
-                    {!selectionMode && onAddTrip && (
-                      <button
-                        onClick={() => onAddTrip(day)}
-                        title={`Add trip on ${dayNum} ${mon}`}
-                        className="opacity-0 group-hover/col:opacity-100 transition-opacity w-full mt-1 py-1 flex items-center justify-center gap-1 rounded-md text-slate-400 hover:text-teal-600 hover:bg-teal-50 border border-dashed border-transparent hover:border-teal-200"
-                      >
-                        <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-                        </svg>
-                      </button>
-                    )}
                   </div>
                 </div>
               );
