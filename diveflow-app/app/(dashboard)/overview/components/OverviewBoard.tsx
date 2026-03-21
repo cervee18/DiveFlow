@@ -27,18 +27,22 @@ export default function OverviewBoard({
 
         {/* Header row — never scrolls vertically */}
         <div className="flex pl-6 shrink-0 border-b border-slate-200">
-          {days.map(day => {
+          {days.map((day, i) => {
             const { dow, day: dayNum, mon, isToday, isTomorrow } = parseDayLabel(day);
             const dayTrips = tripsByDay[day] ?? [];
             const hasTrips = dayTrips.length > 0;
+            const colBg = i % 2 === 0 ? 'bg-white' : 'bg-slate-50';
             return (
               <div
                 key={day}
-                className={`w-52 border-r border-slate-200 last:border-r-0 px-3 py-3 ${isToday ? 'bg-teal-500' : 'bg-slate-50'}`}
+                className={`w-44 border-r border-slate-200 last:border-r-0 px-3 py-3 ${isToday ? 'bg-teal-500' : colBg}`}
               >
-                <div className="flex items-baseline justify-between gap-1">
-                  <span className={`text-[10px] font-bold uppercase tracking-wider ${isToday ? 'text-teal-100' : 'text-slate-400'}`}>
-                    {isToday ? 'Today' : isTomorrow ? 'Tomorrow' : dow}
+                <div className="flex items-center justify-between gap-1">
+                  <span className={`text-sm font-bold ${isToday ? 'text-white' : 'text-slate-700'}`}>
+                    {dayNum}{' '}
+                    <span className={`text-xs font-normal ${isToday ? 'text-teal-100' : 'text-slate-400'}`}>
+                      {mon}
+                    </span>
                   </span>
                   {hasTrips && (
                     <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${
@@ -48,12 +52,6 @@ export default function OverviewBoard({
                     </span>
                   )}
                 </div>
-                <div className={`text-lg font-bold leading-tight ${isToday ? 'text-white' : 'text-slate-700'}`}>
-                  {dayNum}{' '}
-                  <span className={`text-sm font-normal ${isToday ? 'text-teal-100' : 'text-slate-400'}`}>
-                    {mon}
-                  </span>
-                </div>
               </div>
             );
           })}
@@ -61,15 +59,16 @@ export default function OverviewBoard({
 
         {/* Cards area — only vertical scroll, width matches header exactly */}
         <div className="flex-1 overflow-y-auto min-h-0">
-          <div className="flex pl-6">
-            {days.map(day => {
+          <div className="flex pl-6 min-h-full">
+            {days.map((day, i) => {
               const dayTrips = tripsByDay[day] ?? [];
+              const colBg = i % 2 === 0 ? 'bg-white' : 'bg-slate-50';
               return (
                 <div
                   key={day}
-                  className="flex flex-col w-52 border-r border-slate-200 last:border-r-0"
+                  className="flex flex-col w-44 border-r border-slate-200 last:border-r-0"
                 >
-                  <div className="p-2 space-y-2 bg-slate-50/40">
+                  <div className={`flex-1 p-1.5 space-y-1 ${colBg}`}>
                     {isLoading ? (
                       <div className="h-16 bg-slate-100 animate-pulse rounded-lg" />
                     ) : dayTrips.length === 0 ? (
