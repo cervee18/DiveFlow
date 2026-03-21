@@ -55,9 +55,9 @@ export default function OverviewTripCard({
   const date   = localDateStr(trip.start_time);
   const accent = getTypeAccent(trip.trip_types?.color);
 
-  // Pool and Class trips have no vessel — detect by type field
-  const tripType = (trip.trip_types?.type ?? '').toLowerCase();
-  const isNonWater = tripType === 'pool' || tripType === 'class';
+  // Pool and Class trips have no vessel — detect by category field
+  const tripCategory = (trip.trip_types?.category ?? '').toLowerCase();
+  const isNonWater = tripCategory === 'pool' || tripCategory === 'class';
 
   // Left label: "TC 2T" for water trips, "Pool" / "Class" for non-water
   const vesselAbbr   = trip.vessels?.abbreviation || trip.vessels?.name || '';

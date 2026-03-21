@@ -140,26 +140,13 @@ export default function TripFormModal({
   const [formTripTypeId, setFormTripTypeId] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('');
 
-  // Fixed display order for type categories
-  const CATEGORY_ORDER = ['Diving', 'Snorkel', 'Pool', 'Class'];
-
-  // Normalise legacy / inconsistent type values to match CATEGORY_ORDER labels
-  const TYPE_ALIASES: Record<string, string> = {
-    dive: 'Diving', diving: 'Diving', snorkel: 'Snorkel',
-    pool: 'Pool', class: 'Class',
-  };
-  const normalizedTripTypes = useMemo(
-    () => tripTypes.map(t => ({
-      ...t,
-      type: TYPE_ALIASES[(t.type ?? '').toLowerCase()] ?? t.type ?? 'Diving',
-    })),
-    [tripTypes]
-  );
+  // Fixed display order for categories (matches categories table)
+  const CATEGORY_ORDER = ['Dive', 'Snorkel', 'Pool', 'Class'];
 
   // Categories that actually have trip types defined
   const availableCategories = useMemo(
-    () => CATEGORY_ORDER.filter(c => normalizedTripTypes.some(t => t.type === c)),
-    [normalizedTripTypes]
+    () => CATEGORY_ORDER.filter(c => tripTypes.some(t => t.category === c)),
+    [tripTypes]
   );
 
   // Pool and Class trips don't use a vessel or entry mode
@@ -203,7 +190,7 @@ export default function TripFormModal({
         supabase.from('vessels').select('id, name, capacity')
           .eq('organization_id', profile.organization_id).order('name'),
         supabase.from('trip_types')
-          .select('id, name, abbreviation, type, default_start_time, number_of_dives')
+          .select('id, name, abbreviation, category, default_start_time, number_of_dives')
           .eq('organization_id', profile.organization_id).order('name'),
       ]);
 
@@ -229,15 +216,15 @@ export default function TripFormModal({
       setFormCapacity(tripData.max_divers ?? 14);
       setFormVesselId(tripData.vessel_id ?? '');
       // Restore type picker state
-      const existingType = normalizedTripTypes.find(t => t.id === tripData.trip_type_id);
+      const existingType = tripTypes.find(t => t.id === tripData.trip_type_id);
       setFormTripTypeId(tripData.trip_type_id ?? '');
-      setSelectedCategory(existingType?.type ?? '');
+      setSelectedCategory(existingType?.category ?? '');
     } else if (mode === 'add') {
       const date = selectedDate ?? '';
       setFormDate(date);
       // Default to first type in first available category
-      const firstCat = CATEGORY_ORDER.find(c => normalizedTripTypes.some(t => t.type === c)) ?? '';
-      const firstType = normalizedTripTypes.find(t => t.type === firstCat);
+      const firstCat = CATEGORY_ORDER.find(c => tripTypes.some(t => t.category === c)) ?? '';
+      const firstType = tripTypes.find(t => t.category === firstCat);
       setSelectedCategory(firstCat);
       setFormTripTypeId(firstType?.id ?? '');
       if (selectedTime) {
@@ -491,7 +478,7 @@ export default function TripFormModal({
                   type="button"
                   onClick={() => {
                     setSelectedCategory(cat);
-                    const first = normalizedTripTypes.find(t => t.type === cat);
+                    const first = tripTypes.find(t => t.category === cat);
                     if (first) handleTypeSelect(first.id);
                     if (cat === 'Pool' || cat === 'Class') setFormVesselId('');
                   }}
@@ -508,8 +495,8 @@ export default function TripFormModal({
 
             {/* Step 2 — type chips for selected category */}
             <div className="flex flex-wrap gap-1.5 min-h-[2rem]">
-              {normalizedTripTypes
-                .filter(t => t.type === selectedCategory)
+              {tripTypes
+                .filter(t => t.category === selectedCategory)
                 .map(t => (
                   <button
                     key={t.id}
