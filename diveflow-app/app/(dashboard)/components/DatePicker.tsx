@@ -1,5 +1,7 @@
 'use client';
 
+import { useState, useEffect } from 'react';
+
 function getTodayStr() {
   const today = new Date();
   return new Date(today.getTime() - today.getTimezoneOffset() * 60000)
@@ -19,7 +21,12 @@ interface DatePickerProps {
 }
 
 export default function DatePicker({ value, onChange }: DatePickerProps) {
-  const isToday = value === getTodayStr();
+  // Initialise to `true` so the server render and initial client render agree
+  // (Today button hidden). After mount, correct to the real local-date value.
+  const [isToday, setIsToday] = useState(true);
+  useEffect(() => {
+    setIsToday(value === getTodayStr());
+  }, [value]);
 
   return (
     <div className="flex items-center gap-1">

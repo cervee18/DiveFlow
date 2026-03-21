@@ -8,6 +8,7 @@ interface OverviewBoardProps {
   selectionMode?: boolean;
   selectedTripIds?: string[];
   onTripToggle?: (tripId: string) => void;
+  onAddTrip?: (date: string) => void;
 }
 
 export default function OverviewBoard({
@@ -17,7 +18,25 @@ export default function OverviewBoard({
   selectionMode = false,
   selectedTripIds = [],
   onTripToggle,
+  onAddTrip,
 }: OverviewBoardProps) {
+  // Card heights (px) — must match the actual rendered sizes in OverviewTripCard
+  const CARD_H       = 49; // no label: border(2) + py-2.5*2(20) + h-6(24) + bottom-bar(3)
+  const CARD_H_LABEL = 71; // with label: +pt-1.5(6)+pb-1(4)+text(~12) = +22
+  const SECTION_LABEL_H = 14; // "Morning" / "Afternoon" <p> height
+  const GAP = 4; // space-y-1
+
+  // Height of a column's AM section — 0 if it has no AM trips
+  const amSectionHeight = (trips: any[]) => {
+    const am = trips.filter(t => new Date(t.start_time).getHours() < 13);
+    if (!am.length) return 0;
+    const cards = am.reduce((s, t) => s + (t.label ? CARD_H_LABEL : CARD_H), 0);
+    return SECTION_LABEL_H + GAP + cards + (am.length - 1) * GAP;
+  };
+
+  // Tallest AM section across all days — every column's AM block is at least this tall
+  const maxAmHeight = Math.max(0, ...days.map(day => amSectionHeight(tripsByDay[day] ?? [])));
+
   return (
     // overflow-x-auto on outer handles horizontal scroll.
     // A min-w-max wrapper inside ensures header + cards share the same width,
@@ -63,28 +82,78 @@ export default function OverviewBoard({
             {days.map((day, i) => {
               const dayTrips = tripsByDay[day] ?? [];
               const colBg = i % 2 === 0 ? 'bg-white' : 'bg-slate-50';
+              const { day: dayNum, mon } = parseDayLabel(day);
               return (
                 <div
                   key={day}
-                  className="flex flex-col w-44 border-r border-slate-200 last:border-r-0"
+                  className="group/col flex flex-col w-44 border-r border-slate-200 last:border-r-0"
                 >
-                  <div className={`flex-1 p-1.5 space-y-1 ${colBg}`}>
+                  <div className={`flex-1 p-1.5 ${colBg}`}>
                     {isLoading ? (
                       <div className="h-16 bg-slate-100 animate-pulse rounded-lg" />
-                    ) : dayTrips.length === 0 ? (
-                      <div className="py-6 flex justify-center">
-                        <span className="text-slate-300 text-xs">—</span>
-                      </div>
-                    ) : (
-                      dayTrips.map(trip => (
-                        <OverviewTripCard
-                          key={trip.id}
-                          trip={trip}
-                          selectionMode={selectionMode}
-                          isSelected={selectedTripIds.includes(trip.id)}
-                          onToggle={() => onTripToggle?.(trip.id)}
-                        />
-                      ))
+                    ) : (() => {
+                      const am = dayTrips.filter(t => new Date(t.start_time).getHours() < 13);
+                      const pm = dayTrips.filter(t => new Date(t.start_time).getHours() >= 13);
+                      return (
+                        <>
+                          {/* AM section — minHeight set to the tallest AM section across
+                              all columns so the PM divider aligns regardless of label */}
+                          {maxAmHeight > 0 && (
+                            <div className="space-y-1" style={{ minHeight: maxAmHeight }}>
+                              <p className={`px-1 pt-0.5 text-[8px] font-bold uppercase tracking-wider ${am.length > 0 ? 'text-slate-300' : 'invisible'}`}>
+                                Morning
+                              </p>
+                              {am.map(trip => (
+                                <OverviewTripCard
+                                  key={trip.id}
+                                  trip={trip}
+                                  selectionMode={selectionMode}
+                                  isSelected={selectedTripIds.includes(trip.id)}
+                                  onToggle={() => onTripToggle?.(trip.id)}
+                                />
+                              ))}
+                            </div>
+                          )}
+
+                          {/* PM section */}
+                          {pm.length > 0 && (
+                            <div className="space-y-1 mt-2">
+                              <p className={`px-1 pt-0.5 text-[8px] font-bold uppercase tracking-wider text-slate-300 ${maxAmHeight > 0 ? 'border-t border-slate-200 pt-2' : ''}`}>
+                                Afternoon
+                              </p>
+                              {pm.map(trip => (
+                                <OverviewTripCard
+                                  key={trip.id}
+                                  trip={trip}
+                                  selectionMode={selectionMode}
+                                  isSelected={selectedTripIds.includes(trip.id)}
+                                  onToggle={() => onTripToggle?.(trip.id)}
+                                />
+                              ))}
+                            </div>
+                          )}
+
+                          {/* Empty day */}
+                          {dayTrips.length === 0 && (
+                            <div className="py-6 flex justify-center">
+                              <span className="text-slate-300 text-xs">—</span>
+                            </div>
+                          )}
+                        </>
+                      );
+                    })()}
+
+                    {/* Add-trip button — pinned to column bottom, visible on hover */}
+                    {!selectionMode && onAddTrip && (
+                      <button
+                        onClick={() => onAddTrip(day)}
+                        title={`Add trip on ${dayNum} ${mon}`}
+                        className="opacity-0 group-hover/col:opacity-100 transition-opacity w-full mt-1 py-1 flex items-center justify-center gap-1 rounded-md text-slate-400 hover:text-teal-600 hover:bg-teal-50 border border-dashed border-transparent hover:border-teal-200"
+                      >
+                        <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                        </svg>
+                      </button>
                     )}
                   </div>
                 </div>

@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { createClient } from '@/utils/supabase/client';
 import TripTopBar from './components/TripTopBar'; 
 import TripHeader from './components/TripHeader';
-import TripFormModal from './components/TripFormModal';
+import TripFormModal from '@/app/(dashboard)/components/TripFormModal';
 import TripManifest from './components/TripManifest';
 import { useRouter } from 'next/navigation';
 
@@ -32,15 +32,12 @@ export default function TripsPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [userOrgId, setUserOrgId] = useState<string | null>(null);
 
-  const [vessels, setVessels] = useState<any[]>([]);
-  const [tripTypes, setTripTypes] = useState<any[]>([]);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
 
-  // Modal State
+  // Modal state
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [modalMode, setModalMode] = useState<'add' | 'edit'>('add');
+  const [modalMode,   setModalMode]   = useState<'add' | 'edit'>('add');
   const [editingTrip, setEditingTrip] = useState<any>(null);
-  const [isSaving, setIsSaving] = useState(false);
 
   // Keep URL in sync and share date with other pages via localStorage
   useEffect(() => {
@@ -62,19 +59,6 @@ export default function TripsPage() {
     }
     getUserOrg();
   }, [supabase]);
-
-  useEffect(() => {
-    async function fetchReferenceData() {
-      if (!userOrgId) return;
-      
-      const { data: vData } = await supabase.from('vessels').select('id, name, capacity').eq('organization_id', userOrgId).order('name', { ascending: true });
-      if (vData) setVessels(vData);
-
-      const { data: tData } = await supabase.from('trip_types').select('*').eq('organization_id', userOrgId).order('default_start_time', { ascending: true });
-      if (tData) setTripTypes(tData);
-    }
-    fetchReferenceData();
-  }, [userOrgId, supabase]);
 
   useEffect(() => {
     async function fetchTrips() {
@@ -121,41 +105,6 @@ export default function TripsPage() {
     } else {
       alert("Error deleting trip: " + error.message);
     }
-  };
-
-  const handleSaveTrip = async (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    if (!userOrgId) return;
-    setIsSaving(true);
-
-    const fd = new FormData(e.currentTarget);
-    const dateStr = fd.get("date") as string;
-    const timeStr = fd.get("time") as string;
-    const [year, month, day] = dateStr.split('-').map(Number);
-    const [hours, minutes] = timeStr.split(':').map(Number);
-    
-    const tripData = {
-      organization_id: userOrgId,
-      label: fd.get("label"),
-      trip_type_id: fd.get("trip_type_id"),
-      entry_mode: fd.get("entry_mode"),
-      start_time: new Date(year, month - 1, day, hours, minutes).toISOString(),
-      duration_minutes: Number(fd.get("duration_minutes")),
-      max_divers: Number(fd.get("max_divers")),
-      vessel_id: fd.get("vessel_id") || null,
-    };
-
-    if (modalMode === 'add') {
-      const { error } = await supabase.from('trips').insert(tripData);
-      if (error) alert("Error creating trip: " + error.message);
-    } else {
-      const { error } = await supabase.from('trips').update(tripData).eq('id', editingTrip.id);
-      if (error) alert("Error updating trip: " + error.message);
-    }
-
-    setIsSaving(false);
-    setIsModalOpen(false);
-    setRefreshTrigger(prev => prev + 1);
   };
 
   const openAddModal = () => {
@@ -218,16 +167,13 @@ export default function TripsPage() {
         )}
       </div>
 
-      <TripFormModal 
-        isOpen={isModalOpen} 
-        mode={modalMode} 
-        tripData={editingTrip} 
-        vessels={vessels} 
-        tripTypes={tripTypes} 
-        selectedDate={selectedDate} 
-        onClose={() => setIsModalOpen(false)} 
-        onSave={handleSaveTrip} 
-        isSaving={isSaving} 
+      <TripFormModal
+        isOpen={isModalOpen}
+        mode={modalMode}
+        tripData={editingTrip}
+        selectedDate={selectedDate}
+        onClose={() => setIsModalOpen(false)}
+        onSuccess={() => setRefreshTrigger(prev => prev + 1)}
       />
     </div>
   );

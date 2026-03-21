@@ -7,6 +7,7 @@ import { createClient } from '@/utils/supabase/client';
 import OverviewTopBar from './components/OverviewTopBar';
 import OverviewBoard  from './components/OverviewBoard';
 import BulkAddPanel   from './components/BulkAddPanel';
+import TripFormModal  from '@/app/(dashboard)/components/TripFormModal';
 import { getTodayStr, shiftDate, localDateStr } from './components/dateUtils';
 
 export default function OverviewPage() {
@@ -25,6 +26,10 @@ export default function OverviewPage() {
   // Panel state
   const [isPanelOpen,     setIsPanelOpen]     = useState(false);
   const [selectedTripIds, setSelectedTripIds] = useState<string[]>([]);
+
+  // Add-trip modal
+  const [isModalOpen,  setIsModalOpen]  = useState(false);
+  const [modalDate,    setModalDate]    = useState<string | undefined>();
 
   const days      = Array.from({ length: 15 }, (_, i) => shiftDate(windowStart, i));
   const windowEnd = shiftDate(windowStart, 15);
@@ -122,6 +127,7 @@ export default function OverviewPage() {
           selectionMode={isPanelOpen}
           selectedTripIds={selectedTripIds}
           onTripToggle={handleTripToggle}
+          onAddTrip={(date) => { setModalDate(date); setIsModalOpen(true); }}
         />
 
         {isPanelOpen && (
@@ -137,6 +143,13 @@ export default function OverviewPage() {
           />
         )}
       </div>
+      <TripFormModal
+        isOpen={isModalOpen}
+        mode="add"
+        selectedDate={modalDate}
+        onClose={() => setIsModalOpen(false)}
+        onSuccess={fetchTrips}
+      />
     </div>
   );
 }
