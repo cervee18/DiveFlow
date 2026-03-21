@@ -11,21 +11,13 @@ function getTypeAccent(typeName: string | undefined) {
   return                               { bar: 'bg-teal-400',   text: 'text-teal-600',   abbr: 'AM'    };
 }
 
-function MiniBar({ booked, capacity }: { booked: number; capacity: number | null }) {
+function BottomBar({ booked, capacity }: { booked: number; capacity: number | null }) {
   if (!capacity) return null;
-  const pct       = Math.min((booked / capacity) * 100, 100);
-  const available = Math.max(capacity - booked, 0);
-  const color     = pct >= 90 ? 'bg-red-400' : pct >= 70 ? 'bg-amber-400' : 'bg-teal-400';
+  const pct   = Math.min((booked / capacity) * 100, 100);
+  const color = pct >= 90 ? 'bg-red-400' : pct >= 70 ? 'bg-amber-400' : 'bg-teal-400';
   return (
-    <div className="flex items-center gap-1 shrink-0">
-      <div className="w-10 h-1 bg-slate-200 rounded-full overflow-hidden">
-        <div className={`h-full rounded-full ${color}`} style={{ width: `${pct}%` }} />
-      </div>
-      <span className={`text-[9px] tabular-nums font-semibold w-6 text-right ${
-        available === 0 ? 'text-red-500' : 'text-slate-400'
-      }`}>
-        {available === 0 ? 'Full' : `${available}`}
-      </span>
+    <div className="absolute bottom-0 left-0 right-0 h-[3px] bg-slate-100">
+      <div className={`h-full transition-all ${color}`} style={{ width: `${pct}%` }} />
     </div>
   );
 }
@@ -56,7 +48,7 @@ export default function OverviewTripCard({
   return (
     <button
       onClick={handleClick}
-      className={`w-full flex items-center gap-1.5 px-2 py-2.5 rounded-lg border text-left transition-all ${
+      className={`relative overflow-hidden w-full flex flex-col rounded-lg border text-left transition-all ${
         selectionMode
           ? isSelected
             ? 'bg-teal-50 border-teal-400 ring-1 ring-teal-300'
@@ -64,34 +56,62 @@ export default function OverviewTripCard({
           : 'bg-white border-slate-200 hover:shadow-sm hover:border-slate-300'
       }`}
     >
-      {/* Type colour accent */}
-      <span className={`shrink-0 w-1 h-6 rounded-full ${accent.bar}`} />
-
-      {/* Type abbreviation */}
-      <span className={`shrink-0 text-[9px] font-bold uppercase tracking-wide ${accent.text} w-7`}>
-        {accent.abbr}
-      </span>
-
-      {/* Vessel */}
-      <span className="text-[11px] font-semibold text-slate-700 shrink-0 flex-1">
-        {vessel}
-      </span>
-
-      {/* Mini fill bar */}
-      <MiniBar booked={trip.booked_divers} capacity={trip.max_divers} />
-
-      {/* Selection checkbox */}
-      {selectionMode && (
-        <span className={`w-3.5 h-3.5 rounded-full border-2 flex items-center justify-center shrink-0 transition-colors ${
-          isSelected ? 'bg-teal-500 border-teal-500' : 'border-slate-300'
-        }`}>
-          {isSelected && (
-            <svg className="w-2 h-2 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-            </svg>
-          )}
-        </span>
+      {/* Label strip — only rendered when the trip has a label */}
+      {trip.label && (
+        <div className="w-full px-2 pt-1.5 pb-1 border-b border-slate-100">
+          <span className="text-[9px] font-medium text-slate-400 truncate block leading-none">
+            {trip.label}
+          </span>
+        </div>
       )}
+
+      {/* Main content row */}
+      <div className="relative flex items-center gap-1.5 px-2 py-2.5 w-full">
+        {/* Type colour accent */}
+        <span className={`shrink-0 w-1 h-6 rounded-full ${accent.bar}`} />
+
+        {/* Type abbreviation */}
+        <span className={`shrink-0 text-[9px] font-bold uppercase tracking-wide ${accent.text} w-7`}>
+          {accent.abbr}
+        </span>
+
+        {/* Vessel — absolutely centred within the main row */}
+        <span className="absolute left-1/2 -translate-x-1/2 text-[11px] font-semibold text-slate-700 pointer-events-none">
+          {vessel}
+        </span>
+
+        {/* Spacer */}
+        <span className="flex-1" />
+
+        {/* Available spaces */}
+        {trip.max_divers != null && (
+          <span className={`text-[9px] tabular-nums font-semibold shrink-0 ${
+            trip.max_divers - trip.booked_divers <= 0
+              ? 'text-red-500'
+              : 'text-slate-400'
+          }`}>
+            {trip.max_divers - trip.booked_divers <= 0
+              ? 'Full'
+              : `${trip.max_divers - trip.booked_divers}`}
+          </span>
+        )}
+
+        {/* Selection checkbox */}
+        {selectionMode && (
+          <span className={`w-3.5 h-3.5 rounded-full border-2 flex items-center justify-center shrink-0 transition-colors ${
+            isSelected ? 'bg-teal-500 border-teal-500' : 'border-slate-300'
+          }`}>
+            {isSelected && (
+              <svg className="w-2 h-2 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+              </svg>
+            )}
+          </span>
+        )}
+      </div>
+
+      {/* Capacity bar pinned to bottom edge */}
+      <BottomBar booked={trip.booked_divers} capacity={trip.max_divers} />
     </button>
   );
 }
