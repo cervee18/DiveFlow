@@ -40,9 +40,15 @@ export default function OverviewTripCard({
   const accent = getTypeAccent(trip.trip_types?.name);
   const vessel = trip.vessels?.abbreviation || trip.vessels?.name || '—';
 
-  const handleClick = () => {
-    if (selectionMode) onToggle?.();
-    else router.push(`/trips?date=${date}&tripId=${trip.id}`);
+const handleClick = () => {
+    if (selectionMode) {
+      onToggle?.();
+    } else {
+      // Pre-sync local storage so the Trips page doesn't fall back 
+      // to a stale date and overwrite the URL during soft navigation
+      localStorage.setItem('diveflow_date', date);
+      router.push(`/trips?date=${date}&tripId=${trip.id}`);
+    }
   };
 
   return (

@@ -4,49 +4,79 @@ import { useState, useEffect } from 'react';
 import { createClient } from '@/utils/supabase/client';
 import TripTopBar from './components/TripTopBar'; 
 import TripHeader from './components/TripHeader';
-import TripFormModal from '@/app/(dashboard)/components/TripFormModal';
+import TripFormModal from './components/TripFormModal';
 import TripManifest from './components/TripManifest';
-import { useRouter } from 'next/navigation';
+// 1. Import useSearchParams
+import { useRouter, useSearchParams } from 'next/navigation';
 
 export default function TripsPage() {
   const supabase = createClient();
   const router   = useRouter();
-  
+  const searchParams = useSearchParams();
+
+  // Extract directly from Next.js router state
+  const urlDate = searchParams.get('date');
+  const urlTripId = searchParams.get('tripId');
+
   // -- State --
   const [selectedDate, setSelectedDate] = useState(() => {
     if (typeof window === 'undefined') {
       const today = new Date();
       return new Date(today.getTime() - today.getTimezoneOffset() * 60000).toISOString().split('T')[0];
     }
-    const params = new URLSearchParams(window.location.search);
+    // Prioritize Next.js URL state -> then LocalStorage -> then Today
     const today  = new Date();
     const todayStr = new Date(today.getTime() - today.getTimezoneOffset() * 60000).toISOString().split('T')[0];
-    return params.get('date') ?? localStorage.getItem('diveflow_date') ?? todayStr;
-  });
-  const [selectedTripId, setSelectedTripId] = useState<string | null>(() => {
-    if (typeof window === 'undefined') return null;
-    return new URLSearchParams(window.location.search).get('tripId');
+    return urlDate ?? localStorage.getItem('diveflow_date') ?? todayStr;
   });
 
+  // Initialize directly from Next.js URL state
+  const [selectedTripId, setSelectedTripId] = useState<string | null>(urlTripId || null);
+
+  // ... (keep trips, isLoading, userOrgId, vessels, tripTypes, etc. state exactly the same)
   const [trips, setTrips] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [userOrgId, setUserOrgId] = useState<string | null>(null);
 
+  const [vessels, setVessels] = useState<any[]>([]);
+  const [tripTypes, setTripTypes] = useState<any[]>([]);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
 
-  // Modal state
+  // Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [modalMode,   setModalMode]   = useState<'add' | 'edit'>('add');
+  const [modalMode, setModalMode] = useState<'add' | 'edit'>('add');
   const [editingTrip, setEditingTrip] = useState<any>(null);
+  const [isSaving, setIsSaving] = useState(false);
 
-  // Keep URL in sync and share date with other pages via localStorage
+  // -- URL Synchronization --
+  
+  // 1. Sync FROM URL -> TO State (Handles arriving from the Overview/Staff pages)
   useEffect(() => {
-    const params = new URLSearchParams();
-    params.set('date', selectedDate);
-    if (selectedTripId) params.set('tripId', selectedTripId);
-    router.replace(`?${params.toString()}`, { scroll: false });
-    localStorage.setItem('diveflow_date', selectedDate);
-  }, [selectedDate, selectedTripId]);
+    if (urlDate && urlDate !== selectedDate) {
+      setSelectedDate(urlDate);
+    }
+    if (urlTripId !== selectedTripId) {
+      setSelectedTripId(urlTripId);
+    }
+  }, [urlDate, urlTripId]);
+
+  // 2. Sync FROM State -> TO URL (Handles user clicking dates/trips inside this page)
+  useEffect(() => {
+    // Prevent rewriting the URL if it already matches state (avoids infinite loops)
+    if (selectedDate !== urlDate || selectedTripId !== urlTripId) {
+      const params = new URLSearchParams(searchParams.toString());
+      params.set('date', selectedDate);
+      
+      if (selectedTripId) {
+        params.set('tripId', selectedTripId);
+      } else {
+        params.delete('tripId');
+      }
+      
+      router.replace(`?${params.toString()}`, { scroll: false });
+      localStorage.setItem('diveflow_date', selectedDate);
+    }
+  }, [selectedDate, selectedTripId, urlDate, urlTripId, router, searchParams]);
 
   // -- Data Fetching --
   useEffect(() => {
