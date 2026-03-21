@@ -18,10 +18,10 @@ BEGIN
     SELECT 1 FROM information_schema.columns
     WHERE table_schema = 'public'
       AND table_name   = 'activities'
-      AND column_name  = 'requires_private'
+      AND column_name  IN ('requires_private', 'Requires_private')
   ) THEN
     ALTER TABLE public.activities
-      RENAME COLUMN requires_private TO accept_certified_divers;
+      RENAME COLUMN "Requires_private" TO accept_certified_divers;
   END IF;
 END $$;
 
