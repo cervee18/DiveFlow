@@ -11,6 +11,7 @@ export default function TripManifest({
   tripDate,
   capacity,
   numberOfDives = 1,
+  tripCategory,
   onManifestChange,
   onMovedToTrip,
 }: {
@@ -18,6 +19,7 @@ export default function TripManifest({
   tripDate: string,
   capacity?: number,
   numberOfDives?: number,
+  tripCategory?: string,
   onManifestChange?: () => void,
   onMovedToTrip?: (trip: any) => void,
 }) {
@@ -92,10 +94,12 @@ export default function TripManifest({
       .select('id, abbreviation')
       .order('abbreviation', { ascending: true });
 
-    const { data: activityData } = await supabase
+    let activityQuery = supabase
       .from('activities')
-      .select('id, name')
+      .select('id, name, category')
       .order('name', { ascending: true });
+    if (tripCategory) activityQuery = activityQuery.eq('category', tripCategory);
+    const { data: activityData } = await activityQuery;
 
     if (manifestData) setManifest(manifestData);
     if (catData) setCategories(catData);
@@ -179,7 +183,7 @@ export default function TripManifest({
     }
 
     setIsLoading(false);
-  }, [tripId, tripDate, supabase]);
+  }, [tripId, tripDate, tripCategory, supabase]);
 
   useEffect(() => {
     fetchData();

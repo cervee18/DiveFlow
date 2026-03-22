@@ -84,7 +84,7 @@ export default function OverviewPage() {
       .from('trips')
       .select(`
         id, label, start_time, max_divers, entry_mode, vessel_id,
-        trip_clients ( id ),
+        trip_clients ( id, activities ( name, abbreviation ) ),
         vessels ( name, abbreviation ),
         trip_types ( name, abbreviation, color, category, number_of_dives )
       `)

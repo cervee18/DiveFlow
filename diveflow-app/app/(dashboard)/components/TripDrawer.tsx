@@ -69,7 +69,7 @@ export default function TripDrawer({
       .select(`
         id, label, start_time, duration_minutes, max_divers, vessel_id, trip_type_id,
         vessels ( name, abbreviation ),
-        trip_types ( id, name, default_start_time, number_of_dives ),
+        trip_types ( id, name, default_start_time, number_of_dives, category ),
         trip_staff ( roles ( name ), staff ( id, first_name, last_name, initials ) )
       `)
       .eq('id', id)
@@ -196,6 +196,7 @@ export default function TripDrawer({
                 tripDate={trip.start_time}
                 capacity={trip.max_divers}
                 numberOfDives={trip.trip_types?.number_of_dives ?? 1}
+                tripCategory={trip.trip_types?.category ?? undefined}
                 onManifestChange={handleManifestChange}
                 onMovedToTrip={handleMovedToTrip}
               />

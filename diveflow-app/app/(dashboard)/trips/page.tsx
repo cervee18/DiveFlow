@@ -105,7 +105,7 @@ export default function TripsPage() {
           *,
           trip_clients ( id ),
           vessels ( name, capacity ),
-          trip_types ( id, name, default_start_time, number_of_dives ),
+          trip_types ( id, name, default_start_time, number_of_dives, category ),
           trip_staff ( roles ( name ), staff ( id, first_name, last_name, initials ) )
         `)
         .eq('organization_id', userOrgId)
@@ -180,6 +180,7 @@ export default function TripsPage() {
   tripDate={selectedTrip.start_time}
   capacity={selectedTrip.max_divers}
   numberOfDives={selectedTrip.trip_types?.number_of_dives ?? 1}
+  tripCategory={selectedTrip.trip_types?.category ?? undefined}
   onManifestChange={() => setRefreshTrigger(prev => prev + 1)}
   onMovedToTrip={(trip) => {
     const d = new Date(trip.start_time);

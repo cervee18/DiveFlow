@@ -1,5 +1,6 @@
 'use client';
 
+import { useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { localDateStr } from './dateUtils';
 
@@ -66,6 +67,18 @@ export default function OverviewTripCard({
     ? typeAbbr
     : [vesselAbbr, typeAbbr].filter(Boolean).join(' ') || '—';
 
+  // Aggregate how many clients are doing each activity in this trip
+  const activityRows = useMemo(() => {
+    const map: Record<string, { label: string; count: number }> = {};
+    (trip.trip_clients ?? []).forEach((tc: any) => {
+      if (!tc.activities) return;
+      const key = tc.activities.name;
+      if (!map[key]) map[key] = { label: tc.activities.abbreviation || tc.activities.name, count: 0 };
+      map[key].count++;
+    });
+    return Object.values(map).sort((a, b) => a.label.localeCompare(b.label));
+  }, [trip.trip_clients]);
+
 const handleClick = () => {
     if (selectionMode) {
       onToggle?.();
@@ -118,7 +131,7 @@ const handleClick = () => {
           }`}>
             {trip.max_divers - trip.booked_divers <= 0
               ? 'Full'
-              : `${trip.max_divers - trip.booked_divers}`}
+              : `(${trip.max_divers - trip.booked_divers})`}
           </span>
         )}
 
@@ -135,6 +148,18 @@ const handleClick = () => {
           </span>
         )}
       </div>
+
+      {/* Activity breakdown rows */}
+      {activityRows.length > 0 && (
+        <div className="w-full px-2 pb-2.5 flex flex-col gap-[3px]">
+          {activityRows.map(({ label, count }) => (
+            <div key={label} className="flex items-center justify-between gap-1">
+              <span className={`text-[9px] truncate leading-none ${accent.text} opacity-80`}>{label}</span>
+              <span className="text-[9px] font-bold tabular-nums text-slate-400 shrink-0">{count}</span>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Capacity bar pinned to bottom edge */}
       <BottomBar booked={trip.booked_divers} capacity={trip.max_divers} />
