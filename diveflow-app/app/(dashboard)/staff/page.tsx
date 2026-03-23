@@ -155,7 +155,7 @@ export default function StaffPage() {
         .from('trips')
         .select(`
           id, label, start_time, max_divers,
-          trip_clients ( id, activity_id, activities ( id, name, is_default ) ),
+          trip_clients ( id, activity_id, activities ( id, name ) ),
           vessels      ( name, abbreviation ),
           trip_types   ( name, number_of_dives ),
           trip_staff   ( id, staff_id, activity_id, staff ( id, initials, first_name, last_name, captain_license ) )
@@ -176,7 +176,7 @@ export default function StaffPage() {
       setTrips(tripsRes.data.map(t => {
         const activityMap = new Map<string, string>();
         for (const tc of t.trip_clients ?? []) {
-          if (tc.activity_id && tc.activities && !tc.activities.is_default) {
+          if (tc.activity_id && tc.activities) {
             activityMap.set(tc.activity_id, tc.activities.name);
           }
         }
