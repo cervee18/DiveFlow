@@ -5,6 +5,7 @@ import { createClient } from '@/utils/supabase/client';
 import TripDrawerHeader from './TripDrawerHeader';
 import TripManifest from '@/app/(dashboard)/trips/components/TripManifest';
 import TripFormModal from '@/app/(dashboard)/components/TripFormModal';
+import PostTripLog from './PostTripLog';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -60,6 +61,8 @@ export default function TripDrawer({
   const [isEditOpen, setIsEditOpen] = useState(false);
   /** Bump to re-fetch the trip header (e.g. after an edit). */
   const [refreshKey, setRefreshKey] = useState(0);
+  /** 'manifest' = normal view, 'post-trip' = dive log entry */
+  const [drawerMode, setDrawerMode] = useState<'manifest' | 'post-trip'>('manifest');
 
   // ── Fetch trip data ──────────────────────────────────────────────────────
   const loadTrip = useCallback(async (id: string) => {
@@ -82,6 +85,7 @@ export default function TripDrawer({
 
   useEffect(() => {
     if (!tripId) { setTrip(null); return; }
+    setDrawerMode('manifest'); // reset to manifest view when trip changes
     loadTrip(tripId);
   }, [tripId, refreshKey, loadTrip]);
 
@@ -189,17 +193,48 @@ export default function TripDrawer({
               onClose={onClose}
             />
 
-            {/* ── Manifest (scrollable) ── */}
+            {/* ── Mode tab bar ── */}
+            <div className="flex gap-0 border-b border-slate-200 shrink-0 px-6">
+              <button
+                onClick={() => setDrawerMode('manifest')}
+                className={`px-4 py-3 text-sm font-semibold border-b-2 transition-colors ${
+                  drawerMode === 'manifest'
+                    ? 'border-teal-600 text-teal-700'
+                    : 'border-transparent text-slate-500 hover:text-slate-700'
+                }`}
+              >
+                Manifest
+              </button>
+              <button
+                onClick={() => setDrawerMode('post-trip')}
+                className={`px-4 py-3 text-sm font-semibold border-b-2 transition-colors ${
+                  drawerMode === 'post-trip'
+                    ? 'border-teal-600 text-teal-700'
+                    : 'border-transparent text-slate-500 hover:text-slate-700'
+                }`}
+              >
+                Post-trip log
+              </button>
+            </div>
+
+            {/* ── Content (scrollable) ── */}
             <div className="flex-1 overflow-y-auto p-6">
-              <TripManifest
-                tripId={trip.id}
-                tripDate={trip.start_time}
-                capacity={trip.max_divers}
-                numberOfDives={trip.trip_types?.number_of_dives ?? 1}
-                tripCategory={trip.trip_types?.category ?? undefined}
-                onManifestChange={handleManifestChange}
-                onMovedToTrip={handleMovedToTrip}
-              />
+              {drawerMode === 'manifest' ? (
+                <TripManifest
+                  tripId={trip.id}
+                  tripDate={trip.start_time}
+                  capacity={trip.max_divers}
+                  numberOfDives={trip.trip_types?.number_of_dives ?? 1}
+                  tripCategory={trip.trip_types?.category ?? undefined}
+                  onManifestChange={handleManifestChange}
+                  onMovedToTrip={handleMovedToTrip}
+                />
+              ) : (
+                <PostTripLog
+                  trip={trip}
+                  onSaved={onSuccess}
+                />
+              )}
             </div>
 
             {/* ── Edit modal ── */}

@@ -127,7 +127,7 @@ function ClientsContent() {
           id, start_time, duration_minutes,
           trip_types ( name ),
           vessels ( name ),
-          dive_sites ( name )
+          divesites ( name )
         )
       `)
       .eq("client_id", clientId);

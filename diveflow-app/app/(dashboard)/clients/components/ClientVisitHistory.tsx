@@ -170,9 +170,9 @@ export default function ClientVisitHistory({
                               <span className="font-medium text-slate-800 truncate group-hover:text-teal-700">
                                 {trip.trip_types?.name || 'Standard Trip'}
                               </span>
-                              {(trip.vessels?.name || trip.dive_sites?.name) && (
+                              {(trip.vessels?.name || trip.divesites?.name) && (
                                 <span className="text-slate-400 text-xs truncate ml-auto shrink-0 pl-2 hidden sm:inline">
-                                  {[trip.vessels?.name, trip.dive_sites?.name].filter(Boolean).join(" • ")}
+                                  {[trip.vessels?.name, trip.divesites?.name].filter(Boolean).join(" • ")}
                                 </span>
                               )}
                               <svg className="w-4 h-4 text-slate-300 group-hover:text-teal-500 shrink-0 ml-1 sm:ml-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
