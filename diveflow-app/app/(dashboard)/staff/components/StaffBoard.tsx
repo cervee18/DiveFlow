@@ -26,6 +26,7 @@ interface StaffBoardProps {
   onActivityAssign: (tripId: string, activityId: string) => void;
   onRemoveActivityStaff: (tripStaffId: string, tripId: string, staffId: string) => void;
   onAssignCaptain: (tripId: string, staffId: string) => void;
+  onOpenTrip?: (tripId: string) => void;
 }
 
 function memberInitials(member: DailyJob['staff']): string {
@@ -134,6 +135,7 @@ function Column({
   onActivityAssign,
   onRemoveActivityStaff,
   onAssignCaptain,
+  onOpenTrip,
 }: {
   title: string;
   subtitle: string;
@@ -151,6 +153,7 @@ function Column({
   onActivityAssign: (tripId: string, activityId: string) => void;
   onRemoveActivityStaff: (tripStaffId: string, tripId: string, staffId: string) => void;
   onAssignCaptain: (tripId: string, staffId: string) => void;
+  onOpenTrip?: (tripId: string) => void;
 }) {
   // Group job assignments by job_type_id
   const byType: Record<string, DailyJob[]> = {};
@@ -250,6 +253,7 @@ function Column({
                       onAssignActivity={activityId => onActivityAssign(trip.id, activityId)}
                       onRemoveActivityStaff={onRemoveActivityStaff}
                       onAssignCaptain={staffId => onAssignCaptain(trip.id, staffId)}
+                      onOpenTrip={onOpenTrip}
                     />
                   );
                 })}
@@ -278,6 +282,7 @@ export default function StaffBoard({
   onActivityAssign,
   onRemoveActivityStaff,
   onAssignCaptain,
+  onOpenTrip,
 }: StaffBoardProps) {
   return (
     <div className="flex flex-1 min-h-0 overflow-hidden">
@@ -298,6 +303,7 @@ export default function StaffBoard({
         onActivityAssign={onActivityAssign}
         onRemoveActivityStaff={onRemoveActivityStaff}
         onAssignCaptain={onAssignCaptain}
+        onOpenTrip={onOpenTrip}
       />
       <Column
         title="Afternoon & Night"
@@ -316,6 +322,7 @@ export default function StaffBoard({
         onActivityAssign={onActivityAssign}
         onRemoveActivityStaff={onRemoveActivityStaff}
         onAssignCaptain={onAssignCaptain}
+        onOpenTrip={onOpenTrip}
       />
     </div>
   );

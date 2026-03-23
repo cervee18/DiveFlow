@@ -6,28 +6,34 @@ import TripTopBar from './components/TripTopBar';
 import TripHeader from './components/TripHeader';
 import TripFormModal from './components/TripFormModal';
 import TripManifest from './components/TripManifest';
-import { useRouter } from 'next/navigation';
+// 1. Import useSearchParams
+import { useRouter, useSearchParams } from 'next/navigation';
 
 export default function TripsPage() {
   const supabase = createClient();
   const router   = useRouter();
-  
+  const searchParams = useSearchParams();
+
+  // Extract directly from Next.js router state
+  const urlDate = searchParams.get('date');
+  const urlTripId = searchParams.get('tripId');
+
   // -- State --
   const [selectedDate, setSelectedDate] = useState(() => {
     if (typeof window === 'undefined') {
       const today = new Date();
       return new Date(today.getTime() - today.getTimezoneOffset() * 60000).toISOString().split('T')[0];
     }
-    const params = new URLSearchParams(window.location.search);
+    // Prioritize Next.js URL state -> then LocalStorage -> then Today
     const today  = new Date();
     const todayStr = new Date(today.getTime() - today.getTimezoneOffset() * 60000).toISOString().split('T')[0];
-    return params.get('date') ?? localStorage.getItem('diveflow_date') ?? todayStr;
-  });
-  const [selectedTripId, setSelectedTripId] = useState<string | null>(() => {
-    if (typeof window === 'undefined') return null;
-    return new URLSearchParams(window.location.search).get('tripId');
+    return urlDate ?? localStorage.getItem('diveflow_date') ?? todayStr;
   });
 
+  // Initialize directly from Next.js URL state
+  const [selectedTripId, setSelectedTripId] = useState<string | null>(urlTripId || null);
+
+  // ... (keep trips, isLoading, userOrgId, vessels, tripTypes, etc. state exactly the same)
   const [trips, setTrips] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [userOrgId, setUserOrgId] = useState<string | null>(null);
@@ -42,14 +48,35 @@ export default function TripsPage() {
   const [editingTrip, setEditingTrip] = useState<any>(null);
   const [isSaving, setIsSaving] = useState(false);
 
-  // Keep URL in sync and share date with other pages via localStorage
+  // -- URL Synchronization --
+  
+  // 1. Sync FROM URL -> TO State (Handles arriving from the Overview/Staff pages)
   useEffect(() => {
-    const params = new URLSearchParams();
-    params.set('date', selectedDate);
-    if (selectedTripId) params.set('tripId', selectedTripId);
-    router.replace(`?${params.toString()}`, { scroll: false });
-    localStorage.setItem('diveflow_date', selectedDate);
-  }, [selectedDate, selectedTripId]);
+    if (urlDate && urlDate !== selectedDate) {
+      setSelectedDate(urlDate);
+    }
+    if (urlTripId !== selectedTripId) {
+      setSelectedTripId(urlTripId);
+    }
+  }, [urlDate, urlTripId]);
+
+  // 2. Sync FROM State -> TO URL (Handles user clicking dates/trips inside this page)
+  useEffect(() => {
+    // Prevent rewriting the URL if it already matches state (avoids infinite loops)
+    if (selectedDate !== urlDate || selectedTripId !== urlTripId) {
+      const params = new URLSearchParams(searchParams.toString());
+      params.set('date', selectedDate);
+      
+      if (selectedTripId) {
+        params.set('tripId', selectedTripId);
+      } else {
+        params.delete('tripId');
+      }
+      
+      router.replace(`?${params.toString()}`, { scroll: false });
+      localStorage.setItem('diveflow_date', selectedDate);
+    }
+  }, [selectedDate, selectedTripId, urlDate, urlTripId, router, searchParams]);
 
   // -- Data Fetching --
   useEffect(() => {
@@ -62,19 +89,6 @@ export default function TripsPage() {
     }
     getUserOrg();
   }, [supabase]);
-
-  useEffect(() => {
-    async function fetchReferenceData() {
-      if (!userOrgId) return;
-      
-      const { data: vData } = await supabase.from('vessels').select('id, name, capacity').eq('organization_id', userOrgId).order('name', { ascending: true });
-      if (vData) setVessels(vData);
-
-      const { data: tData } = await supabase.from('trip_types').select('*').eq('organization_id', userOrgId).order('default_start_time', { ascending: true });
-      if (tData) setTripTypes(tData);
-    }
-    fetchReferenceData();
-  }, [userOrgId, supabase]);
 
   useEffect(() => {
     async function fetchTrips() {
@@ -91,7 +105,7 @@ export default function TripsPage() {
           *,
           trip_clients ( id ),
           vessels ( name, capacity ),
-          trip_types ( id, name, default_start_time, number_of_dives ),
+          trip_types ( id, name, default_start_time, number_of_dives, category ),
           trip_staff ( roles ( name ), staff ( id, first_name, last_name, initials ) )
         `)
         .eq('organization_id', userOrgId)
@@ -121,41 +135,6 @@ export default function TripsPage() {
     } else {
       alert("Error deleting trip: " + error.message);
     }
-  };
-
-  const handleSaveTrip = async (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    if (!userOrgId) return;
-    setIsSaving(true);
-
-    const fd = new FormData(e.currentTarget);
-    const dateStr = fd.get("date") as string;
-    const timeStr = fd.get("time") as string;
-    const [year, month, day] = dateStr.split('-').map(Number);
-    const [hours, minutes] = timeStr.split(':').map(Number);
-    
-    const tripData = {
-      organization_id: userOrgId,
-      label: fd.get("label"),
-      trip_type_id: fd.get("trip_type_id"),
-      entry_mode: fd.get("entry_mode"),
-      start_time: new Date(year, month - 1, day, hours, minutes).toISOString(),
-      duration_minutes: Number(fd.get("duration_minutes")),
-      max_divers: Number(fd.get("max_divers")),
-      vessel_id: fd.get("vessel_id") || null,
-    };
-
-    if (modalMode === 'add') {
-      const { error } = await supabase.from('trips').insert(tripData);
-      if (error) alert("Error creating trip: " + error.message);
-    } else {
-      const { error } = await supabase.from('trips').update(tripData).eq('id', editingTrip.id);
-      if (error) alert("Error updating trip: " + error.message);
-    }
-
-    setIsSaving(false);
-    setIsModalOpen(false);
-    setRefreshTrigger(prev => prev + 1);
   };
 
   const openAddModal = () => {
@@ -201,6 +180,7 @@ export default function TripsPage() {
   tripDate={selectedTrip.start_time}
   capacity={selectedTrip.max_divers}
   numberOfDives={selectedTrip.trip_types?.number_of_dives ?? 1}
+  tripCategory={selectedTrip.trip_types?.category ?? undefined}
   onManifestChange={() => setRefreshTrigger(prev => prev + 1)}
   onMovedToTrip={(trip) => {
     const d = new Date(trip.start_time);
@@ -218,16 +198,13 @@ export default function TripsPage() {
         )}
       </div>
 
-      <TripFormModal 
-        isOpen={isModalOpen} 
-        mode={modalMode} 
-        tripData={editingTrip} 
-        vessels={vessels} 
-        tripTypes={tripTypes} 
-        selectedDate={selectedDate} 
-        onClose={() => setIsModalOpen(false)} 
-        onSave={handleSaveTrip} 
-        isSaving={isSaving} 
+      <TripFormModal
+        isOpen={isModalOpen}
+        mode={modalMode}
+        tripData={editingTrip}
+        selectedDate={selectedDate}
+        onClose={() => setIsModalOpen(false)}
+        onSuccess={() => setRefreshTrigger(prev => prev + 1)}
       />
     </div>
   );

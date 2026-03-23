@@ -7,6 +7,7 @@ import { createClient } from '@/utils/supabase/client';
 import StaffTopBar from './components/StaffTopBar';
 import StaffBoard  from './components/StaffBoard';
 import StaffPanel  from './components/StaffPanel';
+import TripDrawer  from '@/app/(dashboard)/components/TripDrawer';
 import { getTodayStr, localHour } from './components/dateUtils';
 
 export default function StaffPage() {
@@ -25,6 +26,7 @@ export default function StaffPage() {
   const [selectedStaffIds, setSelectedStaffIds] = useState<string[]>([]);
   const [isLoading,        setIsLoading]        = useState(false);
   const [userOrgId,        setUserOrgId]        = useState<string | null>(null);
+  const [drawerTripId,     setDrawerTripId]     = useState<string | null>(null);
 
   // Keep a ref to allStaff so callbacks can access it without stale closure
   const allStaffRef = useRef<any[]>([]);
@@ -564,6 +566,7 @@ export default function StaffPage() {
           onActivityAssign={handleActivityAssign}
           onRemoveActivityStaff={handleRemoveActivityStaff}
           onAssignCaptain={handleAssignCaptain}
+          onOpenTrip={setDrawerTripId}
         />
         <StaffPanel
           staff={allStaff}
@@ -574,6 +577,13 @@ export default function StaffPage() {
           onClear={() => setSelectedStaffIds([])}
         />
       </div>
+
+      <TripDrawer
+        isOpen={drawerTripId !== null}
+        tripId={drawerTripId}
+        onClose={() => setDrawerTripId(null)}
+        onMovedToTrip={(trip) => setDrawerTripId(trip.id)}
+      />
     </div>
   );
 }

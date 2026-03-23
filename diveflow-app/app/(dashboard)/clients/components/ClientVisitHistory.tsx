@@ -1,5 +1,5 @@
 import { createClient } from "@/utils/supabase/client";
-import Link from "next/link"; // <-- Added Next.js Link
+import { useRouter } from "next/navigation";
 
 const formatDate = (dateStr?: string) => {
   if (!dateStr) return "Unknown";
@@ -10,11 +10,13 @@ const formatDate = (dateStr?: string) => {
 interface ClientVisitHistoryProps {
   selectedClient: any;
   clientVisits: any[];
-  clientTrips: any[]; 
+  clientTrips: any[];
   onAddVisit: () => void;
   onEditVisit: (visitLink: any) => void;
   onRefreshVisits: () => void;
   onSelectCompanion: (client: any) => void;
+  /** When provided, clicking a trip card opens it in the TripDrawer instead of navigating to /trips */
+  onOpenTrip?: (tripId: string) => void;
 }
 
 export default function ClientVisitHistory({
@@ -24,9 +26,11 @@ export default function ClientVisitHistory({
   onAddVisit,
   onEditVisit,
   onRefreshVisits,
-  onSelectCompanion
+  onSelectCompanion,
+  onOpenTrip,
 }: ClientVisitHistoryProps) {
   const supabase = createClient();
+  const router = useRouter();
 
   const handleDeleteVisit = async (visitLink: any) => {
     const visit = visitLink.visits;
@@ -145,10 +149,17 @@ export default function ClientVisitHistory({
                           const dateString = trip.start_time.split('T')[0]; // YYYY-MM-DD format for the URL
 
                           return (
-                            <Link 
-                              key={tc.id} 
-                              href={`/trips?date=${dateString}&tripId=${trip.id}`}
-                              className="flex items-center gap-2 bg-slate-50 hover:bg-teal-50 border border-slate-100 hover:border-teal-200 px-3 py-2 rounded-md transition-colors group text-sm"
+                            <button
+                              key={tc.id}
+                              type="button"
+                              onClick={() => {
+                                if (onOpenTrip) {
+                                  onOpenTrip(trip.id);
+                                } else {
+                                  router.push(`/trips?date=${dateString}&tripId=${trip.id}`);
+                                }
+                              }}
+                              className="flex items-center gap-2 w-full bg-slate-50 hover:bg-teal-50 border border-slate-100 hover:border-teal-200 px-3 py-2 rounded-md transition-colors group text-sm text-left"
                             >
                               <span className="font-semibold text-slate-600 shrink-0 w-12 text-xs">
                                 {tripDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
@@ -159,15 +170,15 @@ export default function ClientVisitHistory({
                               <span className="font-medium text-slate-800 truncate group-hover:text-teal-700">
                                 {trip.trip_types?.name || 'Standard Trip'}
                               </span>
-                              {(trip.vessels?.name || trip.dive_sites?.name) && (
+                              {(trip.vessels?.name || trip.divesites?.name) && (
                                 <span className="text-slate-400 text-xs truncate ml-auto shrink-0 pl-2 hidden sm:inline">
-                                  {[trip.vessels?.name, trip.dive_sites?.name].filter(Boolean).join(" • ")}
+                                  {[trip.vessels?.name, trip.divesites?.name].filter(Boolean).join(" • ")}
                                 </span>
                               )}
-                              <svg className="w-4 h-4 text-slate-300 group-hover:text-teal-500 shrink-0 ml-1 ml-auto sm:ml-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <svg className="w-4 h-4 text-slate-300 group-hover:text-teal-500 shrink-0 ml-1 sm:ml-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                               </svg>
-                            </Link>
+                            </button>
                           );
                         })}
                       </div>

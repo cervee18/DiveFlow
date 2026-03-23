@@ -40,6 +40,8 @@ interface StaffTripCardProps {
   onAssignActivity?: (activityId: string) => void;
   onRemoveActivityStaff?: (tripStaffId: string, tripId: string, staffId: string) => void;
   onAssignCaptain?: (staffId: string) => void;
+  /** When provided, clicking a card in non-assign mode opens the TripDrawer instead of navigating */
+  onOpenTrip?: (tripId: string) => void;
 }
 
 export default function StaffTripCard({
@@ -53,6 +55,7 @@ export default function StaffTripCard({
   onAssignActivity,
   onRemoveActivityStaff,
   onAssignCaptain,
+  onOpenTrip,
 }: StaffTripCardProps) {
   const router = useRouter();
   const [captainMode, setCaptainMode] = useState(false);
@@ -99,6 +102,7 @@ export default function StaffTripCard({
   const handleClick = () => {
     if (captainMode) { setCaptainMode(false); return; }
     if (assignMode) onAssign?.();
+    else if (onOpenTrip) onOpenTrip(trip.id);
     else router.push(`/trips?date=${selectedDate}&tripId=${trip.id}`);
   };
 

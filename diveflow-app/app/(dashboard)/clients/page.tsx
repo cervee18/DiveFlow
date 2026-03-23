@@ -12,6 +12,7 @@ import ClientProfileForm from "./components/ClientProfileForm";
 import ClientVisitHistory from "./components/ClientVisitHistory";
 import ClientFormModal from "./components/ClientFormModal";
 import VisitFormModal from "./components/VisitFormModal";
+import TripDrawer from "@/app/(dashboard)/components/TripDrawer";
 
 // We extract the main content into a sub-component so we can wrap it in <Suspense>
 function ClientsContent() {
@@ -43,6 +44,9 @@ function ClientsContent() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [visitModalMode, setVisitModalMode] = useState<'add' | 'edit' | null>(null);
   const [editingVisit, setEditingVisit] = useState<any>(null);
+
+  // Trip drawer
+  const [drawerTripId, setDrawerTripId] = useState<string | null>(null);
 
   // --- Data Fetching ---
   useEffect(() => {
@@ -123,7 +127,7 @@ function ClientsContent() {
           id, start_time, duration_minutes,
           trip_types ( name ),
           vessels ( name ),
-          dive_sites ( name )
+          divesites ( name )
         )
       `)
       .eq("client_id", clientId);
@@ -204,17 +208,18 @@ function ClientsContent() {
             onUpdate={handleUpdateClientState}
           />
 
-          <ClientVisitHistory 
+          <ClientVisitHistory
             selectedClient={selectedClient}
             clientVisits={clientVisits}
-            clientTrips={clientTrips} 
+            clientTrips={clientTrips}
             onAddVisit={() => setVisitModalMode('add')}
             onEditVisit={(visitLink) => {
               setEditingVisit(visitLink);
               setVisitModalMode('edit');
             }}
-            onRefreshVisits={() => fetchClientHistory(selectedClient.id)} 
+            onRefreshVisits={() => fetchClientHistory(selectedClient.id)}
             onSelectCompanion={handleSelectClient}
+            onOpenTrip={setDrawerTripId}
           />
         </div>
       )}
@@ -229,17 +234,24 @@ function ClientsContent() {
       )}
 
       {visitModalMode && (
-        <VisitFormModal 
+        <VisitFormModal
           mode={visitModalMode}
           editingVisit={editingVisit}
           selectedClientId={selectedClient?.id}
           userOrgId={userOrgId}
           hotels={hotels}
-          clientVisits={clientVisits} 
+          clientVisits={clientVisits}
           onClose={() => { setVisitModalMode(null); setEditingVisit(null); }}
-          onSuccess={() => fetchClientHistory(selectedClient.id)} 
+          onSuccess={() => fetchClientHistory(selectedClient.id)}
         />
       )}
+
+      <TripDrawer
+        isOpen={drawerTripId !== null}
+        tripId={drawerTripId}
+        onClose={() => setDrawerTripId(null)}
+        onMovedToTrip={(trip) => setDrawerTripId(trip.id)}
+      />
     </div>
   );
 }
