@@ -67,18 +67,26 @@ export default function TripDrawer({
   // ── Fetch trip data ──────────────────────────────────────────────────────
   const loadTrip = useCallback(async (id: string) => {
     setIsLoading(true);
-    const { data, error } = await supabase
-      .from('trips')
-      .select(`
-        id, label, start_time, duration_minutes, max_divers, vessel_id, trip_type_id,
-        vessels ( name, abbreviation ),
-        trip_types ( id, name, default_start_time, number_of_dives, category ),
-        trip_staff ( roles ( name ), staff ( id, first_name, last_name, initials ) )
-      `)
-      .eq('id', id)
-      .single();
+    const [{ data, error }, { data: captainData }] = await Promise.all([
+      supabase
+        .from('trips')
+        .select(`
+          id, label, start_time, duration_minutes, max_divers, vessel_id, trip_type_id,
+          vessels ( name, abbreviation ),
+          trip_types ( id, name, default_start_time, number_of_dives, category ),
+          trip_staff ( roles ( name ), staff ( id, first_name, last_name, initials ) )
+        `)
+        .eq('id', id)
+        .single(),
+      supabase
+        .from('staff_daily_job')
+        .select('staff_id, job_types!inner(name)')
+        .eq('trip_id', id)
+        .eq('job_types.name', 'Captain')
+        .limit(1),
+    ]);
 
-    if (!error && data) setTrip(data);
+    if (!error && data) setTrip({ ...data, _captainStaffId: captainData?.[0]?.staff_id ?? null });
     else if (error) console.error('[TripDrawer] fetch error:', error.message);
     setIsLoading(false);
   }, [supabase]);
@@ -228,6 +236,14 @@ export default function TripDrawer({
                   tripCategory={trip.trip_types?.category ?? undefined}
                   onManifestChange={handleManifestChange}
                   onMovedToTrip={handleMovedToTrip}
+                  tripInfo={{
+                    label: trip.label ?? trip.trip_types?.name,
+                    start_time: trip.start_time,
+                    vessel: trip.vessels?.name,
+                    staff: (trip.trip_staff ?? [])
+                      .map((ts: any) => ({ initials: ts.staff?.initials, isCapitan: ts.staff?.id === trip._captainStaffId }))
+                      .filter((s: any) => s.initials),
+                  }}
                 />
               ) : (
                 <PostTripLog

@@ -6,6 +6,47 @@ import Link from 'next/link';
 import AddDiverModal from './AddDiverModal';
 import MoveClientModal from './MoveClientModal';
 
+const TANK_OPTIONS = ['air', 'eanx', '63air', '63eanx', '100air', '100eanx'] as const;
+type TankOption = typeof TANK_OPTIONS[number];
+
+const TANK_LABELS: Record<TankOption, string> = {
+  'air':     'Air',
+  'eanx':    'Eanx',
+  '63air':   '63 Air',
+  '63eanx':  '63 Eanx',
+  '100air':  '100 Air',
+  '100eanx': '100 Eanx',
+};
+
+function nextTank(current: string | null | undefined): TankOption {
+  const idx = TANK_OPTIONS.indexOf(current as TankOption);
+  return TANK_OPTIONS[(idx + 1) % TANK_OPTIONS.length];
+}
+
+function TankChip({ value, onChange }: { value: string | null | undefined; onChange: (v: TankOption) => void }) {
+  const effective = (value as TankOption) ?? 'air';
+  const isEanx = effective.endsWith('eanx');
+  return (
+    <button
+      onClick={() => onChange(nextTank(value))}
+      className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold transition-colors cursor-pointer border ${
+        isEanx
+          ? 'bg-emerald-100 border-emerald-300 text-emerald-700 hover:bg-emerald-200'
+          : 'bg-slate-100 border-slate-200 text-slate-500 hover:bg-sky-50 hover:text-sky-600 hover:border-sky-200'
+      }`}
+    >
+      {TANK_LABELS[effective]}
+    </button>
+  );
+}
+
+interface TripInfo {
+  label?: string;
+  start_time?: string;
+  vessel?: string;
+  staff?: Array<{ initials: string; isCapitan: boolean }>;
+}
+
 export default function TripManifest({
   tripId,
   tripDate,
@@ -14,6 +55,7 @@ export default function TripManifest({
   tripCategory,
   onManifestChange,
   onMovedToTrip,
+  tripInfo,
 }: {
   tripId: string,
   tripDate: string,
@@ -22,6 +64,7 @@ export default function TripManifest({
   tripCategory?: string,
   onManifestChange?: () => void,
   onMovedToTrip?: (trip: any) => void,
+  tripInfo?: TripInfo,
 }) {
   const supabase = createClient();
   const [manifest, setManifest] = useState<any[]>([]);
@@ -56,6 +99,24 @@ export default function TripManifest({
       return manifest.indexOf(a) - manifest.indexOf(b); // stable within group
     });
   }, [manifest, clientVisitIdMap]);
+
+  // Tank summary: count each tank type across all manifest rows
+  const tankSummary = useMemo(() => {
+    if (manifest.length === 0 || numberOfDives === 0) return [];
+    const counts: Record<string, number> = {};
+    for (const diver of manifest) {
+      const row = pendingChanges[diver.id] || {};
+      if (numberOfDives >= 1) {
+        const t = (row.tank1 ?? diver.tank1 ?? 'air') as string;
+        counts[t] = (counts[t] || 0) + 1;
+      }
+      if (numberOfDives >= 2) {
+        const t = (row.tank2 ?? diver.tank2 ?? 'air') as string;
+        counts[t] = (counts[t] || 0) + 1;
+      }
+    }
+    return TANK_OPTIONS.filter(opt => counts[opt] > 0).map(opt => ({ label: TANK_LABELS[opt], count: counts[opt], isEanx: opt.endsWith('eanx') }));
+  }, [manifest, pendingChanges, numberOfDives]);
 
   // Sync all ping animations to the same phase of the 1s cycle
   const pingDelay = useMemo(() => `${-(Date.now() % 1000)}ms`, []);
@@ -375,6 +436,224 @@ export default function TripManifest({
     'bg-teal-400', 'bg-indigo-400', 'bg-orange-400', 'bg-pink-400',
   ];
 
+  const printManifest = () => {
+    const nd = numberOfDives ?? 1;
+    const win = window.open('', '_blank');
+    if (!win) return;
+
+    // ── helpers ──────────────────────────────────────────────────────────────
+    const fmtTime = (iso?: string) => {
+      if (!iso) return '';
+      const d = new Date(iso);
+      return d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+    };
+    const fmtDate = (iso?: string) => {
+      if (!iso) return '';
+      const d = new Date(iso);
+      return d.toLocaleDateString('en-GB', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' });
+    };
+    const bool = (v: any) => v ? '✓' : '✗';
+
+    // Staff: designated captain first, no special symbol
+    const staffSorted = tripInfo?.staff
+      ? [...tripInfo.staff].sort((a, b) => (b.isCapitan ? 1 : 0) - (a.isCapitan ? 1 : 0))
+      : [];
+    const staffStr = staffSorted.map(s => s.initials).join('  ');
+
+    // Tank summary
+    const tankSummaryStr = tankSummary.map(t => `${t.count}× ${t.label}`).join('   ');
+
+    // Dive site lines
+    const diveSiteLines = Array.from({ length: nd }, (_, i) =>
+      `<span class="site-label">Dive ${i + 1}:</span><span class="site-line"></span>`
+    ).join('');
+
+    // Table headers
+    const diveColHeaders = Array.from({ length: nd }, (_, i) =>
+      `<th class="dive-h" colspan="2">Dive ${i + 1}</th>`
+    ).join('');
+    const diveSubHeaders = Array.from({ length: nd }, () =>
+      `<th class="sub">Depth</th><th class="sub">Time</th>`
+    ).join('');
+
+    // Table rows
+    const rows = displayManifest.map((diver, idx) => {
+      const row = pendingChanges[diver.id] || {};
+      const cert = diver.courses?.name || diver.clients?.certification_levels?.abbreviation || '';
+      const activity = diver.activities?.name || '';
+      const notes = row.notes ?? diver.notes ?? '';
+      const t1 = TANK_LABELS[(row.tank1 ?? diver.tank1 ?? 'air') as TankOption];
+      const t2 = nd >= 2 ? TANK_LABELS[(row.tank2 ?? diver.tank2 ?? 'air') as TankOption] : '';
+      const bcd = row.bcd ?? diver.bcd ?? '';
+      const suit = row.wetsuit ?? diver.wetsuit ?? '';
+      const fins = row.fins ?? diver.fins ?? '';
+      const mask = row.mask ?? diver.mask ?? '';
+      const ld = diver.clients?.last_dive_date ? formatLastDive(diver.clients.last_dive_date) : 'New';
+      const eanxClass = (v: string) => v.toLowerCase().includes('eanx') ? ' eanx' : '';
+
+      const diveCols = Array.from({ length: nd }, () =>
+        `<td class="writein"></td><td class="writein"></td>`
+      ).join('');
+
+      return `
+        <tr class="${idx % 2 === 1 ? 'alt' : ''}">
+          <td class="num">${idx + 1}</td>
+          <td class="name">${diver.clients?.first_name ?? ''} ${diver.clients?.last_name ?? ''}</td>
+          <td class="bool ${(row.waiver ?? diver.waiver) ? 'ok' : 'no'}">${bool(row.waiver ?? diver.waiver)}</td>
+          <td class="bool ${(row.deposit ?? diver.deposit) ? 'ok' : 'no'}">${bool(row.deposit ?? diver.deposit)}</td>
+          <td class="bool ${(row.pick_up ?? diver.pick_up) ? 'ok' : ''}">${bool(row.pick_up ?? diver.pick_up)}</td>
+          <td class="center">${ld}</td>
+          <td class="center">${cert}</td>
+          <td class="center">${bcd}</td>
+          <td class="center">${suit}</td>
+          <td class="center">${fins}</td>
+          <td class="center">${mask}</td>
+          <td class="bool ${(row.regulator ?? diver.regulator) ? 'ok' : ''}">${bool(row.regulator ?? diver.regulator)}</td>
+          <td class="bool ${(row.computer ?? diver.computer) ? 'ok' : ''}">${bool(row.computer ?? diver.computer)}</td>
+          <td class="center${eanxClass(t1)}">${t1}</td>
+          ${nd >= 2 ? `<td class="center${eanxClass(t2)}">${t2}</td>` : ''}
+          <td class="center">${row.weights ?? diver.weights ?? ''}</td>
+          <td class="bool ${(row.private ?? diver.private) ? 'ok' : ''}">${bool(row.private ?? diver.private)}</td>
+          <td class="activity">${activity}</td>
+          <td class="notes">${notes}</td>
+          ${diveCols}
+        </tr>`;
+    }).join('');
+
+    const html = `<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<title>Manifest — ${tripInfo?.label ?? ''} ${fmtDate(tripInfo?.start_time)}</title>
+<style>
+  @page { size: A4 landscape; margin: 8mm; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: Arial, Helvetica, sans-serif; font-size: 7pt; color: #111; }
+
+  /* ── Header ── */
+  .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 3mm; gap: 8mm; }
+  .header-left h1 { font-size: 11pt; font-weight: 900; text-transform: uppercase; letter-spacing: 0.05em; }
+  .header-left .meta { font-size: 7.5pt; color: #444; margin-top: 1mm; }
+  .header-left .meta span { margin-right: 5mm; }
+  .header-left .staff { font-size: 7pt; color: #555; margin-top: 1mm; }
+  .header-right { display: flex; flex-direction: column; gap: 2mm; flex-shrink: 0; }
+  .site-row { display: flex; align-items: center; gap: 2mm; white-space: nowrap; }
+  .site-label { font-size: 7pt; font-weight: 700; color: #333; width: 12mm; }
+  .site-line { display: inline-block; border-bottom: 1px solid #888; width: 55mm; }
+  .tanks { font-size: 6.5pt; color: #555; margin-top: 1.5mm; }
+  .tanks .eanx-badge { color: #059669; font-weight: 700; }
+
+  /* ── Table ── */
+  table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+  col.num   { width: 5mm; }
+  col.name  { width: 42mm; }
+  col.bool  { width: 5mm; }
+  col.pu    { width: 6mm; }
+  col.ld    { width: 9mm; }
+  col.cert  { width: 11mm; }
+  col.gear  { width: 8mm; }
+  col.tank  { width: 11mm; }
+  col.wei   { width: 7mm; }
+  col.act   { width: ${nd >= 2 ? '16mm' : '20mm'}; }
+  col.notes { width: ${nd >= 2 ? '22mm' : '30mm'}; }
+  col.dive  { width: 9mm; }
+
+  th { background: #1e293b; color: #fff; font-size: 6pt; font-weight: 700; text-transform: uppercase;
+       text-align: center; padding: 1mm 0.5mm; border: 0.3pt solid #334; }
+  th.dive-h { background: #0f4c81; letter-spacing: 0.03em; }
+  th.sub { background: #1a6cb5; font-size: 5.5pt; }
+  th.name-h { text-align: left; padding-left: 1mm; }
+
+  td { font-size: 6.5pt; padding: 0.8mm 0.5mm; border: 0.3pt solid #cbd5e1; vertical-align: middle; }
+  td.num { text-align: center; color: #94a3b8; font-size: 6pt; }
+  td.name { font-weight: 700; font-size: 7pt; }
+  td.center { text-align: center; }
+  td.bool { text-align: center; font-size: 7.5pt; }
+  td.bool.ok { color: #16a34a; }
+  td.bool.no { color: #dc2626; }
+  td.activity { font-size: 6pt; }
+  td.notes { font-size: 6pt; color: #475569; font-style: italic; }
+  td.writein { background: #f8fafc; }
+  td.eanx { color: #059669; font-weight: 700; }
+
+  tr.alt td { background: #f8fafc; }
+  tr.alt td.writein { background: #f0fdf4; }
+
+  /* print-safe colours */
+  @media print {
+    th { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    td.bool.ok, td.bool.no, td.eanx { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    tr.alt td { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  }
+</style>
+</head>
+<body>
+  <div class="header">
+    <div class="header-left">
+      <h1>Dive Manifest — ${tripInfo?.label ?? 'Trip'}</h1>
+      <div class="meta">
+        <span>📅 ${fmtDate(tripInfo?.start_time)}</span>
+        <span>🕐 ${fmtTime(tripInfo?.start_time)}</span>
+        ${tripInfo?.vessel ? `<span>⛵ ${tripInfo.vessel}</span>` : ''}
+        <span>👥 ${manifest.length} divers</span>
+      </div>
+      ${staffStr ? `<div class="staff">Staff: ${staffStr}</div>` : ''}
+      ${tankSummaryStr ? `<div class="tanks">Tanks: ${tankSummary.map(t => `<span class="${t.isEanx ? 'eanx-badge' : ''}">${t.count}× ${t.label}</span>`).join('  &nbsp;')}</div>` : ''}
+    </div>
+    <div class="header-right">
+      ${Array.from({ length: nd }, (_, i) => `
+        <div class="site-row">
+          <span class="site-label">Dive ${i + 1}:</span>
+          <span class="site-line"></span>
+        </div>`).join('')}
+    </div>
+  </div>
+
+  <table>
+    <colgroup>
+      <col class="num"><col class="name">
+      <col class="bool"><col class="bool"><col class="pu">
+      <col class="ld"><col class="cert">
+      <col class="gear"><col class="gear"><col class="gear"><col class="gear">
+      <col class="bool"><col class="bool">
+      <col class="tank">${nd >= 2 ? '<col class="tank">' : ''}
+      <col class="wei"><col class="bool">
+      <col class="act"><col class="notes">
+      ${Array.from({ length: nd }, () => '<col class="dive"><col class="dive">').join('')}
+    </colgroup>
+    <thead>
+      <tr>
+        <th rowspan="2">#</th>
+        <th class="name-h" rowspan="2">Diver Name</th>
+        <th rowspan="2" title="Waiver">W</th>
+        <th rowspan="2" title="Deposit">Dep</th>
+        <th rowspan="2" title="Pick Up">PU</th>
+        <th rowspan="2">LD</th>
+        <th rowspan="2">Cert</th>
+        <th rowspan="2">BCD</th>
+        <th rowspan="2">Suit</th>
+        <th rowspan="2">Fins</th>
+        <th rowspan="2">Mask</th>
+        <th rowspan="2">Reg</th>
+        <th rowspan="2">Comp</th>
+        <th rowspan="2">T1</th>
+        ${nd >= 2 ? '<th rowspan="2">T2</th>' : ''}
+        <th rowspan="2">Wei</th>
+        <th rowspan="2" title="Private">Prv</th>
+        <th rowspan="2">Activity</th>
+        <th rowspan="2">Notes</th>
+        ${diveColHeaders}
+      </tr>
+      <tr>${diveSubHeaders}</tr>
+    </thead>
+    <tbody>${rows}</tbody>
+  </table>
+
+  <script>setTimeout(() => { window.print(); }, 300 );</script>
+</body></html>`;
+
+    win.document.write(html);
+    win.document.close();
+  };
+
   const renderNextChip = (label: string) => {
     if (label === '#ARR') return <span className="inline-block px-2 py-0.5 rounded-full text-[10px] font-black bg-violet-100 text-violet-700 border border-violet-200">#ARR</span>;
     if (label === 'ARR')  return <span className="inline-block px-2 py-0.5 rounded-full text-[10px] font-black bg-sky-100 text-sky-700 border border-sky-200">ARR</span>;
@@ -389,6 +668,23 @@ export default function TripManifest({
         <div>
           <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wider">Diver Manifest</h3>
           <p className="text-[10px] text-slate-500 uppercase">Interactive Sheet • Changes autosave on 'Enter'</p>
+          {tankSummary.length > 0 && (
+            <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
+              <span className="text-[10px] text-slate-400 font-semibold uppercase tracking-wide">Tanks:</span>
+              {tankSummary.map(({ label, count, isEanx }) => (
+                <span
+                  key={label}
+                  className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold border ${
+                    isEanx
+                      ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
+                      : 'bg-slate-100 border-slate-200 text-slate-600'
+                  }`}
+                >
+                  <span className="font-black">{count}×</span> {label}
+                </span>
+              ))}
+            </div>
+          )}
         </div>
         
         <div className="flex items-center gap-3">
@@ -404,7 +700,18 @@ export default function TripManifest({
               </button>
             </>
           )}
-          <button 
+          {manifest.length > 0 && (
+            <button
+              onClick={printManifest}
+              className="bg-slate-600 hover:bg-slate-700 text-white px-4 py-2 rounded-lg text-xs font-bold shadow-sm transition-all flex items-center gap-2"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
+              </svg>
+              Print
+            </button>
+          )}
+          <button
             onClick={() => setIsAddModalOpen(true)}
             className="bg-teal-600 hover:bg-teal-700 text-white px-4 py-2 rounded-lg text-xs font-bold shadow-sm transition-all flex items-center gap-2"
           >
@@ -650,58 +957,18 @@ export default function TripManifest({
 
                     {/* Tank 1 Chip */}
                     {numberOfDives >= 1 && <td className="px-2 py-1 border-r text-center">
-                      {(rowChanges.nitrox1 ?? diver.nitrox1) ? (
-                        <div
-                          title="Click to revert to Air"
-                          onClick={() => { handleChange(diver.id, 'nitrox1', false); handleChange(diver.id, 'nitrox_percentage1', null); }}
-                          className="inline-flex items-center gap-0.5 bg-emerald-100 border border-emerald-300 rounded-full px-2 py-0.5 cursor-pointer hover:bg-emerald-200 transition-colors"
-                        >
-                          <input
-                            type="number"
-                            value={rowChanges.nitrox_percentage1 ?? diver.nitrox_percentage1 ?? 32}
-                            onChange={e => handleChange(diver.id, 'nitrox_percentage1', parseInt(e.target.value))}
-                            onClick={e => e.stopPropagation()}
-                            onKeyDown={e => { e.stopPropagation(); if (e.key === 'Enter') handleSave(); }}
-                            className="w-7 text-[10px] font-black text-emerald-700 bg-transparent border-none focus:ring-0 p-0 text-center"
-                          />
-                          <span className="text-[10px] font-bold text-emerald-600">%</span>
-                        </div>
-                      ) : (
-                        <button
-                          onClick={() => { handleChange(diver.id, 'nitrox1', true); handleChange(diver.id, 'nitrox_percentage1', 32); }}
-                          className="inline-flex items-center bg-slate-100 border border-slate-200 rounded-full px-3 py-0.5 text-[10px] font-bold text-slate-500 hover:bg-sky-50 hover:text-sky-600 hover:border-sky-200 transition-colors cursor-pointer"
-                        >
-                          Air
-                        </button>
-                      )}
+                      <TankChip
+                        value={rowChanges.tank1 ?? diver.tank1}
+                        onChange={v => handleChange(diver.id, 'tank1', v)}
+                      />
                     </td>}
 
                     {/* Tank 2 Chip */}
                     {numberOfDives >= 2 && <td className="px-2 py-1 border-r text-center">
-                      {(rowChanges.nitrox2 ?? diver.nitrox2) ? (
-                        <div
-                          title="Click to revert to Air"
-                          onClick={() => { handleChange(diver.id, 'nitrox2', false); handleChange(diver.id, 'nitrox_percentage2', null); }}
-                          className="inline-flex items-center gap-0.5 bg-emerald-100 border border-emerald-300 rounded-full px-2 py-0.5 cursor-pointer hover:bg-emerald-200 transition-colors"
-                        >
-                          <input
-                            type="number"
-                            value={rowChanges.nitrox_percentage2 ?? diver.nitrox_percentage2 ?? 32}
-                            onChange={e => handleChange(diver.id, 'nitrox_percentage2', parseInt(e.target.value))}
-                            onClick={e => e.stopPropagation()}
-                            onKeyDown={e => { e.stopPropagation(); if (e.key === 'Enter') handleSave(); }}
-                            className="w-7 text-[10px] font-black text-emerald-700 bg-transparent border-none focus:ring-0 p-0 text-center"
-                          />
-                          <span className="text-[10px] font-bold text-emerald-600">%</span>
-                        </div>
-                      ) : (
-                        <button
-                          onClick={() => { handleChange(diver.id, 'nitrox2', true); handleChange(diver.id, 'nitrox_percentage2', 32); }}
-                          className="inline-flex items-center bg-slate-100 border border-slate-200 rounded-full px-3 py-0.5 text-[10px] font-bold text-slate-500 hover:bg-sky-50 hover:text-sky-600 hover:border-sky-200 transition-colors cursor-pointer"
-                        >
-                          Air
-                        </button>
-                      )}
+                      <TankChip
+                        value={rowChanges.tank2 ?? diver.tank2}
+                        onChange={v => handleChange(diver.id, 'tank2', v)}
+                      />
                     </td>}
 
                     {/* Weights */}
