@@ -212,7 +212,24 @@ export default function TripManifest({
 
         // #ARR: this trip is the earliest ever for this client
         if (clientTrips.length === 0 || clientTrips[0].trip_id === tripId) {
-          nextMap[clientId] = '#ARR';
+          // Also check if there's a next trip in the visit to show alongside #ARR
+          const visitInfoForArr = clientVisitMap[clientId];
+          if (visitInfoForArr) {
+            const visitTripsForArr = clientTrips.filter((t: any) => {
+              const day = t.trips.start_time.substring(0, 10);
+              return day >= visitInfoForArr.start_date && day <= visitInfoForArr.end_date;
+            });
+            const arrIdx = visitTripsForArr.findIndex((t: any) => t.trip_id === tripId);
+            if (arrIdx !== -1 && arrIdx < visitTripsForArr.length - 1) {
+              const nextAbbr = (visitTripsForArr[arrIdx + 1] as any).trips.trip_types?.abbreviation || '?';
+              nextMap[clientId] = `#ARR|${nextAbbr}`;
+              continue;
+            }
+            // Only trip in the visit — also last day
+            nextMap[clientId] = '#ARR|LD';
+            continue;
+          }
+          nextMap[clientId] = '#ARR|LD';
           continue;
         }
 
@@ -230,8 +247,14 @@ export default function TripManifest({
         if (currentIdx === -1) {
           nextMap[clientId] = '-';
         } else if (currentIdx === 0) {
-          // ARR: first trip of this visit (but not first ever)
-          nextMap[clientId] = 'ARR';
+          // ARR: first trip of this visit (but not first ever) — also show next trip abbreviation if any
+          if (visitTrips.length > 1) {
+            const nextAbbr = (visitTrips[1] as any).trips.trip_types?.abbreviation || '?';
+            nextMap[clientId] = `ARR|${nextAbbr}`;
+          } else {
+            // Only one trip in the visit — arrival and last day
+            nextMap[clientId] = 'ARR|LD';
+          }
         } else if (currentIdx < visitTrips.length - 1) {
           // Has a next trip in this visit — show its abbreviation
           nextMap[clientId] = (visitTrips[currentIdx + 1] as any).trips.trip_types?.abbreviation || '?';
@@ -460,15 +483,7 @@ export default function TripManifest({
       : [];
     const staffStr = staffSorted.map(s => s.initials).join('  ');
 
-    // Tank summary
-    const tankSummaryStr = tankSummary.map(t => `${t.count}× ${t.label}`).join('   ');
-
-    // Dive site lines
-    const diveSiteLines = Array.from({ length: nd }, (_, i) =>
-      `<span class="site-label">Dive ${i + 1}:</span><span class="site-line"></span>`
-    ).join('');
-
-    // Table headers
+    // Table headers — each dive gets 2 sub-cols: Depth · Time
     const diveColHeaders = Array.from({ length: nd }, (_, i) =>
       `<th class="dive-h" colspan="2">Dive ${i + 1}</th>`
     ).join('');
@@ -476,7 +491,14 @@ export default function TripManifest({
       `<th class="sub">Depth</th><th class="sub">Time</th>`
     ).join('');
 
-    // Table rows
+    // Portrait column widths — total usable ~194mm, B&W print (W/Dep/PU removed = +12mm)
+    // 1 dive:  4+28+8+9+6+6+5+5+4+4+9+5+4+12+7+8+8+27 = 159mm
+    // 2 dives: 4+27+8+9+6+6+5+5+4+4+9+9+5+4+10+7+8+8+8+8+18 = 182mm
+    const nameW  = nd >= 2 ? '27mm' : '28mm';
+    const actW   = nd >= 2 ? '10mm' : '12mm';
+    const notesW = nd >= 2 ? '18mm' : '27mm';
+
+    // Table rows — notes column moved after dive write-in columns
     const rows = displayManifest.map((diver, idx) => {
       const row = pendingChanges[diver.id] || {};
       const cert = diver.courses?.name || diver.clients?.certification_levels?.abbreviation || '';
@@ -489,7 +511,10 @@ export default function TripManifest({
       const fins = row.fins ?? diver.fins ?? '';
       const mask = row.mask ?? diver.mask ?? '';
       const ld = diver.clients?.last_dive_date ? formatLastDive(diver.clients.last_dive_date) : 'New';
-      const eanxClass = (v: string) => v.toLowerCase().includes('eanx') ? ' eanx' : '';
+      const nextRaw = nextTripMap[diver.client_id] ?? '';
+      const [nextStatus, nextFollowing] = nextRaw.split('|');
+      const nextDisplay = nextFollowing ? `${nextStatus} ${nextFollowing}` : nextStatus;
+      const eanxBold = (v: string) => v.toLowerCase().includes('eanx') ? ' eanx' : '';
 
       const diveCols = Array.from({ length: nd }, () =>
         `<td class="writein"></td><td class="writein"></td>`
@@ -499,24 +524,22 @@ export default function TripManifest({
         <tr class="${idx % 2 === 1 ? 'alt' : ''}">
           <td class="num">${idx + 1}</td>
           <td class="name">${diver.clients?.first_name ?? ''} ${diver.clients?.last_name ?? ''}</td>
-          <td class="bool ${(row.waiver ?? diver.waiver) ? 'ok' : 'no'}">${bool(row.waiver ?? diver.waiver)}</td>
-          <td class="bool ${(row.deposit ?? diver.deposit) ? 'ok' : 'no'}">${bool(row.deposit ?? diver.deposit)}</td>
-          <td class="bool ${(row.pick_up ?? diver.pick_up) ? 'ok' : ''}">${(row.pick_up ?? diver.pick_up) ? '✓' : ''}</td>
           <td class="center">${ld}</td>
           <td class="center">${cert}</td>
           <td class="center">${bcd}</td>
           <td class="center">${suit}</td>
           <td class="center">${fins}</td>
           <td class="center">${mask}</td>
-          <td class="bool ${(row.regulator ?? diver.regulator) ? 'ok' : ''}">${(row.regulator ?? diver.regulator) ? '✓' : ''}</td>
-          <td class="bool ${(row.computer ?? diver.computer) ? 'ok' : ''}">${(row.computer ?? diver.computer) ? '✓' : ''}</td>
-          <td class="center${eanxClass(t1)}">${t1}</td>
-          ${nd >= 2 ? `<td class="center${eanxClass(t2)}">${t2}</td>` : ''}
+          <td class="bool">${(row.regulator ?? diver.regulator) ? '✓' : ''}</td>
+          <td class="bool">${(row.computer ?? diver.computer) ? '✓' : ''}</td>
+          <td class="center${eanxBold(t1)}">${t1}</td>
+          ${nd >= 2 ? `<td class="center${eanxBold(t2)}">${t2}</td>` : ''}
           <td class="center">${row.weights ?? diver.weights ?? ''}</td>
-          <td class="bool ${(row.private ?? diver.private) ? 'ok' : ''}">${(row.private ?? diver.private) ? '✓' : ''}</td>
+          <td class="bool">${(row.private ?? diver.private) ? '✓' : ''}</td>
           <td class="activity">${activity}</td>
-          <td class="notes">${notes}</td>
+          <td class="next ${nextStatus === '#ARR' ? 'next-arr' : nextStatus === 'LD' ? 'next-ld' : ''}">${nextDisplay}</td>
           ${diveCols}
+          <td class="notes">${notes}</td>
         </tr>`;
     }).join('');
 
@@ -524,108 +547,165 @@ export default function TripManifest({
 <html><head><meta charset="utf-8">
 <title>Manifest — ${tripInfo?.label ?? ''} ${fmtDate(tripInfo?.start_time)}</title>
 <style>
-  @page { size: A4 landscape; margin: 8mm; }
+  @page { size: A4 portrait; margin: 8mm; }
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: Arial, Helvetica, sans-serif; font-size: 7pt; color: #111; }
+  body { font-family: Arial, Helvetica, sans-serif; font-size: 6pt; color: #000; }
 
   /* ── Header ── */
-  .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 3mm; gap: 8mm; }
-  .header-left h1 { font-size: 11pt; font-weight: 900; text-transform: uppercase; letter-spacing: 0.05em; }
-  .header-left .meta { font-size: 7.5pt; color: #444; margin-top: 1mm; }
-  .header-left .meta span { margin-right: 5mm; }
-  .header-left .staff { font-size: 7pt; color: #555; margin-top: 1mm; }
-  .header-right { display: flex; flex-direction: column; gap: 2mm; flex-shrink: 0; }
-  .site-row { display: flex; align-items: center; gap: 2mm; white-space: nowrap; }
-  .site-label { font-size: 7pt; font-weight: 700; color: #333; width: 12mm; }
-  .site-line { display: inline-block; border-bottom: 1px solid #888; width: 55mm; }
-  .tanks { font-size: 6.5pt; color: #555; margin-top: 1.5mm; }
-  .tanks .eanx-badge { color: #059669; font-weight: 700; }
+  .header {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    grid-template-rows: auto auto auto;
+    column-gap: 6mm;
+    row-gap: 2mm;
+    margin-bottom: 2.5mm;
+  }
+  .header-title {
+    grid-column: 1; grid-row: 1;
+    display: flex; align-items: baseline; gap: 3mm; flex-wrap: wrap;
+  }
+  .header-title h1 {
+    font-size: 10pt; font-weight: 900; text-transform: uppercase; letter-spacing: 0.04em;
+    white-space: nowrap;
+  }
+  .header-title .label-tag {
+    font-size: 8pt; font-weight: 700; white-space: nowrap;
+  }
+  .header-summary {
+    grid-column: 2; grid-row: 1;
+    text-align: right; font-size: 6.5pt; white-space: nowrap;
+    display: flex; flex-direction: column; align-items: flex-end; gap: 0.8mm;
+  }
+  .header-summary .summary-main { font-weight: 700; }
+  /* Dive blocks — full-width row, side by side */
+  .header-sites {
+    grid-column: 1 / -1; grid-row: 2;
+    display: flex; flex-direction: row; gap: 6mm;
+    border-top: 0.5pt solid #ccc; padding-top: 2mm;
+  }
+  .dive-block { flex: 1; display: flex; flex-direction: column; gap: 2.5mm; }
+  .dive-block-title { font-size: 7.5pt; font-weight: 900; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 1mm; }
+  .site-row { display: flex; align-items: flex-end; gap: 2mm; }
+  .site-label { font-size: 7pt; font-weight: 700; width: 16mm; flex-shrink: 0; color: #333; }
+  .site-line { flex: 1; border-bottom: 0.7pt solid #000; min-height: 4.5mm; }
+  /* Staff / tanks — full-width row below dives */
+  .header-meta {
+    grid-column: 1 / -1; grid-row: 3;
+    font-size: 8pt;
+    display: flex; gap: 6mm; align-items: center; flex-wrap: wrap;
+    border-top: 0.5pt solid #ccc; padding-top: 2mm;
+  }
+  .header-meta strong { font-size: 8.5pt; }
+  .meta-block {
+    display: inline-flex; align-items: center; gap: 2mm;
+    background: #f0f4f8; border: 0.6pt solid #c0cdd8;
+    border-radius: 2mm; padding: 1mm 3mm;
+    font-size: 8pt;
+  }
+
+  .divider { border: none; border-top: 1pt solid #000; margin-bottom: 2mm; }
 
   /* ── Table ── */
   table { width: 100%; border-collapse: collapse; table-layout: fixed; }
-  col.num   { width: 5mm; }
-  col.name  { width: 42mm; }
-  col.bool  { width: 5mm; }
-  col.pu    { width: 6mm; }
-  col.ld    { width: 9mm; }
-  col.cert  { width: 11mm; }
-  col.gear  { width: 8mm; }
-  col.tank  { width: 11mm; }
-  col.wei   { width: 7mm; }
-  col.act   { width: ${nd >= 2 ? '16mm' : '20mm'}; }
-  col.notes { width: ${nd >= 2 ? '22mm' : '30mm'}; }
-  col.dive  { width: 9mm; }
+  col.num   { width: 4mm; }
+  col.name  { width: ${nameW}; }
+  col.ld    { width: 8mm; }
+  col.cert  { width: 9mm; }
+  col.gear  { width: 6mm; }
+  col.bool2 { width: 4mm; }
+  col.tank  { width: 9mm; }
+  col.wei   { width: 5mm; }
+  col.act   { width: ${actW}; }
+  col.next  { width: 7mm; }
+  col.notes { width: ${notesW}; }
+  col.dive  { width: 8mm; }
 
-  th { background: #1e293b; color: #fff; font-size: 6pt; font-weight: 700; text-transform: uppercase;
-       text-align: center; padding: 1mm 0.5mm; border: 0.3pt solid #334; }
-  th.dive-h { background: #0f4c81; letter-spacing: 0.03em; }
-  th.sub { background: #1a6cb5; font-size: 5.5pt; }
+  th {
+    background: #fff; color: #000; font-size: 5pt; font-weight: 900;
+    text-transform: uppercase; text-align: center; padding: 0.8mm 0.3mm;
+    border: 0.5pt solid #000; line-height: 1.2;
+  }
+  th.dive-h { border-top: 1pt solid #000; font-size: 5.5pt; }
   th.name-h { text-align: left; padding-left: 1mm; }
 
-  td { font-size: 6.5pt; padding: 0.8mm 0.5mm; border: 0.3pt solid #cbd5e1; vertical-align: middle; }
-  td.num { text-align: center; color: #94a3b8; font-size: 6pt; }
-  td.name { font-weight: 700; font-size: 7pt; }
-  td.center { text-align: center; }
-  td.bool { text-align: center; font-size: 7.5pt; }
-  td.bool.ok { color: #16a34a; }
-  td.bool.no { color: #dc2626; }
-  td.activity { font-size: 6pt; }
-  td.notes { font-size: 6pt; color: #475569; font-style: italic; }
-  td.writein { background: #f8fafc; }
-  td.eanx { color: #059669; font-weight: 700; }
+  td {
+    font-size: 6pt; padding: 0.85mm 0.3mm;
+    border: 0.3pt solid #999; vertical-align: middle;
+    overflow: hidden;
+  }
+  td.num      { text-align: center; font-size: 5.5pt; }
+  td.name     { font-weight: 700; font-size: 6.5pt; }
+  td.center   { text-align: center; }
+  td.bool     { text-align: center; font-size: 7pt; font-weight: 700; }
+  td.activity  { font-size: 5.5pt; }
+  td.next      { text-align: center; font-size: 5.5pt; font-weight: 700; }
+  td.next-arr  { color: #7c3aed; }
+  td.next-ld   { color: #b91c1c; }
+  td.notes     { font-size: 5.5pt; font-style: italic; }
+  td.writein  { background: #f5f5f5; }
+  td.eanx     { font-weight: 900; }
 
-  tr.alt td { background: #f8fafc; }
-  tr.alt td.writein { background: #f0fdf4; }
+  tr.alt td         { background: #f5f5f5; }
+  tr.alt td.writein { background: #ebebeb; }
 
-  /* print-safe colours */
   @media print {
-    th { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-    td.bool.ok, td.bool.no, td.eanx { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-    tr.alt td { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    td.writein, tr.alt td, tr.alt td.writein {
+      -webkit-print-color-adjust: exact; print-color-adjust: exact;
+    }
   }
 </style>
 </head>
 <body>
   <div class="header">
-    <div class="header-left">
-      <h1>Dive Manifest — ${tripInfo?.label ?? 'Trip'}</h1>
-      <div class="meta">
-        <span>📅 ${fmtDate(tripInfo?.start_time)}</span>
-        <span>🕐 ${fmtTime(tripInfo?.start_time)}</span>
-        ${tripInfo?.vessel ? `<span>⛵ ${tripInfo.vessel}</span>` : ''}
-        <span>👥 ${manifest.length} divers</span>
-      </div>
-      ${staffStr ? `<div class="staff">Staff: ${staffStr}</div>` : ''}
-      ${tankSummaryStr ? `<div class="tanks">Tanks: ${tankSummary.map(t => `<span class="${t.isEanx ? 'eanx-badge' : ''}">${t.count}× ${t.label}</span>`).join('  &nbsp;')}</div>` : ''}
+
+    <div class="header-title">
+      <h1>Dive Manifest</h1>
+      ${tripInfo?.label ? `<span class="label-tag">${tripInfo.label}</span>` : ''}
     </div>
-    <div class="header-right">
+
+    <div class="header-summary">
+      <span class="summary-main">${fmtDate(tripInfo?.start_time)}${tripInfo?.start_time ? `  ·  ${fmtTime(tripInfo.start_time)}` : ''}</span>
+      <span>${tripInfo?.vessel ? `${tripInfo.vessel}  ·  ` : ''}${manifest.length} divers</span>
+    </div>
+
+    <div class="header-sites">
       ${Array.from({ length: nd }, (_, i) => `
-        <div class="site-row">
-          <span class="site-label">Dive ${i + 1}:</span>
-          <span class="site-line"></span>
+        <div class="dive-block">
+          <span class="dive-block-title">Dive ${i + 1}</span>
+          <div class="site-row"><span class="site-label">Site:</span><span class="site-line"></span></div>
+          <div class="site-row"><span class="site-label">Sightings:</span><span class="site-line"></span></div>
+          <div class="site-row"><span class="site-label">Notes:</span><span class="site-line"></span></div>
         </div>`).join('')}
     </div>
+
+    <div class="header-meta">
+      ${staffStr
+        ? `<span class="meta-block"><strong>Staff:</strong>&nbsp; ${staffStr}</span>`
+        : ''}
+      ${tankSummary.length > 0
+        ? `<span class="meta-block"><strong>Tanks:</strong>&nbsp; ${tankSummary.map(t => `<span class="${t.isEanx ? 'eanx' : ''}">${t.count}×&thinsp;${t.label}</span>`).join('&ensp;')}</span>`
+        : ''}
+    </div>
+
   </div>
+  <hr class="divider">
 
   <table>
     <colgroup>
       <col class="num"><col class="name">
-      <col class="bool"><col class="bool"><col class="pu">
       <col class="ld"><col class="cert">
       <col class="gear"><col class="gear"><col class="gear"><col class="gear">
-      <col class="bool"><col class="bool">
+      <col class="bool2"><col class="bool2">
       <col class="tank">${nd >= 2 ? '<col class="tank">' : ''}
-      <col class="wei"><col class="bool">
-      <col class="act"><col class="notes">
+      <col class="wei"><col class="bool2">
+      <col class="act"><col class="next">
       ${Array.from({ length: nd }, () => '<col class="dive"><col class="dive">').join('')}
+      <col class="notes">
     </colgroup>
     <thead>
       <tr>
         <th rowspan="2">#</th>
         <th class="name-h" rowspan="2">Diver Name</th>
-        <th rowspan="2" title="Waiver">W</th>
-        <th rowspan="2" title="Deposit">Dep</th>
-        <th rowspan="2" title="Pick Up">PU</th>
         <th rowspan="2">LD</th>
         <th rowspan="2">Cert</th>
         <th rowspan="2">BCD</th>
@@ -633,21 +713,22 @@ export default function TripManifest({
         <th rowspan="2">Fins</th>
         <th rowspan="2">Mask</th>
         <th rowspan="2">Reg</th>
-        <th rowspan="2">Comp</th>
+        <th rowspan="2">Cmp</th>
         <th rowspan="2">T1</th>
         ${nd >= 2 ? '<th rowspan="2">T2</th>' : ''}
-        <th rowspan="2">Wei</th>
+        <th rowspan="2">Wt</th>
         <th rowspan="2" title="Private">Prv</th>
         <th rowspan="2">Activity</th>
-        <th rowspan="2">Notes</th>
+        <th rowspan="2" title="Next trip / status">Next</th>
         ${diveColHeaders}
+        <th rowspan="2">Notes</th>
       </tr>
       <tr>${diveSubHeaders}</tr>
     </thead>
     <tbody>${rows}</tbody>
   </table>
 
-  <script>setTimeout(() => { window.print(); }, 300 );</script>
+  <script>setTimeout(() => { window.print(); }, 300);</script>
 </body></html>`;
 
     win.document.write(html);
@@ -655,8 +736,24 @@ export default function TripManifest({
   };
 
   const renderNextChip = (label: string) => {
-    if (label === '#ARR') return <span className="inline-block px-2 py-0.5 rounded-full text-[10px] font-black bg-violet-100 text-violet-700 border border-violet-200">#ARR</span>;
-    if (label === 'ARR')  return <span className="inline-block px-2 py-0.5 rounded-full text-[10px] font-black bg-sky-100 text-sky-700 border border-sky-200">ARR</span>;
+    const [status, nextAbbr] = label.split('|');
+    const nextChip = nextAbbr
+      ? nextAbbr === 'LD'
+        ? <span className="inline-block px-1.5 py-0.5 rounded-full text-[10px] font-black bg-rose-100 text-rose-700 border border-rose-200">LD</span>
+        : <span className="inline-block px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-600 border border-slate-200">{nextAbbr}</span>
+      : null;
+    if (status === '#ARR') return (
+      <span className="inline-flex items-center gap-0.5">
+        <span className="inline-block px-1.5 py-0.5 rounded-full text-[10px] font-black bg-violet-100 text-violet-700 border border-violet-200">#ARR</span>
+        {nextChip}
+      </span>
+    );
+    if (status === 'ARR') return (
+      <span className="inline-flex items-center gap-0.5">
+        <span className="inline-block px-1.5 py-0.5 rounded-full text-[10px] font-black bg-sky-100 text-sky-700 border border-sky-200">ARR</span>
+        {nextChip}
+      </span>
+    );
     if (label === 'LD')   return <span className="inline-block px-2 py-0.5 rounded-full text-[10px] font-black bg-rose-100 text-rose-700 border border-rose-200">LD</span>;
     if (label === '-')    return <span className="text-[10px] text-slate-300">-</span>;
     return <span className="inline-block px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-600 border border-slate-200">{label}</span>;
