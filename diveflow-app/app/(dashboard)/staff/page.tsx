@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/utils/supabase/client';
 
@@ -541,6 +541,17 @@ export default function StaffPage() {
   const amJobs = dailyJobs.filter(j => j['AM/PM'] === 'AM');
   const pmJobs = dailyJobs.filter(j => j['AM/PM'] === 'PM');
 
+  // Staff members with no real job (only Unassigned rows, or no rows at all) for the selected date
+  const unassignedStaffIds = useMemo(() => {
+    const unassignedJobTypeId = jobTypes.find(jt => jt.name === 'Unassigned')?.id;
+    const staffWithRealJobs = new Set(
+      dailyJobs
+        .filter(j => j.job_type_id !== unassignedJobTypeId)
+        .map(j => j.staff_id)
+    );
+    return allStaff.filter(s => !staffWithRealJobs.has(s.id)).map(s => s.id);
+  }, [dailyJobs, jobTypes, allStaff]);
+
   return (
     <div className="flex flex-col h-[calc(100vh-4rem)] overflow-hidden">
       <StaffTopBar
@@ -571,6 +582,7 @@ export default function StaffPage() {
         <StaffPanel
           staff={allStaff}
           selectedIds={selectedStaffIds}
+          unassignedIds={unassignedStaffIds}
           onToggle={id => setSelectedStaffIds(prev =>
             prev.includes(id) ? prev.filter(s => s !== id) : [...prev, id]
           )}

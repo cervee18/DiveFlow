@@ -26,3 +26,7 @@ export async function getAuthContext(): Promise<{ user: { id: string; email?: st
 export function isStaff(role: UserRole): boolean {
   return STAFF_ROLES.includes(role);
 }
+
+export function isAdmin(role: UserRole): boolean {
+  return role === 'admin';
+}

@@ -11,6 +11,12 @@ type AlertType = 'missing_waiver' | 'missing_deposit' | 'no_staff';
 type Severity  = 'critical' | 'warning';
 type Category  = 'all' | 'staff' | 'clients';
 
+interface UnassignedMember {
+  id:         string;
+  first_name: string;
+  last_name:  string;
+}
+
 interface Alert {
   alert_type:  AlertType;
   severity:    Severity;
@@ -129,11 +135,12 @@ export default function AlertsPanel() {
   const supabase = createClient();
   const router   = useRouter();
 
-  const [orgId,           setOrgId]           = useState<string | null>(null);
-  const [alerts,          setAlerts]          = useState<Alert[]>([]);
-  const [isLoading,       setIsLoading]       = useState(true);
-  const [dismissing,      setDismissing]      = useState<Set<string>>(new Set());
-  const [drawerTripId,    setDrawerTripId]    = useState<string | null>(null);
+  const [orgId,             setOrgId]             = useState<string | null>(null);
+  const [alerts,            setAlerts]            = useState<Alert[]>([]);
+  const [isLoading,         setIsLoading]         = useState(true);
+  const [dismissing,        setDismissing]        = useState<Set<string>>(new Set());
+  const [drawerTripId,      setDrawerTripId]      = useState<string | null>(null);
+  const [unassignedToday,   setUnassignedToday]   = useState<UnassignedMember[]>([]);
 
   // ── Filters ───────────────────────────────────────────────────────────────
   const [category,    setCategory]    = useState<Category>('all');
@@ -167,6 +174,25 @@ export default function AlertsPanel() {
   }, [orgId, supabase]);
 
   useEffect(() => { loadAlerts(); }, [loadAlerts]);
+
+  // ── Unassigned staff today ─────────────────────────────────────────────────
+  const loadUnassignedStaff = useCallback(async () => {
+    if (!orgId) return;
+    const today = toLocalDateStr();
+    const [staffRes, jobTypesRes, todayJobsRes] = await Promise.all([
+      supabase.from('staff').select('id, first_name, last_name').eq('organization_id', orgId),
+      supabase.from('job_types').select('id, name').or(`organization_id.eq.${orgId},organization_id.is.null`),
+      supabase.from('staff_daily_job').select('staff_id, job_type_id').eq('organization_id', orgId).eq('job_date', today),
+    ]);
+    if (!staffRes.data) return;
+    const unassignedId = jobTypesRes.data?.find((jt: any) => jt.name === 'Unassigned')?.id;
+    const staffWithRealJobs = new Set(
+      (todayJobsRes.data ?? []).filter((j: any) => j.job_type_id !== unassignedId).map((j: any) => j.staff_id)
+    );
+    setUnassignedToday(staffRes.data.filter((s: any) => !staffWithRealJobs.has(s.id)));
+  }, [orgId, supabase]);
+
+  useEffect(() => { loadUnassignedStaff(); }, [loadUnassignedStaff]);
 
   // ── Dismiss ───────────────────────────────────────────────────────────────
   const handleDismiss = async (alert: Alert) => {
@@ -242,7 +268,7 @@ export default function AlertsPanel() {
           )}
         </div>
         <button
-          onClick={loadAlerts}
+          onClick={() => { loadAlerts(); loadUnassignedStaff(); }}
           title="Refresh alerts"
           className="text-slate-400 hover:text-slate-600 transition-colors p-1 rounded hover:bg-slate-50"
         >
@@ -296,13 +322,37 @@ export default function AlertsPanel() {
 
       {/* ── Body ── */}
       <div className="p-4">
+
+        {/* Unassigned staff today — shown in All + Staff tabs */}
+        {!isLoading && unassignedToday.length > 0 && (category === 'all' || category === 'staff') && (
+          <div
+            onClick={() => router.push(`/staff?date=${toLocalDateStr()}`)}
+            className="flex items-center gap-3 py-1.5 px-3 mb-3 rounded-lg border border-amber-200 bg-amber-50 cursor-pointer hover:bg-amber-100 transition-colors"
+          >
+            <span className="inline-flex items-center gap-1 text-xs font-semibold text-amber-700 bg-amber-100 border border-amber-200 rounded px-1.5 py-0.5 shrink-0">
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-400 inline-block" />
+              Warning
+            </span>
+            <span className="text-xs font-medium text-slate-500 shrink-0">Unassigned Today</span>
+            <span className="text-xs font-medium text-slate-800 truncate">
+              {unassignedToday.length === 1
+                ? `${unassignedToday[0].first_name} ${unassignedToday[0].last_name} has no job assigned`
+                : `${unassignedToday.map(s => s.first_name).slice(0, 3).join(', ')}${unassignedToday.length > 3 ? ` +${unassignedToday.length - 3} more` : ''} — ${unassignedToday.length} staff unassigned`
+              }
+            </span>
+            <svg className="w-3.5 h-3.5 text-amber-500 shrink-0 ml-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+            </svg>
+          </div>
+        )}
+
         {isLoading ? (
           <div className="space-y-2 animate-pulse">
             {[1, 2].map(i => (
               <div key={i} className="h-16 bg-slate-100 rounded-lg" />
             ))}
           </div>
-        ) : filtered.length === 0 ? (
+        ) : filtered.length === 0 && unassignedToday.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-8 text-center">
             <svg className="w-8 h-8 text-slate-300 mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
               <path strokeLinecap="round" strokeLinejoin="round"
@@ -312,7 +362,7 @@ export default function AlertsPanel() {
               {totalAll === 0 ? 'No active alerts' : 'No alerts match the current filters'}
             </p>
           </div>
-        ) : (
+        ) : filtered.length === 0 ? null : (
           <div className="space-y-1">
             {[...visibleCrit, ...visibleWarn].map(alert => (
               <AlertRow

@@ -2,10 +2,13 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { headers } from "next/headers";
 import { createClient } from "@/utils/supabase/server";
-import { getAuthContext, isStaff } from "@/utils/auth";
+import { getAuthContext, isStaff, isAdmin } from "@/utils/auth";
 
 // Routes that require staff-level access (non-clients)
 const STAFF_ONLY_PATHS = ['/overview', '/clients', '/trips', '/staff'];
+
+// Routes that require admin-level access only
+const ADMIN_ONLY_PATHS = ['/logs'];
 
 export default async function DashboardLayout({
   children,
@@ -20,6 +23,11 @@ export default async function DashboardLayout({
   const isStaffOnlyPath = STAFF_ONLY_PATHS.some(p => pathname.startsWith(p));
 
   if (!isStaff(role) && isStaffOnlyPath) {
+    redirect('/');
+  }
+
+  const isAdminOnlyPath = ADMIN_ONLY_PATHS.some(p => pathname.startsWith(p));
+  if (!isAdmin(role) && isAdminOnlyPath) {
     redirect('/');
   }
 
@@ -56,14 +64,17 @@ export default async function DashboardLayout({
               <Link href="/clients" className="flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium text-slate-400 hover:bg-slate-800 hover:text-teal-400 transition-colors">
                 Clients
               </Link>
-              <Link href="/trips" className="flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium text-slate-400 hover:bg-slate-800 hover:text-teal-400 transition-colors">
-                Trips
-              </Link>
               <Link href="/staff" className="flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium text-slate-400 hover:bg-slate-800 hover:text-teal-400 transition-colors">
                 Staff
               </Link>
-              <Link href="#" className="flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium text-slate-600 cursor-not-allowed">
-                Inventory (Soon)
+            </>
+          )}
+
+          {isAdmin(role) && (
+            <>
+              <div className="my-2 border-t border-slate-700/50" />
+              <Link href="/logs" className="flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium text-slate-400 hover:bg-slate-800 hover:text-teal-400 transition-colors">
+                Logs
               </Link>
             </>
           )}
