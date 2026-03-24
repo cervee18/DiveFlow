@@ -501,19 +501,19 @@ export default function TripManifest({
           <td class="name">${diver.clients?.first_name ?? ''} ${diver.clients?.last_name ?? ''}</td>
           <td class="bool ${(row.waiver ?? diver.waiver) ? 'ok' : 'no'}">${bool(row.waiver ?? diver.waiver)}</td>
           <td class="bool ${(row.deposit ?? diver.deposit) ? 'ok' : 'no'}">${bool(row.deposit ?? diver.deposit)}</td>
-          <td class="bool ${(row.pick_up ?? diver.pick_up) ? 'ok' : ''}">${bool(row.pick_up ?? diver.pick_up)}</td>
+          <td class="bool ${(row.pick_up ?? diver.pick_up) ? 'ok' : ''}">${(row.pick_up ?? diver.pick_up) ? '✓' : ''}</td>
           <td class="center">${ld}</td>
           <td class="center">${cert}</td>
           <td class="center">${bcd}</td>
           <td class="center">${suit}</td>
           <td class="center">${fins}</td>
           <td class="center">${mask}</td>
-          <td class="bool ${(row.regulator ?? diver.regulator) ? 'ok' : ''}">${bool(row.regulator ?? diver.regulator)}</td>
-          <td class="bool ${(row.computer ?? diver.computer) ? 'ok' : ''}">${bool(row.computer ?? diver.computer)}</td>
+          <td class="bool ${(row.regulator ?? diver.regulator) ? 'ok' : ''}">${(row.regulator ?? diver.regulator) ? '✓' : ''}</td>
+          <td class="bool ${(row.computer ?? diver.computer) ? 'ok' : ''}">${(row.computer ?? diver.computer) ? '✓' : ''}</td>
           <td class="center${eanxClass(t1)}">${t1}</td>
           ${nd >= 2 ? `<td class="center${eanxClass(t2)}">${t2}</td>` : ''}
           <td class="center">${row.weights ?? diver.weights ?? ''}</td>
-          <td class="bool ${(row.private ?? diver.private) ? 'ok' : ''}">${bool(row.private ?? diver.private)}</td>
+          <td class="bool ${(row.private ?? diver.private) ? 'ok' : ''}">${(row.private ?? diver.private) ? '✓' : ''}</td>
           <td class="activity">${activity}</td>
           <td class="notes">${notes}</td>
           ${diveCols}
