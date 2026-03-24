@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { createClient } from '@/utils/supabase/client';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -43,6 +43,144 @@ function buildTimestamp(tripStartTime: string, timeStr: string): string | null {
   return d.toISOString();
 }
 
+// ── DivesiteCombobox ──────────────────────────────────────────────────────────
+
+interface DivesiteComboboxProps {
+  divesites: { id: string; name: string }[];
+  value: string;           // currently selected divesite id
+  onChange: (id: string) => void;
+}
+
+function DivesiteCombobox({ divesites, value, onChange }: DivesiteComboboxProps) {
+  const selected   = divesites.find(s => s.id === value);
+  const [query, setQuery]       = useState(selected?.name ?? '');
+  const [open, setOpen]         = useState(false);
+  const [focused, setFocused]   = useState(-1);
+  const containerRef            = useRef<HTMLDivElement>(null);
+  const inputRef                = useRef<HTMLInputElement>(null);
+  const listRef                 = useRef<HTMLUListElement>(null);
+
+  // Keep text in sync when the parent resets the value
+  useEffect(() => {
+    setQuery(divesites.find(s => s.id === value)?.name ?? '');
+  }, [value, divesites]);
+
+  const filtered = query.trim() === ''
+    ? divesites
+    : divesites.filter(s => s.name.toLowerCase().includes(query.toLowerCase()));
+
+  const commit = (site: { id: string; name: string }) => {
+    onChange(site.id);
+    setQuery(site.name);
+    setOpen(false);
+    setFocused(-1);
+  };
+
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setQuery(e.target.value);
+    setOpen(true);
+    setFocused(-1);
+    if (e.target.value === '') onChange('');
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (!open) { if (e.key === 'ArrowDown' || e.key === 'Enter') setOpen(true); return; }
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setFocused(f => Math.min(f + 1, filtered.length - 1));
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setFocused(f => Math.max(f - 1, 0));
+    } else if (e.key === 'Enter' && focused >= 0 && filtered[focused]) {
+      e.preventDefault();
+      commit(filtered[focused]);
+    } else if (e.key === 'Escape') {
+      setOpen(false);
+      setFocused(-1);
+    }
+  };
+
+  // Scroll focused item into view
+  useEffect(() => {
+    if (focused >= 0 && listRef.current) {
+      const item = listRef.current.children[focused] as HTMLElement | undefined;
+      item?.scrollIntoView({ block: 'nearest' });
+    }
+  }, [focused]);
+
+  // Close on outside click
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false);
+        // If nothing valid selected, restore last committed name
+        setQuery(divesites.find(s => s.id === value)?.name ?? '');
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [value, divesites]);
+
+  return (
+    <div ref={containerRef} className="relative flex-1">
+      <input
+        ref={inputRef}
+        type="text"
+        value={query}
+        placeholder="Search dive site…"
+        onChange={handleInputChange}
+        onFocus={() => setOpen(true)}
+        onKeyDown={handleKeyDown}
+        className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-700 bg-white focus:outline-none focus:ring-2 focus:ring-teal-500"
+        autoComplete="off"
+      />
+      {/* Clear button */}
+      {query && (
+        <button
+          type="button"
+          onMouseDown={e => { e.preventDefault(); onChange(''); setQuery(''); setOpen(true); inputRef.current?.focus(); }}
+          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-300 hover:text-slate-500"
+          tabIndex={-1}
+        >
+          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      )}
+      {/* Dropdown */}
+      {open && filtered.length > 0 && (
+        <ul
+          ref={listRef}
+          className="absolute z-50 mt-1 w-full max-h-52 overflow-y-auto bg-white border border-slate-200 rounded-lg shadow-lg py-1"
+        >
+          {filtered.map((site, idx) => (
+            <li
+              key={site.id}
+              onMouseDown={e => { e.preventDefault(); commit(site); }}
+              className={`px-3 py-2 text-sm cursor-pointer ${
+                idx === focused
+                  ? 'bg-teal-50 text-teal-700 font-medium'
+                  : site.id === value
+                    ? 'bg-slate-50 text-slate-700'
+                    : 'text-slate-700 hover:bg-slate-50'
+              }`}
+            >
+              {site.name}
+            </li>
+          ))}
+        </ul>
+      )}
+      {open && filtered.length === 0 && query.trim() !== '' && (
+        <div className="absolute z-50 mt-1 w-full bg-white border border-slate-200 rounded-lg shadow-lg px-3 py-2 text-sm text-slate-400 italic">
+          No sites match "{query}"
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 interface Props {
   trip: any;
   onSaved?: () => void;
@@ -54,7 +192,6 @@ export default function PostTripLog({ trip, onSaved }: Props) {
   const supabase = createClient();
   const numberOfDives: number = trip.trip_types?.number_of_dives ?? 1;
 
-  const [activeTab, setActiveTab]   = useState(0);
   const [dives, setDives]           = useState<DiveState[]>([]);
   const [clients, setClients]       = useState<ClientEntry[]>([]);
   const [staff, setStaff]           = useState<StaffEntry[]>([]);
@@ -139,17 +276,14 @@ export default function PostTripLog({ trip, onSaved }: Props) {
             bottomTime: cl.bottom_time != null ? String(cl.bottom_time) : '',
           };
         }
-        // Only mark as present if they have an existing log entry
         const presentSet = new Set((existing.staff_dive_logs ?? []).map((sl: any) => sl.trip_staff_id));
         for (const s of staffList) {
           staffPresence[s.tripStaffId] = presentSet.has(s.tripStaffId);
         }
       } else {
-        // New dive — default all staff to present
         for (const s of staffList) staffPresence[s.tripStaffId] = true;
       }
 
-      // started_at: use existing value if present, otherwise compute default
       let startedAt = defaultDiveTime(trip.start_time, i);
       if (existing?.started_at) {
         const d = new Date(existing.started_at);
@@ -236,14 +370,12 @@ export default function PostTripLog({ trip, onSaved }: Props) {
       for (let i = 0; i < dives.length; i++) {
         const dive = dives[i];
 
-        // Skip dive slots with no site and no client data and no staff — nothing to save
         const hasAnything =
           dive.divesiteId ||
           Object.values(dive.clientLogs).some(v => v.maxDepth !== '' || v.bottomTime !== '') ||
           Object.values(dive.staffPresence).some(Boolean);
         if (!hasAnything) continue;
 
-        // 1. Upsert trip_dive row
         const { data: tdData, error: tdError } = await supabase
           .from('trip_dives')
           .upsert(
@@ -262,8 +394,6 @@ export default function PostTripLog({ trip, onSaved }: Props) {
         if (tdError) throw tdError;
         const tripDiveId = tdData.id;
 
-        // 2. Replace client logs — insert a row for every client on the trip,
-        //    metrics may be null (client was on boat but sat out / no data recorded).
         await supabase.from('client_dive_logs').delete().eq('trip_dive_id', tripDiveId);
         const clientRows = clients.map(c => ({
           trip_dive_id:   tripDiveId,
@@ -278,7 +408,6 @@ export default function PostTripLog({ trip, onSaved }: Props) {
           if (clError) throw clError;
         }
 
-        // 3. Replace staff presence
         await supabase.from('staff_dive_logs').delete().eq('trip_dive_id', tripDiveId);
         const staffRows = Object.entries(dive.staffPresence)
           .filter(([, present]) => present)
@@ -291,7 +420,6 @@ export default function PostTripLog({ trip, onSaved }: Props) {
           if (slError) throw slError;
         }
 
-        // Update local state with the resolved trip_dive_id
         setDives(prev => {
           const next = [...prev];
           next[i] = { ...next[i], tripDiveId };
@@ -319,168 +447,214 @@ export default function PostTripLog({ trip, onSaved }: Props) {
     );
   }
 
-  const currentDive = dives[activeTab];
-  if (!currentDive) return null;
+  if (!dives.length) return null;
+
+  const multiDive = numberOfDives > 1;
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
     <div className="flex flex-col h-full">
 
-      {/* ── Dive tabs ───────────────────────────────────────────────────────── */}
-      {numberOfDives > 1 && (
-        <div className="flex gap-1 shrink-0 mb-5">
-          {Array.from({ length: numberOfDives }, (_, i) => (
-            <button
-              key={i}
-              onClick={() => setActiveTab(i)}
-              className={`px-5 py-2 text-sm font-semibold rounded-full transition-colors ${
-                activeTab === i
-                  ? 'bg-teal-600 text-white shadow-sm'
-                  : 'bg-slate-100 text-slate-500 hover:bg-slate-200 hover:text-slate-700'
-              }`}
-            >
-              Dive {i + 1}
-            </button>
-          ))}
-        </div>
-      )}
+      {/* ── Dive site + time rows ─────────────────────────────────────────── */}
+      <div className="shrink-0 space-y-2 mb-6">
+        {dives.map((dive, i) => (
+          <div key={i} className="flex items-center gap-3">
+            {multiDive && (
+              <span className="inline-flex items-center justify-center w-16 shrink-0 px-2 py-1 rounded-full text-xs font-bold bg-teal-50 text-teal-700 border border-teal-200">
+                Dive {i + 1}
+              </span>
+            )}
+            {!multiDive && (
+              <label className="text-sm font-semibold text-slate-500 shrink-0 w-10">Site</label>
+            )}
+            <DivesiteCombobox
+              divesites={divesites}
+              value={dive.divesiteId}
+              onChange={val => setDives(prev => {
+                const next = [...prev];
+                next[i] = { ...next[i], divesiteId: val };
+                return next;
+              })}
+            />
+            <label className="text-sm font-semibold text-slate-500 shrink-0">Time</label>
+            <input
+              type="time"
+              value={dive.startedAt}
+              onChange={e => {
+                const val = e.target.value;
+                setDives(prev => {
+                  const next = [...prev];
+                  next[i] = { ...next[i], startedAt: val };
+                  return next;
+                });
+              }}
+              className="border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-700 bg-white focus:outline-none focus:ring-2 focus:ring-teal-500"
+            />
+          </div>
+        ))}
+      </div>
 
-      {/* ── Scrollable content ──────────────────────────────────────────────── */}
+      {/* ── Scrollable content ───────────────────────────────────────────── */}
       <div className="flex-1 overflow-y-auto space-y-5">
 
-        {/* Site + Time row */}
-        <div className="flex items-center gap-3">
-          <label className="text-sm font-semibold text-slate-500 shrink-0 w-10">Site</label>
-          <select
-            value={currentDive.divesiteId}
-            onChange={e => {
-              const val = e.target.value;
-              setDives(prev => {
-                const next = [...prev];
-                next[activeTab] = { ...next[activeTab], divesiteId: val };
-                return next;
-              });
-            }}
-            className="flex-1 border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-700 bg-white focus:outline-none focus:ring-2 focus:ring-teal-500"
-          >
-            <option value="">— Select dive site —</option>
-            {divesites.map(s => (
-              <option key={s.id} value={s.id}>{s.name}</option>
-            ))}
-          </select>
-          <label className="text-sm font-semibold text-slate-500 shrink-0">Time</label>
-          <input
-            type="time"
-            value={currentDive.startedAt}
-            onChange={e => {
-              const val = e.target.value;
-              setDives(prev => {
-                const next = [...prev];
-                next[activeTab] = { ...next[activeTab], startedAt: val };
-                return next;
-              });
-            }}
-            className="border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-700 bg-white focus:outline-none focus:ring-2 focus:ring-teal-500"
-          />
-        </div>
-
-        {/* Fill all */}
-        <div className="flex items-center gap-3 bg-slate-50 border border-slate-200 rounded-lg px-4 py-3">
-          <span className="text-xs font-bold text-slate-400 uppercase tracking-wide shrink-0">Fill all</span>
-          <input
-            type="number"
-            min="0"
-            step="0.1"
-            placeholder="Depth (m)"
-            value={fillAll[activeTab].maxDepth}
-            onChange={e => setFillAll(prev => {
-              const next = [...prev];
-              next[activeTab] = { ...next[activeTab], maxDepth: e.target.value };
-              return next;
-            })}
-            className="w-28 border border-slate-200 rounded-md px-2 py-1.5 text-sm text-right focus:outline-none focus:ring-2 focus:ring-teal-500 bg-white"
-          />
-          <input
-            type="number"
-            min="0"
-            placeholder="Time (min)"
-            value={fillAll[activeTab].bottomTime}
-            onChange={e => setFillAll(prev => {
-              const next = [...prev];
-              next[activeTab] = { ...next[activeTab], bottomTime: e.target.value };
-              return next;
-            })}
-            className="w-28 border border-slate-200 rounded-md px-2 py-1.5 text-sm text-right focus:outline-none focus:ring-2 focus:ring-teal-500 bg-white"
-          />
-          <button
-            onClick={() => applyFillAll(activeTab)}
-            className="ml-auto px-3 py-1.5 text-xs font-semibold bg-teal-600 text-white rounded-md hover:bg-teal-700 transition-colors"
-          >
-            Apply
-          </button>
-        </div>
-
-        {/* Clients */}
+        {/* ── Clients table ──────────────────────────────────────────────── */}
         <div>
           <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2">
             Clients
             <span className="ml-1 font-normal normal-case">— depth (m) · time (min)</span>
           </h3>
-          <div className="divide-y divide-slate-100 border border-slate-200 rounded-lg overflow-hidden">
+          <div className="border border-slate-200 rounded-lg overflow-hidden">
+
+            {/* Column headers (dive labels) — only shown for multi-dive */}
+            {multiDive && (
+              <div className="flex items-center gap-2 px-4 py-2 bg-slate-50 border-b border-slate-100">
+                <span className="flex-1" />
+                {dives.map((_, i) => (
+                  <div key={i} className="flex gap-1">
+                    <span className="w-20 text-center text-xs font-bold text-teal-600 uppercase tracking-wide">
+                      D{i + 1} depth
+                    </span>
+                    <span className="w-20 text-center text-xs font-bold text-teal-600 uppercase tracking-wide">
+                      D{i + 1} time
+                    </span>
+                  </div>
+                ))}
+                {/* spacer for the per-dive apply buttons column */}
+                <span className="w-8" />
+              </div>
+            )}
+
+            {/* Column sub-headers (depth / time) — single-dive only */}
+            {!multiDive && (
+              <div className="flex items-center gap-2 px-4 py-2 bg-slate-50 border-b border-slate-100">
+                <span className="flex-1" />
+                <span className="w-20 text-center text-xs font-bold text-slate-400 uppercase tracking-wide">Depth</span>
+                <span className="w-20 text-center text-xs font-bold text-slate-400 uppercase tracking-wide">Time</span>
+                <span className="w-8" />
+              </div>
+            )}
+
+            {/* Fill-all row */}
+            <div className="flex items-center gap-2 px-4 py-2 bg-amber-50 border-b border-slate-200">
+              <span className="flex-1 text-xs font-bold text-slate-400 uppercase tracking-wide">Fill all</span>
+              {dives.map((_, i) => (
+                <div key={i} className="flex items-center gap-1">
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.1"
+                    placeholder="—"
+                    value={fillAll[i].maxDepth}
+                    onChange={e => setFillAll(prev => {
+                      const next = [...prev];
+                      next[i] = { ...next[i], maxDepth: e.target.value };
+                      return next;
+                    })}
+                    className="w-20 border border-slate-200 rounded px-2 py-1 text-sm text-right focus:outline-none focus:ring-2 focus:ring-teal-500 bg-white"
+                  />
+                  <input
+                    type="number"
+                    min="0"
+                    placeholder="—"
+                    value={fillAll[i].bottomTime}
+                    onChange={e => setFillAll(prev => {
+                      const next = [...prev];
+                      next[i] = { ...next[i], bottomTime: e.target.value };
+                      return next;
+                    })}
+                    className="w-20 border border-slate-200 rounded px-2 py-1 text-sm text-right focus:outline-none focus:ring-2 focus:ring-teal-500 bg-white"
+                  />
+                </div>
+              ))}
+              <button
+                onClick={() => dives.forEach((_, i) => applyFillAll(i))}
+                className="w-8 flex items-center justify-center py-1 text-xs font-semibold bg-teal-600 text-white rounded hover:bg-teal-700 transition-colors"
+                title="Apply to all clients"
+              >
+                ↓
+              </button>
+            </div>
+
+            {/* Client rows */}
             {clients.length === 0 ? (
               <p className="px-4 py-3 text-sm text-slate-400 italic">No clients on this trip</p>
             ) : (
-              clients.map(c => {
-                const log = currentDive.clientLogs[c.tripClientId] ?? { maxDepth: '', bottomTime: '' };
-                return (
-                  <div key={c.tripClientId} className="flex items-center gap-3 px-4 py-2 bg-white">
-                    <span className="flex-1 text-sm text-slate-700 font-medium truncate">{c.name}</span>
-                    <input
-                      type="number"
-                      min="0"
-                      step="0.1"
-                      placeholder="—"
-                      value={log.maxDepth}
-                      onChange={e => updateClientLog(activeTab, c.tripClientId, 'maxDepth', e.target.value)}
-                      className="w-20 border border-slate-200 rounded px-2 py-1 text-sm text-right focus:outline-none focus:ring-2 focus:ring-teal-500"
-                    />
-                    <input
-                      type="number"
-                      min="0"
-                      placeholder="—"
-                      value={log.bottomTime}
-                      onChange={e => updateClientLog(activeTab, c.tripClientId, 'bottomTime', e.target.value)}
-                      className="w-20 border border-slate-200 rounded px-2 py-1 text-sm text-right focus:outline-none focus:ring-2 focus:ring-teal-500"
-                    />
-                  </div>
-                );
-              })
+              clients.map(c => (
+                <div
+                  key={c.tripClientId}
+                  className="flex items-center gap-2 px-4 py-2 bg-white border-b border-slate-100 last:border-0"
+                >
+                  <span className="flex-1 text-sm text-slate-700 font-medium truncate">{c.name}</span>
+                  {dives.map((dive, i) => {
+                    const log = dive.clientLogs[c.tripClientId] ?? { maxDepth: '', bottomTime: '' };
+                    return (
+                      <div key={i} className="flex gap-1">
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.1"
+                          placeholder="—"
+                          value={log.maxDepth}
+                          onChange={e => updateClientLog(i, c.tripClientId, 'maxDepth', e.target.value)}
+                          className="w-20 border border-slate-200 rounded px-2 py-1 text-sm text-right focus:outline-none focus:ring-2 focus:ring-teal-500"
+                        />
+                        <input
+                          type="number"
+                          min="0"
+                          placeholder="—"
+                          value={log.bottomTime}
+                          onChange={e => updateClientLog(i, c.tripClientId, 'bottomTime', e.target.value)}
+                          className="w-20 border border-slate-200 rounded px-2 py-1 text-sm text-right focus:outline-none focus:ring-2 focus:ring-teal-500"
+                        />
+                      </div>
+                    );
+                  })}
+                  {/* spacer to align with apply button column */}
+                  <span className="w-8" />
+                </div>
+              ))
             )}
           </div>
         </div>
 
-        {/* Staff */}
+        {/* ── Staff table ────────────────────────────────────────────────── */}
         {staff.length > 0 && (
           <div>
             <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2">Staff</h3>
-            <div className="divide-y divide-slate-100 border border-slate-200 rounded-lg overflow-hidden">
+            <div className="border border-slate-200 rounded-lg overflow-hidden">
+              {/* Header */}
+              <div className="flex items-center gap-3 px-4 py-2 bg-slate-50 border-b border-slate-100">
+                <span className="flex-1 text-xs font-bold text-slate-400 uppercase tracking-wide">Name</span>
+                {dives.map((_, i) => (
+                  <span
+                    key={i}
+                    className="w-16 text-center text-xs font-bold text-teal-600 uppercase tracking-wide"
+                  >
+                    {multiDive ? `Dive ${i + 1}` : 'Present'}
+                  </span>
+                ))}
+              </div>
               {staff.map(s => (
-                <label
+                <div
                   key={s.tripStaffId}
-                  className="flex items-center gap-3 px-4 py-2.5 bg-white cursor-pointer hover:bg-slate-50 transition-colors"
+                  className="flex items-center gap-3 px-4 py-2.5 bg-white border-b border-slate-100 last:border-0"
                 >
-                  <input
-                    type="checkbox"
-                    checked={!!currentDive.staffPresence[s.tripStaffId]}
-                    onChange={() => toggleStaff(activeTab, s.tripStaffId)}
-                    className="w-4 h-4 rounded text-teal-600 accent-teal-600 focus:ring-teal-500"
-                  />
                   <span className="flex-1 text-sm text-slate-700 font-medium">{s.name}</span>
                   {s.initials && (
                     <span className="text-xs text-slate-400 font-mono tabular-nums">{s.initials}</span>
                   )}
-                </label>
+                  {dives.map((dive, i) => (
+                    <div key={i} className="w-16 flex justify-center">
+                      <input
+                        type="checkbox"
+                        checked={!!dive.staffPresence[s.tripStaffId]}
+                        onChange={() => toggleStaff(i, s.tripStaffId)}
+                        className="w-4 h-4 rounded text-teal-600 accent-teal-600 focus:ring-teal-500 cursor-pointer"
+                      />
+                    </div>
+                  ))}
+                </div>
               ))}
             </div>
           </div>
@@ -488,7 +662,7 @@ export default function PostTripLog({ trip, onSaved }: Props) {
 
       </div>
 
-      {/* ── Save bar ────────────────────────────────────────────────────────── */}
+      {/* ── Save bar ──────────────────────────────────────────────────────── */}
       <div className="shrink-0 border-t border-slate-200 pt-4 mt-5 flex items-center justify-end gap-3">
         {saveSuccess && (
           <span className="text-sm text-teal-600 font-medium animate-fade-in">
