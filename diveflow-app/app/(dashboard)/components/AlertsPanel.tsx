@@ -182,14 +182,14 @@ export default function AlertsPanel() {
     const [staffRes, jobTypesRes, todayJobsRes] = await Promise.all([
       supabase.from('staff').select('id, first_name, last_name').eq('organization_id', orgId),
       supabase.from('job_types').select('id, name').or(`organization_id.eq.${orgId},organization_id.is.null`),
-      supabase.from('staff_daily_job').select('staff_id, job_type_id').eq('organization_id', orgId).eq('job_date', today),
+      supabase.from('staff_daily_job').select('staff_id, job_type_id, AM/PM').eq('organization_id', orgId).eq('job_date', today),
     ]);
     if (!staffRes.data) return;
     const unassignedId = jobTypesRes.data?.find((jt: any) => jt.name === 'Unassigned')?.id;
-    const staffWithRealJobs = new Set(
-      (todayJobsRes.data ?? []).filter((j: any) => j.job_type_id !== unassignedId).map((j: any) => j.staff_id)
-    );
-    setUnassignedToday(staffRes.data.filter((s: any) => !staffWithRealJobs.has(s.id)));
+    const realJobs = (todayJobsRes.data ?? []).filter((j: any) => j.job_type_id !== unassignedId);
+    const coveredAM = new Set(realJobs.filter((j: any) => j['AM/PM'] === 'AM').map((j: any) => j.staff_id));
+    const coveredPM = new Set(realJobs.filter((j: any) => j['AM/PM'] === 'PM').map((j: any) => j.staff_id));
+    setUnassignedToday(staffRes.data.filter((s: any) => !coveredAM.has(s.id) || !coveredPM.has(s.id)));
   }, [orgId, supabase]);
 
   useEffect(() => { loadUnassignedStaff(); }, [loadUnassignedStaff]);

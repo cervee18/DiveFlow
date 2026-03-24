@@ -541,15 +541,15 @@ export default function StaffPage() {
   const amJobs = dailyJobs.filter(j => j['AM/PM'] === 'AM');
   const pmJobs = dailyJobs.filter(j => j['AM/PM'] === 'PM');
 
-  // Staff members with no real job (only Unassigned rows, or no rows at all) for the selected date
+  // Staff members missing a real job for AM or PM (or both) on the selected date
   const unassignedStaffIds = useMemo(() => {
     const unassignedJobTypeId = jobTypes.find(jt => jt.name === 'Unassigned')?.id;
-    const staffWithRealJobs = new Set(
-      dailyJobs
-        .filter(j => j.job_type_id !== unassignedJobTypeId)
-        .map(j => j.staff_id)
-    );
-    return allStaff.filter(s => !staffWithRealJobs.has(s.id)).map(s => s.id);
+    const realJobs = dailyJobs.filter(j => j.job_type_id !== unassignedJobTypeId);
+    const coveredAM = new Set(realJobs.filter(j => j['AM/PM'] === 'AM').map(j => j.staff_id));
+    const coveredPM = new Set(realJobs.filter(j => j['AM/PM'] === 'PM').map(j => j.staff_id));
+    return allStaff
+      .filter(s => !coveredAM.has(s.id) || !coveredPM.has(s.id))
+      .map(s => s.id);
   }, [dailyJobs, jobTypes, allStaff]);
 
   return (
