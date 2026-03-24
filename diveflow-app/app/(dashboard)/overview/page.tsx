@@ -80,22 +80,13 @@ export default function OverviewPage() {
     const [ey, em, ed] = windowEnd.split('-').map(Number);
     const end   = new Date(ey, em - 1, ed, 0, 0, 0, 0);
 
-    const { data, error } = await supabase
-      .from('trips')
-      .select(`
-        id, label, start_time, max_divers, entry_mode, vessel_id,
-        trip_clients ( id, activities ( name, abbreviation ) ),
-        vessels ( name, abbreviation ),
-        trip_types ( name, abbreviation, color, category, number_of_dives )
-      `)
-      .eq('organization_id', userOrgId)
-      .gte('start_time', start.toISOString())
-      .lt('start_time', end.toISOString())
-      .order('start_time', { ascending: true });
+    const { data, error } = await supabase.rpc('get_overview_trips', {
+      p_org_id: userOrgId,
+      p_start:  start.toISOString(),
+      p_end:    end.toISOString(),
+    });
 
-    if (!error && data) {
-      setTrips(data.map(t => ({ ...t, booked_divers: t.trip_clients?.length || 0 })));
-    }
+    if (!error && data) setTrips(data);
     setIsLoading(false);
   }, [windowStart, userOrgId, supabase]);
 

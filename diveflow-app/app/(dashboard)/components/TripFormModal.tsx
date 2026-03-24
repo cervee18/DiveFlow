@@ -375,17 +375,21 @@ export default function TripFormModal({
     let error: any = null;
 
     if (isRepeat && mode === 'add') {
-      // Batch insert — all trips share a series_id
-      const seriesId = crypto.randomUUID();
-      const inserts = repeatDays.map(dateStr => {
+      // Batch insert via DB function — atomic, series_id generated server-side
+      const startTimes = repeatDays.map(dateStr => {
         const [y, m, d] = dateStr.split('-').map(Number);
-        return {
-          ...basePayload,
-          start_time: new Date(y, m - 1, d, hours, minutes).toISOString(),
-          series_id: seriesId,
-        };
+        return new Date(y, m - 1, d, hours, minutes).toISOString();
       });
-      ({ error } = await supabase.from('trips').insert(inserts));
+      ({ error } = await supabase.rpc('create_trip_series', {
+        p_org_id:        orgId,
+        p_label:         basePayload.label,
+        p_trip_type_id:  basePayload.trip_type_id,
+        p_entry_mode:    basePayload.entry_mode,
+        p_duration_mins: basePayload.duration_minutes,
+        p_max_divers:    basePayload.max_divers,
+        p_vessel_id:     basePayload.vessel_id,
+        p_start_times:   startTimes,
+      }));
     } else {
       const dateStr = fd.get('date') as string;
       const [year, month, day] = dateStr.split('-').map(Number);

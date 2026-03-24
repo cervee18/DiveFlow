@@ -54,21 +54,33 @@ export default function OverviewTripCard({
 }: OverviewTripCardProps) {
   const router = useRouter();
   const date   = localDateStr(trip.start_time);
-  const accent = getTypeAccent(trip.trip_types?.color);
+  // Support both flat (RPC) and nested (legacy) shape
+  const tripTypeColor    = trip.trip_type_color    ?? trip.trip_types?.color;
+  const tripTypeCategory = trip.trip_type_category ?? trip.trip_types?.category;
+  const tripTypeAbbr     = trip.trip_type_abbreviation ?? trip.trip_types?.abbreviation ?? trip.trip_types?.name ?? '';
+  const vesselAbbr       = trip.vessel_abbreviation ?? trip.vessels?.abbreviation ?? trip.vessels?.name ?? '';
+
+  const accent = getTypeAccent(tripTypeColor);
 
   // Pool and Class trips have no vessel — detect by category field
-  const tripCategory = (trip.trip_types?.category ?? '').toLowerCase();
-  const isNonWater = tripCategory === 'pool' || tripCategory === 'class';
+  const tripCategory = (tripTypeCategory ?? '').toLowerCase();
+  const isNonWater   = tripCategory === 'pool' || tripCategory === 'class';
 
   // Left label: "TC 2T" for water trips, "Pool" / "Class" for non-water
-  const vesselAbbr   = trip.vessels?.abbreviation || trip.vessels?.name || '';
-  const typeAbbr     = trip.trip_types?.abbreviation || trip.trip_types?.name || '';
-  const leftLabel    = isNonWater
-    ? typeAbbr
-    : [vesselAbbr, typeAbbr].filter(Boolean).join(' ') || '—';
+  const leftLabel = isNonWater
+    ? tripTypeAbbr
+    : [vesselAbbr, tripTypeAbbr].filter(Boolean).join(' ') || '—';
 
-  // Aggregate how many clients are doing each activity in this trip
+  // Activity breakdown — supports both flat RPC shape and legacy trip_clients array
   const activityRows = useMemo(() => {
+    // RPC path: activity_counts is a pre-aggregated JSON array
+    if (Array.isArray(trip.activity_counts)) {
+      return (trip.activity_counts as any[]).map((ac: any) => ({
+        label: ac.abbreviation || ac.name,
+        count: ac.count,
+      }));
+    }
+    // Legacy path: iterate trip_clients
     const map: Record<string, { label: string; count: number }> = {};
     (trip.trip_clients ?? []).forEach((tc: any) => {
       if (!tc.activities) return;
@@ -77,7 +89,7 @@ export default function OverviewTripCard({
       map[key].count++;
     });
     return Object.values(map).sort((a, b) => a.label.localeCompare(b.label));
-  }, [trip.trip_clients]);
+  }, [trip.activity_counts, trip.trip_clients]);
 
 const handleClick = () => {
     if (selectionMode) {
