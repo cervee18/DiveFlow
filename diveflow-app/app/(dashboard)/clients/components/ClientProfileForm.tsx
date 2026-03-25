@@ -47,7 +47,8 @@ export default function ClientProfileForm({
     if (!error) {
       onUpdate({ ...selectedClient, ...updates });
     } else {
-      alert("Error updating client: " + error.message);
+      console.error("Error updating client:", error);
+      alert("Could not save changes. Please try again.");
     }
   };
 

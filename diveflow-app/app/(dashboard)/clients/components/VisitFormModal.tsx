@@ -136,7 +136,8 @@ export default function VisitFormModal({
       handleAddCompanion(data);
       setShowCreateCompanion(false);
     } else {
-      alert(`Error creating client: ${error?.message}`);
+      console.error("Error creating companion:", error);
+      alert("Could not create companion. Please try again.");
     }
   };
 

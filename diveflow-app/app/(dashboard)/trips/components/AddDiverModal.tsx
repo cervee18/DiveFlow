@@ -152,7 +152,8 @@ export default function AddDiverModal({ isOpen, onClose, tripId, tripDate, onSuc
       if (error.code === '23505') {
         alert("One or more of these divers is already on the manifest!");
       } else {
-        alert("Error adding divers: " + error.message);
+        console.error("Error adding divers:", error);
+        alert("Could not add divers. Please try again.");
       }
       setIsProcessing(false);
       return;

@@ -133,7 +133,8 @@ export default function TripsPage() {
       setSelectedTripId(null);
       setRefreshTrigger(prev => prev + 1);
     } else {
-      alert("Error deleting trip: " + error.message);
+      console.error("Error deleting trip:", error);
+      alert("Could not delete trip. Please try again.");
     }
   };
 

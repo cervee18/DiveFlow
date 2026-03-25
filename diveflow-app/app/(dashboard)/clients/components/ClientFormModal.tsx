@@ -33,7 +33,8 @@ export default function ClientFormModal({ userOrgId, onClose, onSuccess }: Clien
     if (!error && data) {
       onSuccess(data);
     } else {
-      alert(`Error creating client: ${error?.message}`);
+      console.error("Error creating client:", error);
+      alert("Could not create client. Please try again.");
     }
   };
 

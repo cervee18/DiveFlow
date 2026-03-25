@@ -110,7 +110,8 @@ export default function MoveClientModal({
 
     const errors = results.filter((r: any) => r.error);
     if (errors.length > 0) {
-      alert(`Error ${isAdd ? 'adding' : 'moving'} diver(s): ` + (errors[0] as any).error?.message);
+      console.error(`Error ${isAdd ? 'adding' : 'moving'} diver(s):`, errors);
+      alert(`Could not ${isAdd ? 'add' : 'move'} diver(s). Please try again.`);
       setIsActing(false);
     } else {
       setIsActing(false);

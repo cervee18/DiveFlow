@@ -351,9 +351,8 @@ export default function TripManifest({
         const rpcResults = await Promise.all(rpcPromises);
         const rpcErrors = rpcResults.filter(r => r.error);
         if (rpcErrors.length > 0) {
-          const messages = rpcErrors.map(r => r.error?.message ?? JSON.stringify(r.error)).join('\n');
-          console.error("Error propagating to future trips:", messages);
-          alert("Some future trips could not be updated:\n\n" + messages);
+          console.error("Error propagating to future trips:", rpcErrors);
+          alert("Some future trips could not be updated. Check the console for details.");
         }
       }
     }
@@ -439,7 +438,8 @@ export default function TripManifest({
       if (onManifestChange) onManifestChange(); // Update the top bar count
 
     } catch (error: any) {
-      alert("Error removing diver: " + error.message);
+      console.error("Error removing diver:", error);
+      alert("Could not remove diver. Please try again.");
     } finally {
       setIsSaving(false);
     }
