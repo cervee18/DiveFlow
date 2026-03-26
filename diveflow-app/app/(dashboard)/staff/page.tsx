@@ -368,6 +368,15 @@ export default function StaffPage() {
       ops.push(supabase.from('trip_staff').insert(
         toAdd.map(staff_id => ({ trip_id: tripId, staff_id, activity_id: activityId, role_id: null }))
       ));
+      // Assign staff to unassigned clients doing this activity on this trip
+      for (const staff_id of toAdd) {
+        ops.push(supabase.from('trip_clients')
+          .update({ staff_assigned: staff_id })
+          .eq('trip_id', tripId)
+          .eq('activity_id', activityId)
+          .is('staff_assigned', null)
+        );
+      }
       if (actJobId) {
         ops.push(supabase.from('staff_daily_job').insert(
           toAdd.map(staff_id => ({
@@ -377,6 +386,7 @@ export default function StaffPage() {
             job_date: selectedDate,
             'AM/PM': half,
             trip_id: tripId,
+            activity_id: activityId,
           }))
         ));
         // Replace the Unassigned row for this half-day
@@ -389,39 +399,22 @@ export default function StaffPage() {
             .eq('AM/PM', half)
           );
         }
-        // Replace the Crew sdj row for this trip — activity takes precedence
-        const crewId = jobTypeId('Crew');
-        if (crewId) {
-          ops.push(supabase.from('staff_daily_job').delete()
-            .in('staff_id', toAdd)
-            .eq('job_type_id', crewId)
-            .eq('trip_id', tripId)
-            .eq('job_date', selectedDate)
-          );
-        }
       }
     }
     for (const ts of toRemove) {
       ops.push(supabase.from('trip_staff').delete().eq('id', ts.id));
+      // Clear staff_assigned on clients this staff was responsible for
+      ops.push(supabase.from('trip_clients')
+        .update({ staff_assigned: null })
+        .eq('trip_id', tripId)
+        .eq('activity_id', activityId)
+        .eq('staff_assigned', ts.staff_id)
+      );
+      // Only delete the activity-specific sdj row — Crew row stays intact
       if (actJobId) {
         ops.push(supabase.from('staff_daily_job').delete()
           .eq('trip_id', tripId).eq('staff_id', ts.staff_id)
           .eq('job_type_id', actJobId).eq('job_date', selectedDate));
-      }
-      // If the staff still has a generic trip_staff row, restore the Crew sdj row
-      const hasGeneric = (trip?.trip_staff ?? []).some(
-        (s: any) => s.staff_id === ts.staff_id && !s.activity_id
-      );
-      const crewId = jobTypeId('Crew');
-      if (hasGeneric && crewId && userOrgId) {
-        ops.push(supabase.from('staff_daily_job').insert({
-          organization_id: userOrgId,
-          staff_id: ts.staff_id,
-          job_type_id: crewId,
-          job_date: selectedDate,
-          'AM/PM': half,
-          trip_id: tripId,
-        }));
       }
     }
 
@@ -516,23 +509,38 @@ export default function StaffPage() {
     const crewId    = jobTypeId('Crew');
     if (!captainId || !crewId) return;
 
-    await Promise.all([
-      // Promote this staff member to Captain
-      supabase.from('staff_daily_job')
-        .update({ job_type_id: captainId })
-        .eq('staff_id', staffId)
-        .eq('trip_id', tripId)
-        .eq('job_date', selectedDate),
-      // Demote any existing Captain on this trip back to Crew
-      supabase.from('staff_daily_job')
-        .update({ job_type_id: crewId })
-        .neq('staff_id', staffId)
-        .eq('job_type_id', captainId)
-        .eq('trip_id', tripId)
-        .eq('job_date', selectedDate),
-    ]);
+    // Only touch the generic (no-activity) row — leave activity rows untouched
+    const genericRow = dailyJobs.find(
+      j => j.staff_id === staffId && j.trip_id === tripId && !j.activity_id
+    );
+
+    const promoteOp = genericRow
+      ? supabase.from('staff_daily_job')
+          .update({ job_type_id: captainId })
+          .eq('id', genericRow.id)
+      : supabase.from('staff_daily_job')
+          .insert({
+            organization_id: userOrgId,
+            staff_id: staffId,
+            job_type_id: captainId,
+            job_date: selectedDate,
+            'AM/PM': halfDayOf(trips.find(t => t.id === tripId)?.start_time),
+            trip_id: tripId,
+            activity_id: null,
+          });
+
+    // Demote existing captain — only the generic row, not their activity rows
+    const demoteOp = supabase.from('staff_daily_job')
+      .update({ job_type_id: crewId })
+      .neq('staff_id', staffId)
+      .eq('job_type_id', captainId)
+      .eq('trip_id', tripId)
+      .eq('job_date', selectedDate)
+      .is('activity_id', null);
+
+    await Promise.all([promoteOp, demoteOp]);
     await fetchDayData();
-  }, [userOrgId, selectedDate, jobTypes, supabase, fetchDayData]);
+  }, [userOrgId, selectedDate, jobTypes, dailyJobs, trips, supabase, fetchDayData]);
 
   // ─── Derived data ─────────────────────────────────────────────────────────
 

@@ -8,7 +8,7 @@ import { getAuthContext, isStaff, isAdmin } from "@/utils/auth";
 const STAFF_ONLY_PATHS = ['/overview', '/clients', '/trips', '/staff'];
 
 // Routes that require admin-level access only
-const ADMIN_ONLY_PATHS = ['/logs'];
+const ADMIN_ONLY_PATHS = ['/logs', '/statistics'];
 
 export default async function DashboardLayout({
   children,
@@ -75,6 +75,9 @@ export default async function DashboardLayout({
               <div className="my-2 border-t border-slate-700/50" />
               <Link href="/logs" className="flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium text-slate-400 hover:bg-slate-800 hover:text-teal-400 transition-colors">
                 Logs
+              </Link>
+              <Link href="/statistics" className="flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium text-slate-400 hover:bg-slate-800 hover:text-teal-400 transition-colors">
+                Statistics
               </Link>
             </>
           )}
