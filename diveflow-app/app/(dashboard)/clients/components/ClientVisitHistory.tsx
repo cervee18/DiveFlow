@@ -122,6 +122,13 @@ export default function ClientVisitHistory({
                       </div>
                     </div>
                     <div className="flex gap-2 shrink-0">
+                      <button
+                        onClick={() => window.open(`/visit-summary?clientId=${selectedClient.id}&visitId=${visit.id}`, "_blank")}
+                        className="text-xs font-medium text-slate-400 hover:text-blue-600 px-2 py-1"
+                        title="Print visit summary"
+                      >
+                        Print
+                      </button>
                       <button onClick={() => onEditVisit(visitLink)} className="text-xs font-medium text-slate-400 hover:text-teal-600 px-2 py-1">
                         Edit
                       </button>

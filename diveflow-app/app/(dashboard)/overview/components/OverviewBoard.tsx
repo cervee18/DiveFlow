@@ -105,7 +105,7 @@ export default function OverviewBoard({
             return (
               <div
                 key={day}
-                className={`w-44 border-r border-slate-200 last:border-r-0 px-3 py-3 ${isToday ? 'bg-teal-500' : colBg}`}
+                className={`group/dayheader w-44 border-r border-slate-200 last:border-r-0 px-3 py-3 ${isToday ? 'bg-teal-500' : colBg}`}
               >
                 <div className="flex items-center justify-between gap-1">
                   <span className={`text-sm font-bold ${isToday ? 'text-white' : 'text-slate-700'}`}>
@@ -114,13 +114,27 @@ export default function OverviewBoard({
                       {mon}
                     </span>
                   </span>
-                  {hasTrips && (
-                    <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${
-                      isToday ? 'bg-teal-400 text-white' : 'bg-slate-200 text-slate-500'
-                    }`}>
-                      {dayTrips.length}
-                    </span>
-                  )}
+                  <div className="flex items-center gap-1">
+                    {hasTrips && (
+                      <button
+                        type="button"
+                        title="Print pick-up list"
+                        onClick={() => window.open(`/pickup-list?date=${day}`, '_blank')}
+                        className={`opacity-0 group-hover/dayheader:opacity-100 transition-opacity w-5 h-5 flex items-center justify-center rounded hover:bg-black/10 ${isToday ? 'text-teal-100' : 'text-slate-400'}`}
+                      >
+                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M9 17a2 2 0 11-4 0 2 2 0 014 0zM19 17a2 2 0 11-4 0 2 2 0 014 0zM13 16V6a1 1 0 00-1-1H4a1 1 0 00-1 1v10a1 1 0 001 1h1m8-1a1 1 0 01-1 1H9m4-1V8a1 1 0 011-1h2.586a1 1 0 01.707.293l3.414 3.414a1 1 0 01.293.707V16a1 1 0 01-1 1h-1m-6-1a1 1 0 001 1h1" />
+                        </svg>
+                      </button>
+                    )}
+                    {hasTrips && (
+                      <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${
+                        isToday ? 'bg-teal-400 text-white' : 'bg-slate-200 text-slate-500'
+                      }`}>
+                        {dayTrips.length}
+                      </span>
+                    )}
+                  </div>
                 </div>
               </div>
             );
