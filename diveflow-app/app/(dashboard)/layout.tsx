@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { headers } from "next/headers";
 import { createClient } from "@/utils/supabase/server";
 import { getAuthContext, isStaff, isAdmin } from "@/utils/auth";
+import MobileNav from "@/app/(dashboard)/components/MobileNav";
 
 // Routes that require staff-level access (non-clients)
 const STAFF_ONLY_PATHS = ['/overview', '/clients', '/trips', '/staff'];
@@ -40,8 +41,8 @@ export default async function DashboardLayout({
 
   return (
     <div className="min-h-screen flex bg-slate-50">
-      {/* Sidebar Navigation */}
-      <aside className="w-50 bg-slate-900 border-r border-slate-700/50 flex flex-col sticky top-0 h-screen">
+      {/* Sidebar Navigation — hidden on mobile */}
+      <aside className="hidden md:flex w-50 bg-slate-900 border-r border-slate-700/50 flex-col sticky top-0 h-screen">
         <div className="h-16 flex items-center px-6 border-b border-slate-700/50">
           <div className="flex items-center gap-2">
             <div className="w-8 h-8 bg-teal-500 rounded-md flex items-center justify-center shadow-sm">
@@ -100,10 +101,13 @@ export default async function DashboardLayout({
 
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col min-w-0">
-        <main className="flex-1">
+        <main className="flex-1 pb-16 md:pb-0">
           {children}
         </main>
       </div>
+
+      {/* Mobile bottom tab bar */}
+      <MobileNav isStaff={isStaff(role)} />
     </div>
   );
 }

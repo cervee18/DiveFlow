@@ -169,7 +169,7 @@ export default function TripDrawer({
         role="dialog"
         aria-modal="true"
         aria-label="Trip details"
-        className="fixed inset-y-0 right-0 z-50 flex flex-col w-[90vw] max-w-[80rem] bg-white shadow-2xl"
+        className="fixed inset-y-0 right-0 z-50 flex flex-col w-full sm:w-[90vw] sm:max-w-[80rem] bg-white shadow-2xl"
       >
         {isLoading || !trip ? (
           <>
@@ -226,7 +226,7 @@ export default function TripDrawer({
             </div>
 
             {/* ── Content (scrollable) ── */}
-            <div className="flex-1 overflow-y-auto p-6">
+            <div className="flex-1 overflow-y-auto p-4 sm:p-6">
               {drawerMode === 'manifest' ? (
                 <TripManifest
                   tripId={trip.id}

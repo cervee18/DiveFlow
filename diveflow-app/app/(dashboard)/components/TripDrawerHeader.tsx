@@ -18,21 +18,45 @@ export default function TripDrawerHeader({ trip, onEdit, onDelete, onClose }: Tr
     return date.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
   };
 
-  return (
-    <div className="flex items-center justify-between gap-4 px-6 py-4 border-b border-slate-200 shrink-0">
+  // Deduplicated staff list
+  const seen = new Set<string>();
+  const uniqueStaff = (trip.trip_staff as any[] ?? []).filter(ts => {
+    if (!ts.staff || seen.has(ts.staff.id)) return false;
+    seen.add(ts.staff.id);
+    return true;
+  });
 
-      {/* Left: date + trip title + meta */}
-      <div className="flex items-center gap-3 min-w-0 flex-1">
+  return (
+    <div className="px-4 sm:px-6 py-3 sm:py-4 border-b border-slate-200 shrink-0">
+
+      {/* Row 1: date + title + close */}
+      <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="text-xs text-slate-400 font-medium leading-none mb-0.5">
             {formatDate(trip.start_time)}
           </p>
-          <h2 className="text-lg font-bold text-slate-800 truncate leading-tight">
+          <h2 className="text-base sm:text-lg font-bold text-slate-800 truncate leading-tight">
             {trip.label || trip.trip_types?.name || 'Custom Trip'}
           </h2>
         </div>
-        <div className="flex items-center gap-2 text-sm text-slate-500 font-medium shrink-0">
-          <span className="w-1 h-1 rounded-full bg-slate-300" />
+
+        {/* Close — always visible */}
+        <button
+          onClick={onClose}
+          className="text-slate-400 hover:text-slate-700 transition-colors p-1.5 rounded-md hover:bg-slate-100 shrink-0"
+          title="Close"
+        >
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+
+      {/* Row 2: meta + actions */}
+      <div className="flex items-center gap-2 mt-2 flex-wrap">
+
+        {/* Time + duration + type */}
+        <div className="flex items-center gap-1.5 text-xs sm:text-sm text-slate-500 font-medium">
           <span>{formatTime(trip.start_time)}</span>
           <span className="w-1 h-1 rounded-full bg-slate-300" />
           <span>{trip.duration_minutes / 60} hrs</span>
@@ -43,55 +67,41 @@ export default function TripDrawerHeader({ trip, onEdit, onDelete, onClose }: Tr
             </>
           )}
         </div>
-      </div>
 
-      {/* Right: staff + vessel + edit/delete + close */}
-      <div className="flex items-center gap-4 shrink-0">
+        <div className="flex-1" />
 
-        {/* Staff chips */}
-        <div className="flex items-center gap-1.5">
-          {(() => {
-            if (!trip.trip_staff?.length) {
-              return <span className="text-xs text-slate-400 italic">No staff</span>;
-            }
-            const seen = new Set<string>();
-            const unique = (trip.trip_staff as any[]).filter(ts => {
-              if (!ts.staff || seen.has(ts.staff.id)) return false;
-              seen.add(ts.staff.id);
-              return true;
-            });
-            return unique.length > 0
-              ? unique.map((ts: any) => (
-                  <span
-                    key={ts.staff.id}
-                    title={`${ts.staff.first_name} ${ts.staff.last_name}`}
-                    className="inline-flex items-center justify-center min-w-[28px] h-7 px-1.5 rounded-full bg-slate-100 text-slate-700 text-xs font-bold border border-slate-200 cursor-default hover:bg-slate-200 transition-colors"
-                  >
-                    {ts.staff.initials}
-                  </span>
-                ))
-              : <span className="text-xs text-slate-400 italic">No staff</span>;
-          })()}
-        </div>
-
-        <div className="w-px h-6 bg-slate-200" />
+        {/* Staff chips — hidden on small screens */}
+        {uniqueStaff.length > 0 && (
+          <div className="hidden sm:flex items-center gap-1">
+            {uniqueStaff.map((ts: any) => (
+              <span
+                key={ts.staff.id}
+                title={`${ts.staff.first_name} ${ts.staff.last_name}`}
+                className="inline-flex items-center justify-center min-w-[28px] h-7 px-1.5 rounded-full bg-slate-100 text-slate-700 text-xs font-bold border border-slate-200"
+              >
+                {ts.staff.initials}
+              </span>
+            ))}
+            <span className="w-px h-5 bg-slate-200 mx-1" />
+          </div>
+        )}
 
         {/* Vessel */}
         {trip.vessels?.name ? (
-          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-md bg-teal-50 text-teal-700 font-bold border border-teal-100 text-sm">
-            <svg className="w-4 h-4 opacity-70" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-teal-50 text-teal-700 font-bold border border-teal-100 text-xs sm:text-sm">
+            <svg className="w-3.5 h-3.5 opacity-70" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v8l9-11h-7z" />
             </svg>
-            {trip.vessels.name}
+            {trip.vessels.abbreviation ?? trip.vessels.name}
           </span>
         ) : (
-          <span className="text-sm text-slate-400 italic">Shore Dive</span>
+          <span className="text-xs text-slate-400 italic">Shore</span>
         )}
 
-        <div className="w-px h-6 bg-slate-200" />
+        <span className="w-px h-5 bg-slate-200" />
 
         {/* Edit + Delete */}
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-0.5">
           <button
             onClick={onEdit}
             className="text-slate-400 hover:text-teal-600 transition-colors p-1.5 rounded-md hover:bg-teal-50"
@@ -111,19 +121,6 @@ export default function TripDrawerHeader({ trip, onEdit, onDelete, onClose }: Tr
             </svg>
           </button>
         </div>
-
-        <div className="w-px h-6 bg-slate-200" />
-
-        {/* Close */}
-        <button
-          onClick={onClose}
-          className="text-slate-400 hover:text-slate-700 transition-colors p-1.5 rounded-md hover:bg-slate-100"
-          title="Close"
-        >
-          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-          </svg>
-        </button>
 
       </div>
     </div>
