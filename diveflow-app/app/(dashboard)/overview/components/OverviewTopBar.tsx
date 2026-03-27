@@ -33,7 +33,7 @@ export default function OverviewTopBar({
 
             <button
         onClick={onTogglePanel}
-        className={`hidden md:flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-lg border transition-colors ${
+        className={`flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-lg border transition-colors ${
           isPanelOpen
             ? 'bg-teal-600 text-white border-teal-600 hover:bg-teal-700'
             : 'bg-white text-slate-600 border-slate-300 hover:border-teal-400 hover:text-teal-600'
