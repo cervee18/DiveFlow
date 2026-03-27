@@ -67,6 +67,7 @@ ALTER TYPE "public"."user_role" OWNER TO "postgres";
 
 CREATE OR REPLACE FUNCTION "public"."add_clients_to_trip"("p_trip_id" "uuid", "p_client_ids" "uuid"[], "p_trip_date" "date") RETURNS "void"
     LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO 'public'
     AS $$
 DECLARE
   v_client_id        uuid;
@@ -74,6 +75,21 @@ DECLARE
   v_last_tc          record;
   v_pick_up          boolean := false;
 BEGIN
+  -- Auth guard
+  IF auth.uid() IS NULL THEN
+    RAISE EXCEPTION 'authentication required';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1
+    FROM public.trips t
+    JOIN public.profiles p ON p.organization_id = t.organization_id
+    WHERE t.id = p_trip_id
+      AND p.id = auth.uid()
+  ) THEN
+    RAISE EXCEPTION 'permission denied: you do not have access to this trip';
+  END IF;
+
   FOREACH v_client_id IN ARRAY p_client_ids LOOP
 
     -- 1. Insert (unique constraint will raise 23505 if already on trip)
@@ -136,6 +152,310 @@ $$;
 ALTER FUNCTION "public"."add_clients_to_trip"("p_trip_id" "uuid", "p_client_ids" "uuid"[], "p_trip_date" "date") OWNER TO "postgres";
 
 
+CREATE OR REPLACE FUNCTION "public"."check_trip_capacity"() RETURNS "trigger"
+    LANGUAGE "plpgsql"
+    AS $$
+DECLARE
+  v_max_divers integer;
+  v_booked     integer;
+BEGIN
+  SELECT max_divers INTO v_max_divers
+  FROM public.trips
+  WHERE id = NEW.trip_id;
+
+  -- Count existing rows, excluding the row being updated (UPDATE path)
+  SELECT COUNT(*) INTO v_booked
+  FROM public.trip_clients
+  WHERE trip_id = NEW.trip_id
+    AND id IS DISTINCT FROM NEW.id;
+
+  IF v_booked >= v_max_divers THEN
+    RAISE EXCEPTION 'trip_capacity_exceeded: trip is full (% / %)', v_booked, v_max_divers
+      USING ERRCODE = 'P0001';
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."check_trip_capacity"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."check_vessel_overlap"() RETURNS "trigger"
+    LANGUAGE "plpgsql"
+    AS $$
+BEGIN
+  -- Skip the check when no vessel is assigned
+  IF NEW.vessel_id IS NULL THEN
+    RETURN NEW;
+  END IF;
+
+  IF EXISTS (
+    SELECT 1
+    FROM   public.trips
+    WHERE  vessel_id        = NEW.vessel_id
+      AND  id              != NEW.id   -- exclude the row itself (safe for INSERT too,
+                                       -- because the new uuid doesn't exist yet)
+      AND  start_time       < NEW.start_time + (NEW.duration_minutes * INTERVAL '1 minute')
+      AND  start_time + (duration_minutes * INTERVAL '1 minute') > NEW.start_time
+  ) THEN
+    RAISE EXCEPTION 'vessel_overlap: vessel % is already assigned to another trip during this time window',
+      NEW.vessel_id;
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."check_vessel_overlap"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."create_trip_series"("p_org_id" "uuid", "p_label" "text", "p_trip_type_id" "uuid", "p_entry_mode" "text", "p_duration_mins" integer, "p_max_divers" integer, "p_vessel_id" "uuid", "p_start_times" timestamp with time zone[]) RETURNS "uuid"[]
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    AS $$
+DECLARE
+  v_series_id uuid := gen_random_uuid();
+  v_ids       uuid[];
+BEGIN
+  WITH inserted AS (
+    INSERT INTO public.trips (
+      organization_id,
+      label,
+      trip_type_id,
+      entry_mode,
+      duration_minutes,
+      max_divers,
+      vessel_id,
+      start_time,
+      series_id
+    )
+    SELECT
+      p_org_id,
+      p_label,
+      p_trip_type_id,
+      p_entry_mode,
+      p_duration_mins,
+      p_max_divers,
+      p_vessel_id,
+      t,
+      v_series_id
+    FROM unnest(p_start_times) AS t
+    RETURNING id
+  )
+  SELECT array_agg(id) INTO v_ids FROM inserted;
+
+  RETURN v_ids;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."create_trip_series"("p_org_id" "uuid", "p_label" "text", "p_trip_type_id" "uuid", "p_entry_mode" "text", "p_duration_mins" integer, "p_max_divers" integer, "p_vessel_id" "uuid", "p_start_times" timestamp with time zone[]) OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."get_active_alerts"("p_org_id" "uuid") RETURNS TABLE("alert_type" "text", "severity" "text", "trip_id" "uuid", "trip_start" timestamp with time zone, "trip_label" "text", "client_id" "uuid", "client_name" "text", "message" "text")
+    LANGUAGE "sql" STABLE SECURITY DEFINER
+    SET "search_path" TO 'public'
+    AS $$
+
+  -- missing_waiver: client has no waiver, trip starts within 2 days
+  SELECT
+    'missing_waiver'::text,
+    'critical'::text,
+    t.id,
+    t.start_time,
+    COALESCE(t.label, tt.name, 'Trip'),
+    c.id,
+    c.first_name || ' ' || c.last_name,
+    'Missing waiver: ' || c.first_name || ' ' || c.last_name
+  FROM public.trip_clients tc
+  JOIN public.trips t       ON t.id  = tc.trip_id
+  LEFT JOIN public.trip_types tt ON tt.id = t.trip_type_id
+  JOIN public.clients c     ON c.id  = tc.client_id
+  WHERE t.organization_id = p_org_id
+    AND tc.waiver         = false
+    AND t.start_time      > now()
+    AND t.start_time     <= now() + INTERVAL '2 days'
+    -- Auth guard: caller must belong to this org
+    AND EXISTS (
+      SELECT 1 FROM public.profiles
+      WHERE id = auth.uid() AND organization_id = p_org_id
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM public.alert_resolutions ar
+      WHERE ar.org_id      = p_org_id
+        AND ar.alert_type  = 'missing_waiver'
+        AND ar.trip_id     = t.id
+        AND ar.client_id   = tc.client_id
+    )
+
+  UNION ALL
+
+  -- missing_deposit: client has no deposit, trip starts within 7 days
+  SELECT
+    'missing_deposit'::text,
+    'warning'::text,
+    t.id,
+    t.start_time,
+    COALESCE(t.label, tt.name, 'Trip'),
+    c.id,
+    c.first_name || ' ' || c.last_name,
+    'Missing deposit: ' || c.first_name || ' ' || c.last_name
+  FROM public.trip_clients tc
+  JOIN public.trips t       ON t.id  = tc.trip_id
+  LEFT JOIN public.trip_types tt ON tt.id = t.trip_type_id
+  JOIN public.clients c     ON c.id  = tc.client_id
+  WHERE t.organization_id = p_org_id
+    AND tc.deposit        = false
+    AND t.start_time      > now()
+    AND t.start_time     <= now() + INTERVAL '7 days'
+    AND EXISTS (
+      SELECT 1 FROM public.profiles
+      WHERE id = auth.uid() AND organization_id = p_org_id
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM public.alert_resolutions ar
+      WHERE ar.org_id      = p_org_id
+        AND ar.alert_type  = 'missing_deposit'
+        AND ar.trip_id     = t.id
+        AND ar.client_id   = tc.client_id
+    )
+
+  UNION ALL
+
+  -- no_staff: trip starts within 7 days and has no trip_staff entries
+  SELECT
+    'no_staff'::text,
+    'critical'::text,
+    t.id,
+    t.start_time,
+    COALESCE(t.label, tt.name, 'Trip'),
+    NULL::uuid,
+    NULL::text,
+    'No staff assigned to trip'
+  FROM public.trips t
+  LEFT JOIN public.trip_types tt ON tt.id = t.trip_type_id
+  WHERE t.organization_id = p_org_id
+    AND t.start_time      > now()
+    AND t.start_time     <= now() + INTERVAL '7 days'
+    AND EXISTS (
+      SELECT 1 FROM public.profiles
+      WHERE id = auth.uid() AND organization_id = p_org_id
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM public.trip_staff ts WHERE ts.trip_id = t.id
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM public.alert_resolutions ar
+      WHERE ar.org_id     = p_org_id
+        AND ar.alert_type = 'no_staff'
+        AND ar.trip_id    = t.id
+    )
+
+  ORDER BY 4 ASC, 1 ASC;  -- 4 = trip_start, 1 = alert_type
+
+$$;
+
+
+ALTER FUNCTION "public"."get_active_alerts"("p_org_id" "uuid") OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."get_activity_logs"("p_org_id" "uuid", "p_entity_type" "text" DEFAULT NULL::"text", "p_from" timestamp with time zone DEFAULT NULL::timestamp with time zone, "p_to" timestamp with time zone DEFAULT NULL::timestamp with time zone, "p_limit" integer DEFAULT 50, "p_offset" integer DEFAULT 0) RETURNS TABLE("id" "uuid", "action" "text", "entity_type" "text", "entity_id" "uuid", "metadata" "jsonb", "actor_name" "text", "created_at" timestamp with time zone)
+    LANGUAGE "sql" STABLE SECURITY DEFINER
+    SET "search_path" TO 'public'
+    AS $$
+  SELECT
+    al.id,
+    al.action,
+    al.entity_type,
+    al.entity_id,
+    al.metadata,
+    COALESCE(s.first_name || ' ' || s.last_name, 'System') AS actor_name,
+    al.created_at
+  FROM public.activity_logs al
+  LEFT JOIN public.staff s
+    ON s.user_id = al.actor_auth_uid
+   AND s.organization_id = al.organization_id
+  WHERE al.organization_id = p_org_id
+    -- Auth guard: caller must belong to this org
+    AND EXISTS (
+      SELECT 1 FROM public.profiles
+      WHERE id = auth.uid() AND organization_id = p_org_id
+    )
+    AND (p_entity_type IS NULL OR al.entity_type = p_entity_type)
+    AND (p_from IS NULL OR al.created_at >= p_from)
+    AND (p_to   IS NULL OR al.created_at <  p_to)
+  ORDER BY al.created_at DESC
+  LIMIT  p_limit
+  OFFSET p_offset;
+$$;
+
+
+ALTER FUNCTION "public"."get_activity_logs"("p_org_id" "uuid", "p_entity_type" "text", "p_from" timestamp with time zone, "p_to" timestamp with time zone, "p_limit" integer, "p_offset" integer) OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."get_overview_trips"("p_org_id" "uuid", "p_start" timestamp with time zone, "p_end" timestamp with time zone) RETURNS TABLE("id" "uuid", "label" "text", "start_time" timestamp with time zone, "max_divers" integer, "entry_mode" "text", "vessel_id" "uuid", "vessel_name" "text", "vessel_abbreviation" "text", "trip_type_name" "text", "trip_type_abbreviation" "text", "trip_type_color" "text", "trip_type_category" "text", "trip_type_number_of_dives" integer, "booked_divers" bigint, "activity_counts" "jsonb")
+    LANGUAGE "sql" STABLE SECURITY DEFINER
+    AS $$
+  SELECT
+    t.id,
+    t.label,
+    t.start_time,
+    t.max_divers,
+    t.entry_mode,
+    t.vessel_id,
+    v.name                AS vessel_name,
+    v.abbreviation        AS vessel_abbreviation,
+    tt.name               AS trip_type_name,
+    tt.abbreviation       AS trip_type_abbreviation,
+    tt.color              AS trip_type_color,
+    tt.category           AS trip_type_category,
+    tt.number_of_dives    AS trip_type_number_of_dives,
+
+    -- Booked diver count (no need to send all UUIDs to the client)
+    (
+      SELECT COUNT(*)
+      FROM public.trip_clients tc
+      WHERE tc.trip_id = t.id
+    ) AS booked_divers,
+
+    -- Activity breakdown as compact JSON array
+    (
+      SELECT COALESCE(
+        jsonb_agg(
+          jsonb_build_object(
+            'name',         a.name,
+            'abbreviation', COALESCE(a.abbreviation, a.name),
+            'count',        ac.cnt
+          )
+          ORDER BY a.name
+        ),
+        '[]'::jsonb
+      )
+      FROM (
+        SELECT activity_id, COUNT(*) AS cnt
+        FROM public.trip_clients
+        WHERE trip_id = t.id
+          AND activity_id IS NOT NULL
+        GROUP BY activity_id
+      ) ac
+      JOIN public.activities a ON a.id = ac.activity_id
+    ) AS activity_counts
+
+  FROM public.trips t
+  LEFT JOIN public.vessels    v  ON v.id  = t.vessel_id
+  LEFT JOIN public.trip_types tt ON tt.id = t.trip_type_id
+  WHERE t.organization_id = p_org_id
+    AND t.start_time      >= p_start
+    AND t.start_time       < p_end
+  ORDER BY t.start_time ASC;
+$$;
+
+
+ALTER FUNCTION "public"."get_overview_trips"("p_org_id" "uuid", "p_start" timestamp with time zone, "p_end" timestamp with time zone) OWNER TO "postgres";
+
+
 CREATE OR REPLACE FUNCTION "public"."handle_new_user"() RETURNS "trigger"
     LANGUAGE "plpgsql" SECURITY DEFINER
     AS $$
@@ -150,13 +470,281 @@ $$;
 ALTER FUNCTION "public"."handle_new_user"() OWNER TO "postgres";
 
 
+CREATE OR REPLACE FUNCTION "public"."log_client_insert"() RETURNS "trigger"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    AS $$
+BEGIN
+  INSERT INTO public.activity_logs (
+    organization_id, actor_auth_uid, action, entity_type, entity_id, metadata
+  ) VALUES (
+    NEW.organization_id,
+    auth.uid(),
+    'registered_client',
+    'client',
+    NEW.id,
+    jsonb_build_object(
+      'client_name', NEW.first_name || ' ' || NEW.last_name
+    )
+  );
+
+  RETURN NEW;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."log_client_insert"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."log_staff_job_change"() RETURNS "trigger"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    AS $$
+DECLARE
+  v_staff_name text;
+  v_job_name   text;
+  v_trip_label text;
+  v_sdj_id     uuid;
+  v_staff_id   uuid;
+  v_job_id     uuid;
+  v_org_id     uuid;
+  v_trip_id    uuid;
+  v_job_date   date;
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    v_sdj_id   := NEW.id;
+    v_staff_id := NEW.staff_id;
+    v_job_id   := NEW.job_type_id;
+    v_org_id   := NEW.organization_id;
+    v_trip_id  := NEW.trip_id;
+    v_job_date := NEW.job_date;
+  ELSE
+    v_sdj_id   := OLD.id;
+    v_staff_id := OLD.staff_id;
+    v_job_id   := OLD.job_type_id;
+    v_org_id   := OLD.organization_id;
+    v_trip_id  := OLD.trip_id;
+    v_job_date := OLD.job_date;
+  END IF;
+
+  -- Resolve job name; skip 'Unassigned' placeholder rows
+  SELECT name INTO v_job_name FROM public.job_types WHERE id = v_job_id;
+  IF v_job_name = 'Unassigned' THEN
+    RETURN COALESCE(NEW, OLD);
+  END IF;
+
+  SELECT first_name || ' ' || last_name INTO v_staff_name
+  FROM public.staff WHERE id = v_staff_id;
+
+  -- Optionally resolve trip label when job is linked to a trip
+  IF v_trip_id IS NOT NULL THEN
+    SELECT COALESCE(label, to_char(start_time AT TIME ZONE 'UTC', 'Mon DD HH24:MI'))
+    INTO v_trip_label
+    FROM public.trips WHERE id = v_trip_id;
+  END IF;
+
+  INSERT INTO public.activity_logs (
+    organization_id, actor_auth_uid, action, entity_type, entity_id, metadata
+  ) VALUES (
+    v_org_id,
+    auth.uid(),
+    CASE TG_OP WHEN 'INSERT' THEN 'assigned_staff' ELSE 'unassigned_staff' END,
+    'staff_job',
+    v_sdj_id,
+    jsonb_build_object(
+      'staff_name', v_staff_name,
+      'job_name',   v_job_name,
+      'job_date',   v_job_date,
+      'trip_label', v_trip_label
+    )
+  );
+
+  RETURN COALESCE(NEW, OLD);
+END;
+$$;
+
+
+ALTER FUNCTION "public"."log_staff_job_change"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."log_trip_change"() RETURNS "trigger"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    AS $$
+DECLARE
+  v_org_id      uuid;
+  v_id          uuid;
+  v_label       text;
+  v_start       timestamptz;
+  v_type_id     uuid;
+  v_vessel_id   uuid;
+  v_trip_type   text;
+  v_vessel      text;
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    v_org_id    := NEW.organization_id;
+    v_id        := NEW.id;
+    v_label     := NEW.label;
+    v_start     := NEW.start_time;
+    v_type_id   := NEW.trip_type_id;
+    v_vessel_id := NEW.vessel_id;
+  ELSE
+    v_org_id    := OLD.organization_id;
+    v_id        := OLD.id;
+    v_label     := OLD.label;
+    v_start     := OLD.start_time;
+    v_type_id   := OLD.trip_type_id;
+    v_vessel_id := OLD.vessel_id;
+  END IF;
+
+  SELECT name INTO v_trip_type FROM public.trip_types WHERE id = v_type_id;
+  SELECT name INTO v_vessel    FROM public.vessels     WHERE id = v_vessel_id;
+
+  INSERT INTO public.activity_logs (
+    organization_id, actor_auth_uid, action, entity_type, entity_id, metadata
+  ) VALUES (
+    v_org_id,
+    auth.uid(),
+    CASE TG_OP WHEN 'INSERT' THEN 'created_trip' ELSE 'deleted_trip' END,
+    'trip',
+    v_id,
+    jsonb_build_object(
+      'trip_label',  v_label,
+      'trip_start',  v_start,
+      'trip_type',   v_trip_type,
+      'vessel_name', v_vessel
+    )
+  );
+
+  RETURN COALESCE(NEW, OLD);
+END;
+$$;
+
+
+ALTER FUNCTION "public"."log_trip_change"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."log_trip_client_change"() RETURNS "trigger"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    AS $$
+DECLARE
+  v_org_id      uuid;
+  v_client_name text;
+  v_trip_label  text;
+  v_trip_start  timestamptz;
+  v_client_id   uuid;
+  v_trip_id     uuid;
+  v_type_id     uuid;
+  v_vessel_id   uuid;
+  v_trip_type   text;
+  v_vessel      text;
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    v_client_id := NEW.client_id;
+    v_trip_id   := NEW.trip_id;
+  ELSE
+    v_client_id := OLD.client_id;
+    v_trip_id   := OLD.trip_id;
+  END IF;
+
+  SELECT organization_id, start_time, label, trip_type_id, vessel_id
+  INTO v_org_id, v_trip_start, v_trip_label, v_type_id, v_vessel_id
+  FROM public.trips
+  WHERE id = v_trip_id;
+
+  -- Trip not found: it is being cascade-deleted in the same statement.
+  -- The deleted_trip log entry from log_trip_change covers this case.
+  IF v_org_id IS NULL THEN
+    RETURN COALESCE(NEW, OLD);
+  END IF;
+
+  SELECT name INTO v_trip_type FROM public.trip_types WHERE id = v_type_id;
+  SELECT name INTO v_vessel    FROM public.vessels     WHERE id = v_vessel_id;
+
+  SELECT first_name || ' ' || last_name
+  INTO v_client_name
+  FROM public.clients
+  WHERE id = v_client_id;
+
+  INSERT INTO public.activity_logs (
+    organization_id, actor_auth_uid, action, entity_type, entity_id, metadata
+  ) VALUES (
+    v_org_id,
+    auth.uid(),
+    CASE TG_OP WHEN 'INSERT' THEN 'added_to_trip' ELSE 'removed_from_trip' END,
+    'trip_client',
+    v_trip_id,
+    jsonb_build_object(
+      'client_id',   v_client_id,
+      'client_name', v_client_name,
+      'trip_label',  v_trip_label,
+      'trip_start',  v_trip_start,
+      'trip_type',   v_trip_type,
+      'vessel_name', v_vessel
+    )
+  );
+
+  RETURN COALESCE(NEW, OLD);
+END;
+$$;
+
+
+ALTER FUNCTION "public"."log_trip_client_change"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."my_org_id"() RETURNS "uuid"
+    LANGUAGE "sql" STABLE SECURITY DEFINER
+    SET "search_path" TO 'public'
+    AS $$
+  SELECT organization_id FROM public.profiles WHERE id = auth.uid()
+$$;
+
+
+ALTER FUNCTION "public"."my_org_id"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."prevent_profile_escalation"() RETURNS "trigger"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO 'public'
+    AS $$
+BEGIN
+  IF current_setting('request.jwt.claim.role', true) = 'service_role' THEN
+    RETURN NEW;
+  END IF;
+  IF NEW.role IS DISTINCT FROM OLD.role THEN
+    RAISE EXCEPTION 'permission denied: role changes must go through the admin API';
+  END IF;
+  IF NEW.organization_id IS DISTINCT FROM OLD.organization_id THEN
+    RAISE EXCEPTION 'permission denied: organization changes must go through the admin API';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."prevent_profile_escalation"() OWNER TO "postgres";
+
+
 CREATE OR REPLACE FUNCTION "public"."propagate_trip_client_changes"("p_client_id" "uuid", "p_current_trip_id" "uuid", "p_trip_date" "text", "p_equipment" "jsonb", "p_pick_up" boolean DEFAULT NULL::boolean) RETURNS "void"
     LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO 'public'
     AS $$
 DECLARE
   v_visit_start date;
   v_visit_end   date;
 BEGIN
+  -- Auth guard
+  IF auth.uid() IS NULL THEN
+    RAISE EXCEPTION 'authentication required';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1
+    FROM public.trips t
+    JOIN public.profiles p ON p.organization_id = t.organization_id
+    WHERE t.id = p_current_trip_id
+      AND p.id = auth.uid()
+  ) THEN
+    RAISE EXCEPTION 'permission denied: you do not have access to this trip';
+  END IF;
+
   -- Resolve the visit covering this trip date (for pick_up scoping)
   SELECT v.start_date, v.end_date
   INTO v_visit_start, v_visit_end
@@ -167,7 +755,7 @@ BEGIN
     AND v.end_date   >= p_trip_date::date
   LIMIT 1;
 
-  -- Equipment → all future trip_client rows
+  -- Equipment → all future trip_client rows for this client
   IF p_equipment IS NOT NULL AND p_equipment != '{}'::jsonb THEN
     UPDATE trip_clients tc SET
       bcd                = CASE WHEN p_equipment ? 'bcd'                THEN  p_equipment->>'bcd'                                        ELSE bcd                END,
@@ -228,12 +816,57 @@ SET default_table_access_method = "heap";
 CREATE TABLE IF NOT EXISTS "public"."activities" (
     "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
     "name" "text" NOT NULL,
-    "Requires_private" boolean,
-    "is_default" boolean DEFAULT false NOT NULL
+    "accept_certified_divers" boolean,
+    "abbreviation" "text",
+    "category" "text",
+    "course" "uuid"
 );
 
 
 ALTER TABLE "public"."activities" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."activity_logs" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "organization_id" "uuid" NOT NULL,
+    "actor_auth_uid" "uuid",
+    "action" "text" NOT NULL,
+    "entity_type" "text" NOT NULL,
+    "entity_id" "uuid",
+    "metadata" "jsonb",
+    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL
+);
+
+
+ALTER TABLE "public"."activity_logs" OWNER TO "postgres";
+
+
+COMMENT ON TABLE "public"."activity_logs" IS 'Audit log of admin-visible actions across trips, clients, and staff.';
+
+
+
+CREATE TABLE IF NOT EXISTS "public"."alert_resolutions" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "org_id" "uuid" NOT NULL,
+    "alert_type" "text" NOT NULL,
+    "trip_id" "uuid",
+    "client_id" "uuid",
+    "resolved_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    "resolved_by" "uuid",
+    "notes" "text"
+);
+
+
+ALTER TABLE "public"."alert_resolutions" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."categories" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "name" "text" NOT NULL
+);
+
+
+ALTER TABLE "public"."categories" OWNER TO "postgres";
 
 
 CREATE TABLE IF NOT EXISTS "public"."certification_levels" (
@@ -265,6 +898,18 @@ ALTER TABLE "public"."certification_organizations" ALTER COLUMN "id" ADD GENERAT
     CACHE 1
 );
 
+
+
+CREATE TABLE IF NOT EXISTS "public"."client_dive_logs" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "trip_dive_id" "uuid" NOT NULL,
+    "trip_client_id" "uuid" NOT NULL,
+    "max_depth" numeric(5,1),
+    "bottom_time" smallint
+);
+
+
+ALTER TABLE "public"."client_dive_logs" OWNER TO "postgres";
 
 
 CREATE TABLE IF NOT EXISTS "public"."clients" (
@@ -310,20 +955,20 @@ CREATE TABLE IF NOT EXISTS "public"."courses" (
     "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
     "name" "text" NOT NULL,
     "duration_days" integer,
-    "price" numeric(10,2),
     "min_age" integer,
     "prerequisites" "text",
     "description" "text",
     "notes" "text",
     "created_at" timestamp with time zone DEFAULT "now"(),
-    "updated_at" timestamp with time zone DEFAULT "now"()
+    "updated_at" timestamp with time zone DEFAULT "now"(),
+    "Ratio" integer
 );
 
 
 ALTER TABLE "public"."courses" OWNER TO "postgres";
 
 
-CREATE TABLE IF NOT EXISTS "public"."dive_sites" (
+CREATE TABLE IF NOT EXISTS "public"."divesites" (
     "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
     "name" "text" NOT NULL,
     "max_depth" numeric(5,1) NOT NULL,
@@ -336,7 +981,7 @@ CREATE TABLE IF NOT EXISTS "public"."dive_sites" (
 );
 
 
-ALTER TABLE "public"."dive_sites" OWNER TO "postgres";
+ALTER TABLE "public"."divesites" OWNER TO "postgres";
 
 
 CREATE TABLE IF NOT EXISTS "public"."equipment_categories" (
@@ -504,11 +1149,22 @@ CREATE TABLE IF NOT EXISTS "public"."staff_daily_job" (
     "job_date" "date" NOT NULL,
     "created_at" timestamp with time zone DEFAULT "now"(),
     "AM/PM" "text",
-    "trip_id" "uuid"
+    "trip_id" "uuid",
+    "activity_id" "uuid"
 );
 
 
 ALTER TABLE "public"."staff_daily_job" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."staff_dive_logs" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "trip_dive_id" "uuid" NOT NULL,
+    "trip_staff_id" "uuid" NOT NULL
+);
+
+
+ALTER TABLE "public"."staff_dive_logs" OWNER TO "postgres";
 
 
 CREATE TABLE IF NOT EXISTS "public"."staff_specialties" (
@@ -541,11 +1197,30 @@ CREATE TABLE IF NOT EXISTS "public"."trip_clients" (
     "nitrox2" boolean,
     "nitrox_percentage2" integer,
     "activity_id" "uuid",
-    "private" boolean DEFAULT false NOT NULL
+    "private" boolean DEFAULT false NOT NULL,
+    "tank1" "text",
+    "tank2" "text",
+    "nitrox3" boolean,
+    "nitrox_percentage3" integer,
+    "tank3" boolean,
+    "staff_assgined" "uuid"
 );
 
 
 ALTER TABLE "public"."trip_clients" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."trip_dives" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "trip_id" "uuid" NOT NULL,
+    "divesite_id" "uuid" NOT NULL,
+    "dive_number" smallint NOT NULL,
+    "started_at" timestamp with time zone,
+    "created_at" timestamp with time zone DEFAULT "now"()
+);
+
+
+ALTER TABLE "public"."trip_dives" OWNER TO "postgres";
 
 
 CREATE TABLE IF NOT EXISTS "public"."trip_staff" (
@@ -568,7 +1243,9 @@ CREATE TABLE IF NOT EXISTS "public"."trip_types" (
     "number_of_dives" integer DEFAULT 1 NOT NULL,
     "created_at" timestamp with time zone DEFAULT "now"(),
     "updated_at" timestamp with time zone DEFAULT "now"(),
-    "abbreviation" "text"
+    "abbreviation" "text",
+    "color" "text" DEFAULT 'blue'::"text",
+    "category" "text"
 );
 
 
@@ -578,7 +1255,7 @@ ALTER TABLE "public"."trip_types" OWNER TO "postgres";
 CREATE TABLE IF NOT EXISTS "public"."trips" (
     "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
     "label" "text",
-    "entry_mode" "text" NOT NULL,
+    "entry_mode" "text",
     "start_time" timestamp with time zone NOT NULL,
     "duration_minutes" integer NOT NULL,
     "max_divers" integer NOT NULL,
@@ -588,7 +1265,8 @@ CREATE TABLE IF NOT EXISTS "public"."trips" (
     "organization_id" "uuid" NOT NULL,
     "location_id" "uuid",
     "vessel_id" "uuid",
-    "trip_type_id" "uuid"
+    "trip_type_id" "uuid",
+    "series_id" "uuid"
 );
 
 
@@ -646,6 +1324,26 @@ ALTER TABLE ONLY "public"."activities"
 
 
 
+ALTER TABLE ONLY "public"."activity_logs"
+    ADD CONSTRAINT "activity_logs_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."alert_resolutions"
+    ADD CONSTRAINT "alert_resolutions_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."categories"
+    ADD CONSTRAINT "categories_name_key" UNIQUE ("name");
+
+
+
+ALTER TABLE ONLY "public"."categories"
+    ADD CONSTRAINT "categories_pkey" PRIMARY KEY ("id");
+
+
+
 ALTER TABLE ONLY "public"."certification_levels"
     ADD CONSTRAINT "certification_levels_abbreviation_key" UNIQUE ("abbreviation");
 
@@ -671,6 +1369,16 @@ ALTER TABLE ONLY "public"."certification_organizations"
 
 
 
+ALTER TABLE ONLY "public"."client_dive_logs"
+    ADD CONSTRAINT "client_dive_logs_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."client_dive_logs"
+    ADD CONSTRAINT "client_dive_logs_unique" UNIQUE ("trip_dive_id", "trip_client_id");
+
+
+
 ALTER TABLE ONLY "public"."clients"
     ADD CONSTRAINT "clients_email_key" UNIQUE ("email");
 
@@ -682,11 +1390,16 @@ ALTER TABLE ONLY "public"."clients"
 
 
 ALTER TABLE ONLY "public"."courses"
+    ADD CONSTRAINT "courses_name_key" UNIQUE ("name");
+
+
+
+ALTER TABLE ONLY "public"."courses"
     ADD CONSTRAINT "courses_pkey" PRIMARY KEY ("id");
 
 
 
-ALTER TABLE ONLY "public"."dive_sites"
+ALTER TABLE ONLY "public"."divesites"
     ADD CONSTRAINT "dive_sites_pkey" PRIMARY KEY ("id");
 
 
@@ -756,6 +1469,16 @@ ALTER TABLE ONLY "public"."staff_daily_job"
 
 
 
+ALTER TABLE ONLY "public"."staff_dive_logs"
+    ADD CONSTRAINT "staff_dive_logs_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."staff_dive_logs"
+    ADD CONSTRAINT "staff_dive_logs_unique" UNIQUE ("trip_dive_id", "trip_staff_id");
+
+
+
 ALTER TABLE ONLY "public"."staff"
     ADD CONSTRAINT "staff_email_key" UNIQUE ("email");
 
@@ -778,6 +1501,16 @@ ALTER TABLE ONLY "public"."trip_clients"
 
 ALTER TABLE ONLY "public"."trip_clients"
     ADD CONSTRAINT "trip_clients_trip_id_client_id_key" UNIQUE ("trip_id", "client_id");
+
+
+
+ALTER TABLE ONLY "public"."trip_dives"
+    ADD CONSTRAINT "trip_dives_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."trip_dives"
+    ADD CONSTRAINT "trip_dives_unique_slot" UNIQUE ("trip_id", "dive_number");
 
 
 
@@ -816,6 +1549,22 @@ ALTER TABLE ONLY "public"."visits"
 
 
 
+CREATE INDEX "activity_logs_org_created" ON "public"."activity_logs" USING "btree" ("organization_id", "created_at" DESC);
+
+
+
+CREATE INDEX "activity_logs_org_type_created" ON "public"."activity_logs" USING "btree" ("organization_id", "entity_type", "created_at" DESC);
+
+
+
+CREATE INDEX "idx_alert_resolutions_lookup" ON "public"."alert_resolutions" USING "btree" ("org_id", "alert_type", "trip_id", "client_id");
+
+
+
+CREATE INDEX "idx_alert_resolutions_org" ON "public"."alert_resolutions" USING "btree" ("org_id");
+
+
+
 CREATE INDEX "idx_clients_country" ON "public"."clients" USING "btree" ("address_country");
 
 
@@ -836,16 +1585,11 @@ CREATE INDEX "idx_clients_user_id" ON "public"."clients" USING "btree" ("user_id
 
 
 
-ALTER TABLE ONLY "public"."courses"
-    ADD CONSTRAINT "courses_name_key" UNIQUE ("name");
+CREATE INDEX "idx_dive_sites_location" ON "public"."divesites" USING "btree" ("location_id");
 
 
 
-CREATE INDEX "idx_dive_sites_location" ON "public"."dive_sites" USING "btree" ("location_id");
-
-
-
-CREATE INDEX "idx_dive_sites_org" ON "public"."dive_sites" USING "btree" ("organization_id");
+CREATE INDEX "idx_dive_sites_org" ON "public"."divesites" USING "btree" ("organization_id");
 
 
 
@@ -953,6 +1697,10 @@ CREATE INDEX "idx_trips_org" ON "public"."trips" USING "btree" ("organization_id
 
 
 
+CREATE INDEX "idx_trips_series" ON "public"."trips" USING "btree" ("series_id") WHERE ("series_id" IS NOT NULL);
+
+
+
 CREATE INDEX "idx_trips_start_time" ON "public"."trips" USING "btree" ("start_time");
 
 
@@ -1009,7 +1757,7 @@ CREATE OR REPLACE TRIGGER "courses_updated_at" BEFORE UPDATE ON "public"."course
 
 
 
-CREATE OR REPLACE TRIGGER "dive_sites_updated_at" BEFORE UPDATE ON "public"."dive_sites" FOR EACH ROW EXECUTE FUNCTION "public"."update_updated_at"();
+CREATE OR REPLACE TRIGGER "dive_sites_updated_at" BEFORE UPDATE ON "public"."divesites" FOR EACH ROW EXECUTE FUNCTION "public"."update_updated_at"();
 
 
 
@@ -1037,6 +1785,30 @@ CREATE OR REPLACE TRIGGER "staff_updated_at" BEFORE UPDATE ON "public"."staff" F
 
 
 
+CREATE OR REPLACE TRIGGER "trg_check_trip_capacity" BEFORE INSERT OR UPDATE ON "public"."trip_clients" FOR EACH ROW EXECUTE FUNCTION "public"."check_trip_capacity"();
+
+
+
+CREATE OR REPLACE TRIGGER "trg_log_client" AFTER INSERT ON "public"."clients" FOR EACH ROW EXECUTE FUNCTION "public"."log_client_insert"();
+
+
+
+CREATE OR REPLACE TRIGGER "trg_log_staff_job" AFTER INSERT OR DELETE ON "public"."staff_daily_job" FOR EACH ROW EXECUTE FUNCTION "public"."log_staff_job_change"();
+
+
+
+CREATE OR REPLACE TRIGGER "trg_log_trip" AFTER INSERT OR DELETE ON "public"."trips" FOR EACH ROW EXECUTE FUNCTION "public"."log_trip_change"();
+
+
+
+CREATE OR REPLACE TRIGGER "trg_log_trip_client" AFTER INSERT OR DELETE ON "public"."trip_clients" FOR EACH ROW EXECUTE FUNCTION "public"."log_trip_client_change"();
+
+
+
+CREATE OR REPLACE TRIGGER "trg_prevent_profile_escalation" BEFORE UPDATE ON "public"."profiles" FOR EACH ROW EXECUTE FUNCTION "public"."prevent_profile_escalation"();
+
+
+
 CREATE OR REPLACE TRIGGER "trip_types_updated_at" BEFORE UPDATE ON "public"."trip_types" FOR EACH ROW EXECUTE FUNCTION "public"."update_updated_at"();
 
 
@@ -1045,11 +1817,50 @@ CREATE OR REPLACE TRIGGER "trips_updated_at" BEFORE UPDATE ON "public"."trips" F
 
 
 
+CREATE OR REPLACE TRIGGER "trips_vessel_overlap_check" BEFORE INSERT OR UPDATE ON "public"."trips" FOR EACH ROW EXECUTE FUNCTION "public"."check_vessel_overlap"();
+
+
+
 CREATE OR REPLACE TRIGGER "vessels_updated_at" BEFORE UPDATE ON "public"."vessels" FOR EACH ROW EXECUTE FUNCTION "public"."update_updated_at"();
 
 
 
 CREATE OR REPLACE TRIGGER "visits_updated_at" BEFORE UPDATE ON "public"."visits" FOR EACH ROW EXECUTE FUNCTION "public"."update_updated_at"();
+
+
+
+ALTER TABLE ONLY "public"."activities"
+    ADD CONSTRAINT "activities_category_fkey" FOREIGN KEY ("category") REFERENCES "public"."categories"("name") ON UPDATE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."activity_logs"
+    ADD CONSTRAINT "activity_logs_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "public"."organizations"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."alert_resolutions"
+    ADD CONSTRAINT "alert_resolutions_client_id_fkey" FOREIGN KEY ("client_id") REFERENCES "public"."clients"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."alert_resolutions"
+    ADD CONSTRAINT "alert_resolutions_resolved_by_fkey" FOREIGN KEY ("resolved_by") REFERENCES "public"."staff"("id") ON DELETE SET NULL;
+
+
+
+ALTER TABLE ONLY "public"."alert_resolutions"
+    ADD CONSTRAINT "alert_resolutions_trip_id_fkey" FOREIGN KEY ("trip_id") REFERENCES "public"."trips"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."client_dive_logs"
+    ADD CONSTRAINT "client_dive_logs_client_fk" FOREIGN KEY ("trip_client_id") REFERENCES "public"."trip_clients"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."client_dive_logs"
+    ADD CONSTRAINT "client_dive_logs_dive_fk" FOREIGN KEY ("trip_dive_id") REFERENCES "public"."trip_dives"("id") ON DELETE CASCADE;
 
 
 
@@ -1068,12 +1879,12 @@ ALTER TABLE ONLY "public"."clients"
 
 
 
-ALTER TABLE ONLY "public"."dive_sites"
+ALTER TABLE ONLY "public"."divesites"
     ADD CONSTRAINT "dive_sites_location_id_fkey" FOREIGN KEY ("location_id") REFERENCES "public"."locations"("id") ON DELETE SET NULL;
 
 
 
-ALTER TABLE ONLY "public"."dive_sites"
+ALTER TABLE ONLY "public"."divesites"
     ADD CONSTRAINT "dive_sites_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "public"."organizations"("id") ON DELETE CASCADE;
 
 
@@ -1148,6 +1959,16 @@ ALTER TABLE ONLY "public"."staff_daily_job"
 
 
 
+ALTER TABLE ONLY "public"."staff_dive_logs"
+    ADD CONSTRAINT "staff_dive_logs_dive_fk" FOREIGN KEY ("trip_dive_id") REFERENCES "public"."trip_dives"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."staff_dive_logs"
+    ADD CONSTRAINT "staff_dive_logs_staff_fk" FOREIGN KEY ("trip_staff_id") REFERENCES "public"."trip_staff"("id") ON DELETE CASCADE;
+
+
+
 ALTER TABLE ONLY "public"."staff"
     ADD CONSTRAINT "staff_location_id_fkey" FOREIGN KEY ("location_id") REFERENCES "public"."locations"("id") ON DELETE SET NULL;
 
@@ -1193,6 +2014,16 @@ ALTER TABLE ONLY "public"."trip_clients"
 
 
 
+ALTER TABLE ONLY "public"."trip_dives"
+    ADD CONSTRAINT "trip_dives_divesite_fk" FOREIGN KEY ("divesite_id") REFERENCES "public"."divesites"("id");
+
+
+
+ALTER TABLE ONLY "public"."trip_dives"
+    ADD CONSTRAINT "trip_dives_trip_fk" FOREIGN KEY ("trip_id") REFERENCES "public"."trips"("id") ON DELETE CASCADE;
+
+
+
 ALTER TABLE ONLY "public"."trip_staff"
     ADD CONSTRAINT "trip_staff_activity_id_fkey" FOREIGN KEY ("activity_id") REFERENCES "public"."activities"("id") ON DELETE SET NULL;
 
@@ -1214,12 +2045,17 @@ ALTER TABLE ONLY "public"."trip_staff"
 
 
 ALTER TABLE ONLY "public"."trip_types"
+    ADD CONSTRAINT "trip_types_category_fkey" FOREIGN KEY ("category") REFERENCES "public"."categories"("name") ON UPDATE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."trip_types"
     ADD CONSTRAINT "trip_types_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "public"."organizations"("id") ON DELETE CASCADE;
 
 
 
 ALTER TABLE ONLY "public"."trips"
-    ADD CONSTRAINT "trips_dive_site_id_fkey" FOREIGN KEY ("dive_site_id") REFERENCES "public"."dive_sites"("id") ON DELETE SET NULL;
+    ADD CONSTRAINT "trips_dive_site_id_fkey" FOREIGN KEY ("dive_site_id") REFERENCES "public"."divesites"("id") ON DELETE SET NULL;
 
 
 
@@ -1273,64 +2109,329 @@ ALTER TABLE ONLY "public"."visits"
 
 
 
+ALTER TABLE "public"."activities" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."activity_logs" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "activity_logs: select" ON "public"."activity_logs" FOR SELECT USING (("organization_id" = "public"."my_org_id"()));
+
+
+
+ALTER TABLE "public"."alert_resolutions" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "alert_resolutions: delete" ON "public"."alert_resolutions" FOR DELETE USING (("org_id" = "public"."my_org_id"()));
+
+
+
+CREATE POLICY "alert_resolutions: insert" ON "public"."alert_resolutions" FOR INSERT WITH CHECK (("org_id" = "public"."my_org_id"()));
+
+
+
+CREATE POLICY "alert_resolutions: select" ON "public"."alert_resolutions" FOR SELECT USING (("org_id" = "public"."my_org_id"()));
+
+
+
+ALTER TABLE "public"."categories" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."certification_levels" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."certification_organizations" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."client_dive_logs" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "client_dive_logs: org members" ON "public"."client_dive_logs" USING ((EXISTS ( SELECT 1
+   FROM ("public"."trip_dives" "td"
+     JOIN "public"."trips" "t" ON (("t"."id" = "td"."trip_id")))
+  WHERE (("td"."id" = "client_dive_logs"."trip_dive_id") AND ("t"."organization_id" = "public"."my_org_id"()))))) WITH CHECK ((EXISTS ( SELECT 1
+   FROM ("public"."trip_dives" "td"
+     JOIN "public"."trips" "t" ON (("t"."id" = "td"."trip_id")))
+  WHERE (("td"."id" = "client_dive_logs"."trip_dive_id") AND ("t"."organization_id" = "public"."my_org_id"())))));
+
+
+
+ALTER TABLE "public"."clients" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "clients: delete" ON "public"."clients" FOR DELETE USING (("organization_id" = "public"."my_org_id"()));
+
+
+
+CREATE POLICY "clients: insert" ON "public"."clients" FOR INSERT WITH CHECK (("organization_id" = "public"."my_org_id"()));
+
+
+
+CREATE POLICY "clients: select" ON "public"."clients" FOR SELECT USING ((("organization_id" = "public"."my_org_id"()) OR (("user_id" IS NOT NULL) AND ("public"."my_org_id"() IS NOT NULL)) OR ("user_id" = "auth"."uid"())));
+
+
+
+CREATE POLICY "clients: update by staff" ON "public"."clients" FOR UPDATE USING (("organization_id" = "public"."my_org_id"())) WITH CHECK (("organization_id" = "public"."my_org_id"()));
+
+
+
+CREATE POLICY "clients: update own" ON "public"."clients" FOR UPDATE USING (("user_id" = "auth"."uid"())) WITH CHECK (("user_id" = "auth"."uid"()));
+
+
+
+ALTER TABLE "public"."courses" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."divesites" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "divesites: org members" ON "public"."divesites" USING (("organization_id" = "public"."my_org_id"())) WITH CHECK (("organization_id" = "public"."my_org_id"()));
+
+
+
+ALTER TABLE "public"."equipment_categories" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."hotels" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "hotels: org members" ON "public"."hotels" USING (("organization_id" = "public"."my_org_id"())) WITH CHECK (("organization_id" = "public"."my_org_id"()));
+
+
+
+ALTER TABLE "public"."inventory" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "inventory: org members" ON "public"."inventory" USING (("organization_id" = "public"."my_org_id"())) WITH CHECK (("organization_id" = "public"."my_org_id"()));
+
+
+
 ALTER TABLE "public"."job_types" ENABLE ROW LEVEL SECURITY;
 
 
-CREATE POLICY "org members can delete job_types" ON "public"."job_types" FOR DELETE USING (("organization_id" IN ( SELECT "profiles"."organization_id"
-   FROM "public"."profiles"
-  WHERE ("profiles"."id" = "auth"."uid"()))));
+CREATE POLICY "job_types: select" ON "public"."job_types" FOR SELECT USING ((("organization_id" IS NULL) OR ("organization_id" = "public"."my_org_id"())));
 
 
 
-CREATE POLICY "org members can delete staff_daily_job" ON "public"."staff_daily_job" FOR DELETE USING (("organization_id" IN ( SELECT "profiles"."organization_id"
-   FROM "public"."profiles"
-  WHERE ("profiles"."id" = "auth"."uid"()))));
+CREATE POLICY "job_types: write" ON "public"."job_types" USING (("organization_id" = "public"."my_org_id"())) WITH CHECK (("organization_id" = "public"."my_org_id"()));
 
 
 
-CREATE POLICY "org members can insert job_types" ON "public"."job_types" FOR INSERT WITH CHECK (("organization_id" IN ( SELECT "profiles"."organization_id"
-   FROM "public"."profiles"
-  WHERE ("profiles"."id" = "auth"."uid"()))));
+ALTER TABLE "public"."locations" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "locations: org members" ON "public"."locations" USING (("organization_id" = "public"."my_org_id"())) WITH CHECK (("organization_id" = "public"."my_org_id"()));
 
 
 
-CREATE POLICY "org members can insert staff_daily_job" ON "public"."staff_daily_job" FOR INSERT WITH CHECK (("organization_id" IN ( SELECT "profiles"."organization_id"
-   FROM "public"."profiles"
-  WHERE ("profiles"."id" = "auth"."uid"()))));
+ALTER TABLE "public"."organizations" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "organizations: read own" ON "public"."organizations" FOR SELECT USING (("id" = "public"."my_org_id"()));
 
 
 
-CREATE POLICY "org members can select job_types" ON "public"."job_types" FOR SELECT USING (("organization_id" IN ( SELECT "profiles"."organization_id"
-   FROM "public"."profiles"
-  WHERE ("profiles"."id" = "auth"."uid"()))));
+CREATE POLICY "organizations: update own" ON "public"."organizations" FOR UPDATE USING (("id" = "public"."my_org_id"())) WITH CHECK (("id" = "public"."my_org_id"()));
 
 
 
-CREATE POLICY "org members can select staff_daily_job" ON "public"."staff_daily_job" FOR SELECT USING (("organization_id" IN ( SELECT "profiles"."organization_id"
-   FROM "public"."profiles"
-  WHERE ("profiles"."id" = "auth"."uid"()))));
+ALTER TABLE "public"."profiles" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "profiles: read own" ON "public"."profiles" FOR SELECT USING (("id" = "auth"."uid"()));
 
 
 
-CREATE POLICY "org members can update job_types" ON "public"."job_types" FOR UPDATE USING (("organization_id" IN ( SELECT "profiles"."organization_id"
-   FROM "public"."profiles"
-  WHERE ("profiles"."id" = "auth"."uid"()))));
+CREATE POLICY "profiles: read same org" ON "public"."profiles" FOR SELECT USING ((("public"."my_org_id"() IS NOT NULL) AND ("organization_id" = "public"."my_org_id"())));
 
 
 
-CREATE POLICY "org members can update staff_daily_job" ON "public"."staff_daily_job" FOR UPDATE USING (("organization_id" IN ( SELECT "profiles"."organization_id"
-   FROM "public"."profiles"
-  WHERE ("profiles"."id" = "auth"."uid"()))));
+CREATE POLICY "ref: select activities" ON "public"."activities" FOR SELECT USING (("auth"."uid"() IS NOT NULL));
 
 
 
-CREATE POLICY "org members can view job_types" ON "public"."job_types" FOR SELECT USING ((("organization_id" IS NULL) OR ("organization_id" IN ( SELECT "profiles"."organization_id"
-   FROM "public"."profiles"
-  WHERE ("profiles"."id" = "auth"."uid"())))));
+CREATE POLICY "ref: select categories" ON "public"."categories" FOR SELECT USING (("auth"."uid"() IS NOT NULL));
+
+
+
+CREATE POLICY "ref: select certification_levels" ON "public"."certification_levels" FOR SELECT USING (("auth"."uid"() IS NOT NULL));
+
+
+
+CREATE POLICY "ref: select certification_organizations" ON "public"."certification_organizations" FOR SELECT USING (("auth"."uid"() IS NOT NULL));
+
+
+
+CREATE POLICY "ref: select courses" ON "public"."courses" FOR SELECT USING (("auth"."uid"() IS NOT NULL));
+
+
+
+CREATE POLICY "ref: select equipment_categories" ON "public"."equipment_categories" FOR SELECT USING (("auth"."uid"() IS NOT NULL));
+
+
+
+CREATE POLICY "ref: select roles" ON "public"."roles" FOR SELECT USING (("auth"."uid"() IS NOT NULL));
+
+
+
+CREATE POLICY "ref: select specialties" ON "public"."specialties" FOR SELECT USING (("auth"."uid"() IS NOT NULL));
+
+
+
+ALTER TABLE "public"."roles" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."specialties" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."staff" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "staff: org members" ON "public"."staff" USING (("organization_id" = "public"."my_org_id"())) WITH CHECK (("organization_id" = "public"."my_org_id"()));
 
 
 
 ALTER TABLE "public"."staff_daily_job" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "staff_daily_job: org members" ON "public"."staff_daily_job" USING (("organization_id" = "public"."my_org_id"())) WITH CHECK (("organization_id" = "public"."my_org_id"()));
+
+
+
+ALTER TABLE "public"."staff_dive_logs" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "staff_dive_logs: org members" ON "public"."staff_dive_logs" USING ((EXISTS ( SELECT 1
+   FROM ("public"."trip_dives" "td"
+     JOIN "public"."trips" "t" ON (("t"."id" = "td"."trip_id")))
+  WHERE (("td"."id" = "staff_dive_logs"."trip_dive_id") AND ("t"."organization_id" = "public"."my_org_id"()))))) WITH CHECK ((EXISTS ( SELECT 1
+   FROM ("public"."trip_dives" "td"
+     JOIN "public"."trips" "t" ON (("t"."id" = "td"."trip_id")))
+  WHERE (("td"."id" = "staff_dive_logs"."trip_dive_id") AND ("t"."organization_id" = "public"."my_org_id"())))));
+
+
+
+ALTER TABLE "public"."staff_specialties" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "staff_specialties: org members" ON "public"."staff_specialties" USING ((EXISTS ( SELECT 1
+   FROM "public"."staff" "s"
+  WHERE (("s"."id" = "staff_specialties"."staff_id") AND ("s"."organization_id" = "public"."my_org_id"()))))) WITH CHECK ((EXISTS ( SELECT 1
+   FROM "public"."staff" "s"
+  WHERE (("s"."id" = "staff_specialties"."staff_id") AND ("s"."organization_id" = "public"."my_org_id"())))));
+
+
+
+ALTER TABLE "public"."trip_clients" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "trip_clients: delete" ON "public"."trip_clients" FOR DELETE USING ((EXISTS ( SELECT 1
+   FROM "public"."trips" "t"
+  WHERE (("t"."id" = "trip_clients"."trip_id") AND ("t"."organization_id" = "public"."my_org_id"())))));
+
+
+
+CREATE POLICY "trip_clients: insert" ON "public"."trip_clients" FOR INSERT WITH CHECK ((EXISTS ( SELECT 1
+   FROM "public"."trips" "t"
+  WHERE (("t"."id" = "trip_clients"."trip_id") AND ("t"."organization_id" = "public"."my_org_id"())))));
+
+
+
+CREATE POLICY "trip_clients: select" ON "public"."trip_clients" FOR SELECT USING (((EXISTS ( SELECT 1
+   FROM "public"."trips" "t"
+  WHERE (("t"."id" = "trip_clients"."trip_id") AND ("t"."organization_id" = "public"."my_org_id"())))) OR ("client_id" IN ( SELECT "clients"."id"
+   FROM "public"."clients"
+  WHERE ("clients"."user_id" = "auth"."uid"())))));
+
+
+
+CREATE POLICY "trip_clients: update" ON "public"."trip_clients" FOR UPDATE USING ((EXISTS ( SELECT 1
+   FROM "public"."trips" "t"
+  WHERE (("t"."id" = "trip_clients"."trip_id") AND ("t"."organization_id" = "public"."my_org_id"()))))) WITH CHECK ((EXISTS ( SELECT 1
+   FROM "public"."trips" "t"
+  WHERE (("t"."id" = "trip_clients"."trip_id") AND ("t"."organization_id" = "public"."my_org_id"())))));
+
+
+
+ALTER TABLE "public"."trip_dives" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "trip_dives: org members" ON "public"."trip_dives" USING ((EXISTS ( SELECT 1
+   FROM "public"."trips" "t"
+  WHERE (("t"."id" = "trip_dives"."trip_id") AND ("t"."organization_id" = "public"."my_org_id"()))))) WITH CHECK ((EXISTS ( SELECT 1
+   FROM "public"."trips" "t"
+  WHERE (("t"."id" = "trip_dives"."trip_id") AND ("t"."organization_id" = "public"."my_org_id"())))));
+
+
+
+ALTER TABLE "public"."trip_staff" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "trip_staff: org members" ON "public"."trip_staff" USING ((EXISTS ( SELECT 1
+   FROM "public"."trips" "t"
+  WHERE (("t"."id" = "trip_staff"."trip_id") AND ("t"."organization_id" = "public"."my_org_id"()))))) WITH CHECK ((EXISTS ( SELECT 1
+   FROM "public"."trips" "t"
+  WHERE (("t"."id" = "trip_staff"."trip_id") AND ("t"."organization_id" = "public"."my_org_id"())))));
+
+
+
+ALTER TABLE "public"."trip_types" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "trip_types: org members" ON "public"."trip_types" USING (("organization_id" = "public"."my_org_id"())) WITH CHECK (("organization_id" = "public"."my_org_id"()));
+
+
+
+ALTER TABLE "public"."trips" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "trips: org members" ON "public"."trips" USING (("organization_id" = "public"."my_org_id"())) WITH CHECK (("organization_id" = "public"."my_org_id"()));
+
+
+
+ALTER TABLE "public"."vessels" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "vessels: org members" ON "public"."vessels" USING (("organization_id" = "public"."my_org_id"())) WITH CHECK (("organization_id" = "public"."my_org_id"()));
+
+
+
+ALTER TABLE "public"."visit_clients" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "visit_clients: delete" ON "public"."visit_clients" FOR DELETE USING ((EXISTS ( SELECT 1
+   FROM "public"."visits" "v"
+  WHERE (("v"."id" = "visit_clients"."visit_id") AND ("v"."organization_id" = "public"."my_org_id"())))));
+
+
+
+CREATE POLICY "visit_clients: insert" ON "public"."visit_clients" FOR INSERT WITH CHECK ((EXISTS ( SELECT 1
+   FROM "public"."visits" "v"
+  WHERE (("v"."id" = "visit_clients"."visit_id") AND ("v"."organization_id" = "public"."my_org_id"())))));
+
+
+
+CREATE POLICY "visit_clients: select" ON "public"."visit_clients" FOR SELECT USING (((EXISTS ( SELECT 1
+   FROM "public"."visits" "v"
+  WHERE (("v"."id" = "visit_clients"."visit_id") AND ("v"."organization_id" = "public"."my_org_id"())))) OR ("client_id" IN ( SELECT "clients"."id"
+   FROM "public"."clients"
+  WHERE ("clients"."user_id" = "auth"."uid"())))));
+
+
+
+CREATE POLICY "visit_clients: update" ON "public"."visit_clients" FOR UPDATE USING ((EXISTS ( SELECT 1
+   FROM "public"."visits" "v"
+  WHERE (("v"."id" = "visit_clients"."visit_id") AND ("v"."organization_id" = "public"."my_org_id"()))))) WITH CHECK ((EXISTS ( SELECT 1
+   FROM "public"."visits" "v"
+  WHERE (("v"."id" = "visit_clients"."visit_id") AND ("v"."organization_id" = "public"."my_org_id"())))));
+
+
+
+ALTER TABLE "public"."visits" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "visits: org members" ON "public"."visits" USING (("organization_id" = "public"."my_org_id"())) WITH CHECK (("organization_id" = "public"."my_org_id"()));
+
 
 
 GRANT USAGE ON SCHEMA "public" TO "postgres";
@@ -1346,9 +2447,81 @@ GRANT ALL ON FUNCTION "public"."add_clients_to_trip"("p_trip_id" "uuid", "p_clie
 
 
 
+GRANT ALL ON FUNCTION "public"."check_trip_capacity"() TO "anon";
+GRANT ALL ON FUNCTION "public"."check_trip_capacity"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."check_trip_capacity"() TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."check_vessel_overlap"() TO "anon";
+GRANT ALL ON FUNCTION "public"."check_vessel_overlap"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."check_vessel_overlap"() TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."create_trip_series"("p_org_id" "uuid", "p_label" "text", "p_trip_type_id" "uuid", "p_entry_mode" "text", "p_duration_mins" integer, "p_max_divers" integer, "p_vessel_id" "uuid", "p_start_times" timestamp with time zone[]) TO "anon";
+GRANT ALL ON FUNCTION "public"."create_trip_series"("p_org_id" "uuid", "p_label" "text", "p_trip_type_id" "uuid", "p_entry_mode" "text", "p_duration_mins" integer, "p_max_divers" integer, "p_vessel_id" "uuid", "p_start_times" timestamp with time zone[]) TO "authenticated";
+GRANT ALL ON FUNCTION "public"."create_trip_series"("p_org_id" "uuid", "p_label" "text", "p_trip_type_id" "uuid", "p_entry_mode" "text", "p_duration_mins" integer, "p_max_divers" integer, "p_vessel_id" "uuid", "p_start_times" timestamp with time zone[]) TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."get_active_alerts"("p_org_id" "uuid") TO "anon";
+GRANT ALL ON FUNCTION "public"."get_active_alerts"("p_org_id" "uuid") TO "authenticated";
+GRANT ALL ON FUNCTION "public"."get_active_alerts"("p_org_id" "uuid") TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."get_activity_logs"("p_org_id" "uuid", "p_entity_type" "text", "p_from" timestamp with time zone, "p_to" timestamp with time zone, "p_limit" integer, "p_offset" integer) TO "anon";
+GRANT ALL ON FUNCTION "public"."get_activity_logs"("p_org_id" "uuid", "p_entity_type" "text", "p_from" timestamp with time zone, "p_to" timestamp with time zone, "p_limit" integer, "p_offset" integer) TO "authenticated";
+GRANT ALL ON FUNCTION "public"."get_activity_logs"("p_org_id" "uuid", "p_entity_type" "text", "p_from" timestamp with time zone, "p_to" timestamp with time zone, "p_limit" integer, "p_offset" integer) TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."get_overview_trips"("p_org_id" "uuid", "p_start" timestamp with time zone, "p_end" timestamp with time zone) TO "anon";
+GRANT ALL ON FUNCTION "public"."get_overview_trips"("p_org_id" "uuid", "p_start" timestamp with time zone, "p_end" timestamp with time zone) TO "authenticated";
+GRANT ALL ON FUNCTION "public"."get_overview_trips"("p_org_id" "uuid", "p_start" timestamp with time zone, "p_end" timestamp with time zone) TO "service_role";
+
+
+
 GRANT ALL ON FUNCTION "public"."handle_new_user"() TO "anon";
 GRANT ALL ON FUNCTION "public"."handle_new_user"() TO "authenticated";
 GRANT ALL ON FUNCTION "public"."handle_new_user"() TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."log_client_insert"() TO "anon";
+GRANT ALL ON FUNCTION "public"."log_client_insert"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."log_client_insert"() TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."log_staff_job_change"() TO "anon";
+GRANT ALL ON FUNCTION "public"."log_staff_job_change"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."log_staff_job_change"() TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."log_trip_change"() TO "anon";
+GRANT ALL ON FUNCTION "public"."log_trip_change"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."log_trip_change"() TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."log_trip_client_change"() TO "anon";
+GRANT ALL ON FUNCTION "public"."log_trip_client_change"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."log_trip_client_change"() TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."my_org_id"() TO "anon";
+GRANT ALL ON FUNCTION "public"."my_org_id"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."my_org_id"() TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."prevent_profile_escalation"() TO "anon";
+GRANT ALL ON FUNCTION "public"."prevent_profile_escalation"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."prevent_profile_escalation"() TO "service_role";
 
 
 
@@ -1370,6 +2543,24 @@ GRANT ALL ON TABLE "public"."activities" TO "service_role";
 
 
 
+GRANT ALL ON TABLE "public"."activity_logs" TO "anon";
+GRANT ALL ON TABLE "public"."activity_logs" TO "authenticated";
+GRANT ALL ON TABLE "public"."activity_logs" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."alert_resolutions" TO "anon";
+GRANT ALL ON TABLE "public"."alert_resolutions" TO "authenticated";
+GRANT ALL ON TABLE "public"."alert_resolutions" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."categories" TO "anon";
+GRANT ALL ON TABLE "public"."categories" TO "authenticated";
+GRANT ALL ON TABLE "public"."categories" TO "service_role";
+
+
+
 GRANT ALL ON TABLE "public"."certification_levels" TO "anon";
 GRANT ALL ON TABLE "public"."certification_levels" TO "authenticated";
 GRANT ALL ON TABLE "public"."certification_levels" TO "service_role";
@@ -1385,6 +2576,12 @@ GRANT ALL ON TABLE "public"."certification_organizations" TO "service_role";
 GRANT ALL ON SEQUENCE "public"."certification_organizations_id_seq" TO "anon";
 GRANT ALL ON SEQUENCE "public"."certification_organizations_id_seq" TO "authenticated";
 GRANT ALL ON SEQUENCE "public"."certification_organizations_id_seq" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."client_dive_logs" TO "anon";
+GRANT ALL ON TABLE "public"."client_dive_logs" TO "authenticated";
+GRANT ALL ON TABLE "public"."client_dive_logs" TO "service_role";
 
 
 
@@ -1406,9 +2603,9 @@ GRANT ALL ON TABLE "public"."courses" TO "service_role";
 
 
 
-GRANT ALL ON TABLE "public"."dive_sites" TO "anon";
-GRANT ALL ON TABLE "public"."dive_sites" TO "authenticated";
-GRANT ALL ON TABLE "public"."dive_sites" TO "service_role";
+GRANT ALL ON TABLE "public"."divesites" TO "anon";
+GRANT ALL ON TABLE "public"."divesites" TO "authenticated";
+GRANT ALL ON TABLE "public"."divesites" TO "service_role";
 
 
 
@@ -1478,6 +2675,12 @@ GRANT ALL ON TABLE "public"."staff_daily_job" TO "service_role";
 
 
 
+GRANT ALL ON TABLE "public"."staff_dive_logs" TO "anon";
+GRANT ALL ON TABLE "public"."staff_dive_logs" TO "authenticated";
+GRANT ALL ON TABLE "public"."staff_dive_logs" TO "service_role";
+
+
+
 GRANT ALL ON TABLE "public"."staff_specialties" TO "anon";
 GRANT ALL ON TABLE "public"."staff_specialties" TO "authenticated";
 GRANT ALL ON TABLE "public"."staff_specialties" TO "service_role";
@@ -1487,6 +2690,12 @@ GRANT ALL ON TABLE "public"."staff_specialties" TO "service_role";
 GRANT ALL ON TABLE "public"."trip_clients" TO "anon";
 GRANT ALL ON TABLE "public"."trip_clients" TO "authenticated";
 GRANT ALL ON TABLE "public"."trip_clients" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."trip_dives" TO "anon";
+GRANT ALL ON TABLE "public"."trip_dives" TO "authenticated";
+GRANT ALL ON TABLE "public"."trip_dives" TO "service_role";
 
 
 
