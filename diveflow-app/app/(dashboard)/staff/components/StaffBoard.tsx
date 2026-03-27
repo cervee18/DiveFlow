@@ -38,6 +38,7 @@ function memberInitials(member: DailyJob['staff']): string {
 function JobCard({
   jobType,
   assignments,
+  halfDay,
   assignMode,
   selectedStaffIds,
   onAssign,
