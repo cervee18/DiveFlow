@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useMemo } from 'react';
+import useSWR from 'swr';
 import { createClient } from '@/utils/supabase/client';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
@@ -30,7 +31,7 @@ function fromDateFor(range: TimeRange): string | null {
 }
 
 function monthKey(isoString: string) {
-  return isoString.slice(0, 7); // YYYY-MM
+  return isoString.slice(0, 7);
 }
 
 function monthLabel(yyyymm: string) {
@@ -43,6 +44,33 @@ const PALETTE = [
   '#10b981', '#f97316', '#3b82f6', '#ec4899', '#84cc16',
 ];
 function colorFor(_name: string, index: number) { return PALETTE[index % PALETTE.length]; }
+
+// ─── Fetchers ─────────────────────────────────────────────────────────────────
+
+async function fetchVessels([, orgId]: [string, string]) {
+  const supabase = createClient();
+  const { data } = await supabase
+    .from('vessels')
+    .select('id, name, capacity')
+    .eq('organization_id', orgId)
+    .order('name', { ascending: true });
+  return (data ?? []) as Vessel[];
+}
+
+async function fetchTrips([, orgId, timeRange, vesselId]: [string, string, TimeRange, string]) {
+  const supabase = createClient();
+  let q = supabase
+    .from('trips')
+    .select('id, start_time, max_divers, trip_types(name), trip_clients(id)')
+    .eq('vessel_id', vesselId)
+    .eq('organization_id', orgId)
+    .order('start_time', { ascending: true });
+  const from = fromDateFor(timeRange);
+  if (from) q = q.gte('start_time', from + 'T00:00:00');
+  const { data, error } = await q;
+  if (error) throw error;
+  return (data ?? []) as RawTrip[];
+}
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
@@ -59,47 +87,21 @@ function StatCard({ label, value, sub }: { label: string; value: number | string
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function BoatStats({ orgId, timeRange }: { orgId: string; timeRange: TimeRange }) {
-  const supabase = createClient();
-
-  const [vessels,        setVessels]        = useState<Vessel[]>([]);
   const [selectedVessel, setSelectedVessel] = useState<string>('');
-  const [trips,          setTrips]          = useState<RawTrip[]>([]);
-  const [loading,        setLoading]        = useState(false);
 
-  // ── Bootstrap ──────────────────────────────────────────────────────────────
-  useEffect(() => {
-    supabase
-      .from('vessels')
-      .select('id, name, capacity')
-      .eq('organization_id', orgId)
-      .order('name', { ascending: true })
-      .then(({ data }) => { if (data) setVessels(data); });
-  }, [orgId, supabase]);
+  const { data: vessels = [] } = useSWR(
+    ['vessels', orgId],
+    fetchVessels
+  );
 
-  // ── Fetch trips ─────────────────────────────────────────────────────────────
-  useEffect(() => {
-    if (!selectedVessel) { setTrips([]); return; }
-    async function load() {
-      setLoading(true);
-      let q = supabase
-        .from('trips')
-        .select('id, start_time, max_divers, trip_types(name), trip_clients(id)')
-        .eq('vessel_id', selectedVessel)
-        .eq('organization_id', orgId)
-        .order('start_time', { ascending: true });
-      const from = fromDateFor(timeRange);
-      if (from) q = q.gte('start_time', from + 'T00:00:00');
-      const { data, error } = await q;
-      if (error) console.error('BoatStats fetch error:', error);
-      setTrips((data as RawTrip[]) ?? []);
-      setLoading(false);
-    }
-    load();
-  }, [orgId, selectedVessel, timeRange, supabase]);
+  const { data: trips = [], isLoading } = useSWR(
+    selectedVessel ? ['boat-trips', orgId, timeRange, selectedVessel] : null,
+    fetchTrips
+  );
 
   // ── Derived stats ──────────────────────────────────────────────────────────
-  const totalTrips   = trips.length;
-  const totalClients = useMemo(() => trips.reduce((s, t) => s + t.trip_clients.length, 0), [trips]);
+  const totalTrips    = trips.length;
+  const totalClients  = useMemo(() => trips.reduce((s, t) => s + t.trip_clients.length, 0), [trips]);
   const totalCapacity = useMemo(() => trips.reduce((s, t) => s + t.max_divers, 0), [trips]);
 
   const avgOccupancy = totalCapacity > 0
@@ -110,7 +112,6 @@ export default function BoatStats({ orgId, timeRange }: { orgId: string; timeRan
     ? (totalClients / totalTrips).toFixed(1)
     : '—';
 
-  // Trips by type — for donut
   const tripTypeData = useMemo(() => {
     const counts: Record<string, number> = {};
     for (const t of trips) {
@@ -122,7 +123,6 @@ export default function BoatStats({ orgId, timeRange }: { orgId: string; timeRan
       .sort((a, b) => b.count - a.count);
   }, [trips]);
 
-  // Monthly data — trips count + occupancy %
   const { monthlyTrips, monthlyOccupancy, tripTypeNames } = useMemo(() => {
     const tripsPerMonth: Record<string, Record<string, number>> = {};
     const capacityPerMonth: Record<string, number> = {};
@@ -139,7 +139,7 @@ export default function BoatStats({ orgId, timeRange }: { orgId: string; timeRan
       clientsPerMonth[m]  = (clientsPerMonth[m]  ?? 0) + t.trip_clients.length;
     }
 
-    const sortedMonths = Object.keys(tripsPerMonth).sort();
+    const sortedMonths  = Object.keys(tripsPerMonth).sort();
     const tripTypeNames = Array.from(typeSet);
 
     const monthlyTrips = sortedMonths.map(m => ({
@@ -184,14 +184,13 @@ export default function BoatStats({ orgId, timeRange }: { orgId: string; timeRan
         </div>
       )}
 
-      {selectedVessel && loading && (
+      {selectedVessel && isLoading && (
         <div className="text-sm text-slate-400 py-10 text-center">Loading…</div>
       )}
 
-      {selectedVessel && !loading && (
+      {selectedVessel && !isLoading && (
         <div className="space-y-6">
 
-          {/* Summary cards */}
           <div className="grid grid-cols-4 gap-4">
             <StatCard label="Trips"              value={totalTrips} />
             <StatCard label="Total clients"      value={totalClients} />
@@ -199,7 +198,6 @@ export default function BoatStats({ orgId, timeRange }: { orgId: string; timeRan
             <StatCard label="Avg clients / trip" value={avgClientsPerTrip} />
           </div>
 
-          {/* Trips by type — donut */}
           {tripTypeData.length > 0 && (
             <div className="bg-white rounded-xl border border-slate-200 p-6">
               <h2 className="text-sm font-semibold text-slate-700 mb-4">Trips by type</h2>
@@ -216,7 +214,9 @@ export default function BoatStats({ orgId, timeRange }: { orgId: string; timeRan
                     >
                       {tripTypeData.map((entry, i) => <Cell key={entry.name} fill={colorFor(entry.name, i)} />)}
                     </Pie>
-                    <Tooltip formatter={(value: number) => [`${value} (${((value / totalTrips) * 100).toFixed(1)}%)`, 'Trips']} />
+                    <Tooltip formatter={(value: number, _key: string, props: { payload: { name: string } }) =>
+                      [`${value} (${((value / totalTrips) * 100).toFixed(1)}%)`, props.payload.name]
+                    } />
                   </PieChart>
                 </ResponsiveContainer>
                 <ul className="flex flex-col gap-2">
@@ -232,11 +232,9 @@ export default function BoatStats({ orgId, timeRange }: { orgId: string; timeRan
             </div>
           )}
 
-          {/* Monthly trips + occupancy */}
           {monthlyTrips.length > 1 && (
             <div className="grid grid-cols-2 gap-6">
 
-              {/* Monthly trips stacked by type */}
               <div className="bg-white rounded-xl border border-slate-200 p-6">
                 <h2 className="text-sm font-semibold text-slate-700 mb-6">Monthly trips</h2>
                 <ResponsiveContainer width="100%" height={220}>
@@ -253,7 +251,6 @@ export default function BoatStats({ orgId, timeRange }: { orgId: string; timeRan
                 </ResponsiveContainer>
               </div>
 
-              {/* Monthly occupancy % */}
               <div className="bg-white rounded-xl border border-slate-200 p-6">
                 <h2 className="text-sm font-semibold text-slate-700 mb-6">Monthly occupancy %</h2>
                 <ResponsiveContainer width="100%" height={220}>

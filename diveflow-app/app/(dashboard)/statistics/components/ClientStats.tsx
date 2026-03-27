@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useMemo } from 'react';
+import useSWR from 'swr';
 import { createClient } from '@/utils/supabase/client';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
@@ -31,7 +32,7 @@ type RawBooking = {
 type RawActivity = {
   id: string;
   name: string;
-  course: string | null;  // FK uuid to courses
+  course: string | null;
 };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -48,12 +49,11 @@ function monthLabel(yyyymm: string) {
   return d.toLocaleString('default', { month: 'short', year: '2-digit' });
 }
 
-// Resolve activity label: course linked to activity > activity name > Fan Dive / Snorkel
 function resolveActivity(
   booking: RawBooking,
   tripType: RawTrip['trip_types'],
-  courseMap: Map<string, string>,  // courseId → course name
-  activityCourseMap: Map<string, string | null>,  // activityId → courseId
+  courseMap: Map<string, string>,
+  activityCourseMap: Map<string, string | null>,
 ): string {
   if (booking.activity_id) {
     const courseId = activityCourseMap.get(booking.activity_id);
@@ -61,7 +61,6 @@ function resolveActivity(
       const courseName = courseMap.get(courseId);
       if (courseName) return courseName;
     }
-    // No course linked — fall back to activity name
     return booking.activities?.name ?? 'Unknown';
   }
   if (tripType?.category === 'Snorkel') return 'Snorkel';
@@ -73,6 +72,42 @@ const PALETTE = [
   '#10b981', '#f97316', '#3b82f6', '#ec4899', '#84cc16',
 ];
 function colorFor(_: string, i: number) { return PALETTE[i % PALETTE.length]; }
+
+// ─── Fetchers ─────────────────────────────────────────────────────────────────
+
+async function fetchRefData() {
+  const supabase = createClient();
+  const [{ data: activities }, { data: courses }] = await Promise.all([
+    supabase.from('activities').select('id, name, course'),
+    supabase.from('courses').select('id, name'),
+  ]);
+  const courseMap        = new Map((courses ?? []).map((c: { id: string; name: string }) => [c.id, c.name]));
+  const activityCourseMap = new Map((activities ?? []).map((a: RawActivity) => [a.id, a.course]));
+  return { courseMap, activityCourseMap };
+}
+
+async function fetchClientStats([, orgId, timeRange]: [string, string, TimeRange]) {
+  const supabase = createClient();
+  let q = supabase
+    .from('trips')
+    .select(`
+      id, start_time,
+      trip_types(name, category),
+      trip_clients(
+        *,
+        clients(certification_levels(name)),
+        activities(name),
+        courses(name)
+      )
+    `)
+    .eq('organization_id', orgId)
+    .order('start_time', { ascending: true });
+  const from = fromDateFor(timeRange);
+  if (from) q = q.gte('start_time', from + 'T00:00:00');
+  const { data, error } = await q;
+  if (error) throw error;
+  return (data ?? []) as RawTrip[];
+}
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
@@ -125,47 +160,15 @@ function DonutCard({ title, data, total }: {
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function ClientStats({ orgId, timeRange }: { orgId: string; timeRange: TimeRange }) {
-  const supabase = createClient();
+  const { data: refData } = useSWR('client-ref', fetchRefData);
 
-  const [trips,      setTrips]      = useState<RawTrip[]>([]);
-  const [activities, setActivities] = useState<RawActivity[]>([]);
-  const [courseNames, setCourseNames] = useState<Map<string, string>>(new Map());
-  const [loading,    setLoading]    = useState(false);
+  const { data: trips = [], isLoading } = useSWR(
+    ['client-stats', orgId, timeRange],
+    fetchClientStats
+  );
 
-  useEffect(() => {
-    async function load() {
-      setLoading(true);
-      let q = supabase
-        .from('trips')
-        .select(`
-          id, start_time,
-          trip_types(name, category),
-          trip_clients(
-            *,
-            clients(certification_levels(name)),
-            activities(name),
-            courses(name)
-          )
-        `)
-        .eq('organization_id', orgId)
-        .order('start_time', { ascending: true });
-      const from = fromDateFor(timeRange);
-      if (from) q = q.gte('start_time', from + 'T00:00:00');
-      const [tripsRes, activitiesRes, coursesRes] = await Promise.all([
-        q,
-        supabase.from('activities').select('id, name, course'),
-        supabase.from('courses').select('id, name'),
-      ]);
-      if (tripsRes.error)     console.error('ClientStats fetch error:', tripsRes.error);
-      if (activitiesRes.error) console.error('ClientStats activities error:', activitiesRes.error);
-      if (coursesRes.error)   console.error('ClientStats courses error:', coursesRes.error);
-      setTrips((tripsRes.data as RawTrip[]) ?? []);
-      setActivities((activitiesRes.data as RawActivity[]) ?? []);
-      setCourseNames(new Map((coursesRes.data ?? []).map((c: { id: string; name: string }) => [c.id, c.name])));
-      setLoading(false);
-    }
-    load();
-  }, [orgId, timeRange]); // eslint-disable-line react-hooks/exhaustive-deps
+  const courseMap         = refData?.courseMap         ?? new Map<string, string>();
+  const activityCourseMap = refData?.activityCourseMap ?? new Map<string, string | null>();
 
   // ── Flatten all bookings (with trip context) ───────────────────────────────
   const bookings = useMemo(() =>
@@ -191,24 +194,18 @@ export default function ClientStats({ orgId, timeRange }: { orgId: string; timeR
     ? ((returningClients / uniqueClients) * 100).toFixed(1)
     : '—';
 
-  const privateCount  = useMemo(() => bookings.filter(b => b.private).length, [bookings]);
-  const privatePct    = totalBookings > 0 ? ((privateCount / totalBookings) * 100).toFixed(1) : '—';
-
-  // activityId → courseId (null if no course linked)
-  const activityCourseMap = useMemo(
-    () => new Map(activities.map(a => [a.id, a.course])),
-    [activities]
-  );
+  const privateCount = useMemo(() => bookings.filter(b => b.private).length, [bookings]);
+  const privatePct   = totalBookings > 0 ? ((privateCount / totalBookings) * 100).toFixed(1) : '—';
 
   // ── Activity breakdown ─────────────────────────────────────────────────────
   const activityData = useMemo(() => {
     const counts: Record<string, number> = {};
     for (const b of bookings) {
-      const name = resolveActivity(b, b.trip.trip_types, courseNames, activityCourseMap);
+      const name = resolveActivity(b, b.trip.trip_types, courseMap, activityCourseMap);
       counts[name] = (counts[name] ?? 0) + 1;
     }
     return Object.entries(counts).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count);
-  }, [bookings, courseNames, activityCourseMap]);
+  }, [bookings, courseMap, activityCourseMap]);
 
   // ── Cert level breakdown ───────────────────────────────────────────────────
   const certData = useMemo(() => {
@@ -243,7 +240,7 @@ export default function ClientStats({ orgId, timeRange }: { orgId: string; timeR
   }, [bookings]);
 
   // ── Render ─────────────────────────────────────────────────────────────────
-  if (loading) return <div className="text-sm text-slate-400 py-10 text-center">Loading…</div>;
+  if (isLoading) return <div className="text-sm text-slate-400 py-10 text-center">Loading…</div>;
 
   if (totalBookings === 0) return (
     <div className="rounded-xl border border-dashed border-slate-300 py-20 text-center text-slate-400 text-sm">
@@ -254,7 +251,6 @@ export default function ClientStats({ orgId, timeRange }: { orgId: string; timeR
   return (
     <div className="space-y-6">
 
-      {/* Summary cards */}
       <div className="grid grid-cols-4 gap-4">
         <StatCard label="Total bookings"    value={totalBookings} />
         <StatCard label="Unique clients"    value={uniqueClients} />
@@ -262,7 +258,6 @@ export default function ClientStats({ orgId, timeRange }: { orgId: string; timeR
         <StatCard label="Private bookings"  value={`${privatePct}%`} sub={`${privateCount} of ${totalBookings}`} />
       </div>
 
-      {/* Activity + Cert level donuts */}
       <div className="grid grid-cols-2 gap-6">
         {activityData.length > 0 && (
           <DonutCard title="Bookings by activity" data={activityData} total={totalBookings} />
@@ -272,7 +267,6 @@ export default function ClientStats({ orgId, timeRange }: { orgId: string; timeR
         )}
       </div>
 
-      {/* Monthly bookings trend */}
       {monthlyData.length > 1 && (
         <div className="bg-white rounded-xl border border-slate-200 p-6">
           <h2 className="text-sm font-semibold text-slate-700 mb-6">Monthly bookings</h2>
@@ -287,7 +281,6 @@ export default function ClientStats({ orgId, timeRange }: { orgId: string; timeR
         </div>
       )}
 
-      {/* Course enrollments */}
       {courseData.length > 0 && (
         <div className="bg-white rounded-xl border border-slate-200 p-6">
           <h2 className="text-sm font-semibold text-slate-700 mb-6">Course enrollments</h2>

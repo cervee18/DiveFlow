@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useMemo } from 'react';
+import useSWR from 'swr';
 import { createClient } from '@/utils/supabase/client';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
@@ -46,6 +47,35 @@ function colorFor(_name: string, index: number) {
   return PALETTE[index % PALETTE.length];
 }
 
+// ─── Fetchers ─────────────────────────────────────────────────────────────────
+
+async function fetchBootstrap([, orgId]: [string, string]) {
+  const supabase = createClient();
+  const [{ data: staff }, { data: activities }] = await Promise.all([
+    supabase.from('staff').select('id, first_name, last_name')
+      .eq('organization_id', orgId).order('first_name', { ascending: true }),
+    supabase.from('activities').select('id, name'),
+  ]);
+  const activityMap: Record<string, string> = {};
+  for (const a of activities ?? []) activityMap[a.id] = a.name;
+  return { staffList: (staff ?? []) as StaffMember[], activityMap };
+}
+
+async function fetchJobs([, orgId, timeRange, staffId]: [string, string, TimeRange, string]) {
+  const supabase = createClient();
+  let q = supabase
+    .from('staff_daily_job')
+    .select('*, job_types(name, color)')
+    .eq('staff_id', staffId)
+    .eq('organization_id', orgId)
+    .order('job_date', { ascending: true });
+  const from = fromDateFor(timeRange);
+  if (from) q = q.gte('job_date', from);
+  const { data, error } = await q;
+  if (error) throw error;
+  return (data ?? []) as RawJob[];
+}
+
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
 function StatCard({ label, value }: { label: string; value: number | string }) {
@@ -60,54 +90,20 @@ function StatCard({ label, value }: { label: string; value: number | string }) {
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function StaffStats({ orgId, timeRange }: { orgId: string; timeRange: TimeRange }) {
-  const supabase = createClient();
-
-  const [staffList,     setStaffList]     = useState<StaffMember[]>([]);
-  const [activityMap,   setActivityMap]   = useState<Record<string, string>>({});
   const [selectedStaff, setSelectedStaff] = useState<string>('');
-  const [jobs,          setJobs]          = useState<RawJob[]>([]);
-  const [loading,       setLoading]       = useState(false);
 
-  // ── Bootstrap ──────────────────────────────────────────────────────────────
-  useEffect(() => {
-    async function init() {
-      const { data: staff } = await supabase
-        .from('staff')
-        .select('id, first_name, last_name')
-        .eq('organization_id', orgId)
-        .order('first_name', { ascending: true });
-      if (staff) setStaffList(staff);
+  const { data: bootstrap } = useSWR(
+    ['staff-bootstrap', orgId],
+    fetchBootstrap
+  );
 
-      const { data: activities } = await supabase.from('activities').select('id, name');
-      if (activities) {
-        const map: Record<string, string> = {};
-        for (const a of activities) map[a.id] = a.name;
-        setActivityMap(map);
-      }
-    }
-    init();
-  }, [orgId, supabase]);
+  const { data: jobs = [], isLoading } = useSWR(
+    selectedStaff ? ['staff-jobs', orgId, timeRange, selectedStaff] : null,
+    fetchJobs
+  );
 
-  // ── Fetch jobs ──────────────────────────────────────────────────────────────
-  useEffect(() => {
-    if (!selectedStaff) { setJobs([]); return; }
-    async function load() {
-      setLoading(true);
-      let q = supabase
-        .from('staff_daily_job')
-        .select('*, job_types(name, color)')
-        .eq('staff_id', selectedStaff)
-        .eq('organization_id', orgId)
-        .order('job_date', { ascending: true });
-      const from = fromDateFor(timeRange);
-      if (from) q = q.gte('job_date', from);
-      const { data, error } = await q;
-      if (error) console.error('StaffStats fetch error:', error);
-      setJobs((data as RawJob[]) ?? []);
-      setLoading(false);
-    }
-    load();
-  }, [orgId, selectedStaff, timeRange, supabase]);
+  const staffList  = bootstrap?.staffList  ?? [];
+  const activityMap = bootstrap?.activityMap ?? {};
 
   // ── Derived stats ──────────────────────────────────────────────────────────
   const activeJobs = useMemo(
@@ -205,11 +201,11 @@ export default function StaffStats({ orgId, timeRange }: { orgId: string; timeRa
         </div>
       )}
 
-      {selectedStaff && loading && (
+      {selectedStaff && isLoading && (
         <div className="text-sm text-slate-400 py-10 text-center">Loading…</div>
       )}
 
-      {selectedStaff && !loading && (
+      {selectedStaff && !isLoading && (
         <div className="space-y-6">
 
           <div className="grid grid-cols-3 gap-4">
