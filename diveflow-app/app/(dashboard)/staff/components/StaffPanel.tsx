@@ -57,7 +57,7 @@ export default function StaffPanel({ staff, selectedIds, unassignedIds = [], onT
       </div>
 
       {/* Staff list */}
-      <div className="flex-1 overflow-y-auto min-h-0 p-3 grid grid-cols-2 gap-1 content-start">
+      <div className="flex-1 overflow-y-auto min-h-0 p-3 grid grid-cols-1 sm:grid-cols-2 gap-1 content-start">
         {staff.length === 0 ? (
           <p className="text-xs text-slate-400 italic text-center pt-8 col-span-2">No staff found</p>
         ) : (
@@ -68,7 +68,7 @@ export default function StaffPanel({ staff, selectedIds, unassignedIds = [], onT
               <button
                 key={member.id}
                 onClick={() => onToggle(member.id)}
-                className={`w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-left transition-all ${
+                className={`w-full flex items-center gap-2.5 px-2.5 py-2 sm:px-2.5 justify-center sm:justify-start rounded-lg text-left transition-all ${
                   isSelected
                     ? 'bg-teal-50 border border-teal-300 ring-1 ring-teal-200'
                     : isUnassigned
@@ -85,7 +85,7 @@ export default function StaffPanel({ staff, selectedIds, unassignedIds = [], onT
                   {memberInitials(member)}
                 </span>
                 {/* Name */}
-                <span className={`text-xs font-medium truncate ${
+                <span className={`hidden sm:inline text-xs font-medium truncate ${
                   isSelected   ? 'text-teal-700'
                   : isUnassigned ? 'text-amber-800'
                   : 'text-slate-600'

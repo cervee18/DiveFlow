@@ -51,13 +51,13 @@ export default function ClientTopBar({
   };
 
   return (
-    <div className="flex justify-between items-start gap-8 z-20 shrink-0">
-      <div>
+    <div className="flex flex-wrap sm:flex-nowrap items-start gap-3 sm:gap-8 z-20 shrink-0">
+      <div className="flex-shrink-0">
         <h1 className="text-2xl font-semibold text-slate-800">Client Directory</h1>
         <p className="text-sm text-slate-500 mt-1">Search, edit, and manage diver profiles.</p>
       </div>
 
-      <div className="flex-1 max-w-2xl relative" ref={searchRef}>
+      <div className="flex-1 order-3 sm:order-2 w-full sm:w-auto min-w-0 relative" ref={searchRef}>
         <div className="relative">
           <input
             type="text"
@@ -102,9 +102,9 @@ export default function ClientTopBar({
         )}
       </div>
 
-      <button 
+      <button
         onClick={onOpenAddModal}
-        className="bg-teal-600 hover:bg-teal-700 text-white px-5 py-3 rounded-lg text-sm font-medium shadow-sm flex-shrink-0 transition-colors"
+        className="bg-teal-600 hover:bg-teal-700 text-white px-5 py-3 rounded-lg text-sm font-medium shadow-sm flex-shrink-0 transition-colors order-2 sm:order-3 ml-auto sm:ml-0"
       >
         + New Client
       </button>

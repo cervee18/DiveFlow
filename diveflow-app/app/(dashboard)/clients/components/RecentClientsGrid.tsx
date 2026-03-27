@@ -6,7 +6,7 @@ interface RecentClientsGridProps {
 
 export default function RecentClientsGrid({ recentClients, certLevels, onSelectClient }: RecentClientsGridProps) {
   return (
-    <div className="overflow-y-auto pb-8">
+    <div className="hidden sm:block overflow-y-auto pb-8">
       <h2 className="text-sm font-semibold text-slate-500 uppercase tracking-wider mb-4">Recently Added Divers</h2>
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {recentClients.map(client => (

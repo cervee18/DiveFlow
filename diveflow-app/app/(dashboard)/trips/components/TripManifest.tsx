@@ -825,7 +825,7 @@ export default function TripManifest({
           <thead>
             <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 font-bold uppercase tracking-tighter">
               <th className="p-0 sticky left-0 z-20 bg-slate-50" style={{ width: '10px' }} />
-              <th className="px-3 py-3 border-r sticky left-[10px] bg-slate-50 z-20 shadow-[1px_0_0_0_#e2e8f0]">Diver Name</th>
+              <th className="px-3 py-3 border-r sticky left-[10px] bg-slate-50 z-20 shadow-[1px_0_0_0_#e2e8f0]" style={{ width: '130px', minWidth: '100px', maxWidth: '130px' }}>Diver Name</th>
               <th className="px-2 py-3 text-center" title="Waiver">
                 <svg className="w-3.5 h-3.5 mx-auto text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
               </th>
@@ -905,11 +905,11 @@ export default function TripManifest({
                       )}
                     </td>
 
-                    <td className={`px-3 py-2 font-bold text-slate-900 border-r sticky left-[10px] z-10 shadow-[1px_0_0_0_#e2e8f0] ${isModified ? 'bg-amber-50' : 'bg-white'}`}>
-                      <div className="flex items-center justify-between gap-2">
+                    <td className={`px-3 py-2 font-bold text-slate-900 border-r sticky left-[10px] z-10 shadow-[1px_0_0_0_#e2e8f0] ${isModified ? 'bg-amber-50' : 'bg-white'}`} style={{ maxWidth: '130px' }}>
+                      <div className="flex items-center justify-between gap-2 min-w-0">
                         <Link
                           href={`/clients?clientId=${diver.client_id}`}
-                          className="hover:text-teal-600 hover:underline transition-colors"
+                          className="hover:text-teal-600 hover:underline transition-colors truncate flex-1 min-w-0"
                         >
                           {diver.clients?.first_name} {diver.clients?.last_name}
                         </Link>
