@@ -61,7 +61,7 @@ export default function StaffPage() {
       const [jobTypesRes, staffRes] = await Promise.all([
         supabase
           .from('job_types')
-          .select('id, name, sort_order')
+          .select('id, name, sort_order, organization_id')
           .or(`organization_id.eq.${userOrgId},organization_id.is.null`)
           .order('sort_order'),
         supabase
@@ -179,7 +179,7 @@ export default function StaffPage() {
         const activityMap = new Map<string, string>();
         for (const tc of t.trip_clients ?? []) {
           if (tc.activity_id && tc.activities) {
-            activityMap.set(tc.activity_id, tc.activities.name);
+            activityMap.set(tc.activity_id, (tc.activities as any)?.name ?? '');
           }
         }
         return {
@@ -227,7 +227,7 @@ export default function StaffPage() {
     if (!userOrgId || selectedStaffIds.length === 0) return;
 
     const trip = trips.find(t => t.id === tripId);
-    const existingIds = new Set(
+    const existingIds = new Set<string>(
       (trip?.trip_staff ?? [])
         .filter((ts: any) => !ts.activity_id)
         .map((ts: any) => ts.staff_id)
@@ -244,7 +244,7 @@ export default function StaffPage() {
     const remainingIds = [...existingIds].filter(id => !toRemove.includes(id));
     const tripIsEmpty  = remainingIds.length === 0;
 
-    const ops: Promise<any>[] = [];
+    const ops: PromiseLike<any>[] = [];
 
     if (toAdd.length > 0) {
       ops.push(supabase.from('trip_staff').insert(
@@ -312,7 +312,7 @@ export default function StaffPage() {
     const toAdd    = selectedStaffIds.filter(id => !existingStaffIds.has(id));
     const toRemove = relevantJobs.filter((j: any) => selectedStaffIds.includes(j.staff_id));
 
-    const ops: Promise<any>[] = [];
+    const ops: PromiseLike<any>[] = [];
     if (toAdd.length > 0) {
       ops.push(supabase.from('staff_daily_job').insert(
         toAdd.map(staff_id => ({
@@ -362,7 +362,7 @@ export default function StaffPage() {
     const actName   = trip?.activities?.find((a: any) => a.id === activityId)?.name ?? '';
     const actJobId  = jobTypeId(actName) ?? jobTypeId('Course') ?? jobTypeId('Crew');
 
-    const ops: Promise<any>[] = [];
+    const ops: PromiseLike<any>[] = [];
 
     if (toAdd.length > 0) {
       ops.push(supabase.from('trip_staff').insert(
@@ -443,7 +443,7 @@ export default function StaffPage() {
     const half = halfDayOf(trip?.start_time);
     const crewId = jobTypeId('Crew');
 
-    const ops: Promise<any>[] = [
+    const ops: PromiseLike<any>[] = [
       supabase.from('trip_staff').delete().eq('id', tripStaffId),
     ];
     // Remove the activity-specific sdj row
@@ -486,7 +486,7 @@ export default function StaffPage() {
     const rows = dailyJobs.filter(
       j => j.job_type_id === jobTypeId && j.staff_id === staffId && j['AM/PM'] === halfDay
     );
-    const ops: Promise<any>[] = rows.map(j =>
+    const ops: PromiseLike<any>[] = rows.map(j =>
       supabase.from('staff_daily_job').delete().eq('id', j.id)
     );
     for (const j of rows) {

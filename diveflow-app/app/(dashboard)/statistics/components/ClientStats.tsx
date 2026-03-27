@@ -106,7 +106,7 @@ async function fetchClientStats([, orgId, timeRange]: [string, string, TimeRange
   if (from) q = q.gte('start_time', from + 'T00:00:00');
   const { data, error } = await q;
   if (error) throw error;
-  return (data ?? []) as RawTrip[];
+  return (data ?? []) as unknown as RawTrip[];
 }
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
@@ -136,8 +136,8 @@ function DonutCard({ title, data, total }: {
               innerRadius={55} outerRadius={88} paddingAngle={2}>
               {data.map((e, i) => <Cell key={e.name} fill={colorFor(e.name, i)} />)}
             </Pie>
-            <Tooltip formatter={(v: number, _key: string, props: { payload: { name: string } }) =>
-              [`${v} (${((v / total) * 100).toFixed(1)}%)`, props.payload.name]
+            <Tooltip formatter={(v: any, _key: any, props: any) =>
+              [`${v ?? 0} (${(((v ?? 0) / total) * 100).toFixed(1)}%)`, props?.payload?.name ?? '']
             } />
           </PieChart>
         </ResponsiveContainer>

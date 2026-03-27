@@ -223,7 +223,7 @@ export default function StaffStats({ orgId, timeRange }: { orgId: string; timeRa
                     <Pie data={jobTypeData} dataKey="count" nameKey="name" cx="50%" cy="50%" innerRadius={60} outerRadius={95} paddingAngle={2}>
                       {jobTypeData.map((entry, i) => <Cell key={entry.name} fill={colorFor(entry.name, i)} />)}
                     </Pie>
-                    <Tooltip formatter={(value: number) => [`${value} (${((value / halfDays) * 100).toFixed(1)}%)`, 'Half-days']} />
+                    <Tooltip formatter={(value: any) => [`${value ?? 0} (${(((value ?? 0) / halfDays) * 100).toFixed(1)}%)`, 'Half-days']} />
                   </PieChart>
                 </ResponsiveContainer>
                 <ul className="flex flex-col gap-2">

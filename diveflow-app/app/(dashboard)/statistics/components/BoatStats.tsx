@@ -69,7 +69,7 @@ async function fetchTrips([, orgId, timeRange, vesselId]: [string, string, TimeR
   if (from) q = q.gte('start_time', from + 'T00:00:00');
   const { data, error } = await q;
   if (error) throw error;
-  return (data ?? []) as RawTrip[];
+  return (data ?? []) as unknown as RawTrip[];
 }
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
@@ -214,8 +214,8 @@ export default function BoatStats({ orgId, timeRange }: { orgId: string; timeRan
                     >
                       {tripTypeData.map((entry, i) => <Cell key={entry.name} fill={colorFor(entry.name, i)} />)}
                     </Pie>
-                    <Tooltip formatter={(value: number, _key: string, props: { payload: { name: string } }) =>
-                      [`${value} (${((value / totalTrips) * 100).toFixed(1)}%)`, props.payload.name]
+                    <Tooltip formatter={(value: any, _key: any, props: any) =>
+                      [`${value ?? 0} (${(((value ?? 0) / totalTrips) * 100).toFixed(1)}%)`, props?.payload?.name ?? '']
                     } />
                   </PieChart>
                 </ResponsiveContainer>
@@ -258,7 +258,7 @@ export default function BoatStats({ orgId, timeRange }: { orgId: string; timeRan
                     <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
                     <XAxis dataKey="month" tick={{ fontSize: 11 }} />
                     <YAxis domain={[0, 100]} tickFormatter={v => `${v}%`} tick={{ fontSize: 11 }} />
-                    <Tooltip formatter={(v: number) => [`${v}%`, 'Occupancy']} />
+                    <Tooltip formatter={(v: any) => [`${v ?? 0}%`, 'Occupancy']} />
                     <Line type="monotone" dataKey="occupancy" stroke="#14b8a6" strokeWidth={2} dot={{ r: 3 }} />
                   </LineChart>
                 </ResponsiveContainer>
