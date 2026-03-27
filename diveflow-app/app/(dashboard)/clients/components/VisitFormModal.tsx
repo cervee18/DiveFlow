@@ -183,8 +183,8 @@ export default function VisitFormModal({
 
     // Process Companions if we have a valid visit ID
     if (targetVisitId) {
-      const companionsToAdd = selectedCompanions.filter(c => !initialCompanions.some(ic => ic.id === c.id));
-      const companionsToRemove = initialCompanions.filter(ic => !selectedCompanions.some(c => c.id === ic.id));
+      const companionsToAdd = selectedCompanions.filter(c => !initialCompanions.some((ic: { id: string }) => ic.id === c.id));
+      const companionsToRemove = initialCompanions.filter((ic: { id: string }) => !selectedCompanions.some(c => c.id === ic.id));
 
       if (companionsToAdd.length > 0) {
         const inserts = companionsToAdd.map(c => ({
