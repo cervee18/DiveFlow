@@ -196,7 +196,7 @@ export default function VisitFormModal({
       }
 
       if (companionsToRemove.length > 0) {
-        const removeIds = companionsToRemove.map(c => c.id);
+        const removeIds = companionsToRemove.map((c: { id: string }) => c.id);
         await supabase.from("visit_clients")
           .delete()
           .eq("visit_id", targetVisitId)
