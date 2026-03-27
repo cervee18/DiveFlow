@@ -174,7 +174,7 @@ export default function OverviewBoard({
                                 <span className="text-[8px] font-bold uppercase tracking-wider text-slate-300">Morning</span>
                                 {!selectionMode && onAddTrip && (
                                   <button type="button" onClick={() => onAddTrip(day, '07:45')}
-                                    className="opacity-0 group-hover/col:opacity-100 transition-opacity w-3.5 h-3.5 hidden sm:flex items-center justify-center rounded text-slate-400 hover:text-teal-600 hover:bg-teal-50">
+                                    className="opacity-0 group-hover/col:opacity-100 transition-opacity w-3.5 h-3.5 hidden md:flex items-center justify-center rounded text-slate-400 hover:text-teal-600 hover:bg-teal-50">
                                     <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" /></svg>
                                   </button>
                                 )}
@@ -202,7 +202,7 @@ export default function OverviewBoard({
                                 <span className="text-[8px] font-bold uppercase tracking-wider text-slate-300">Afternoon</span>
                                 {!selectionMode && onAddTrip && (
                                   <button type="button" onClick={() => onAddTrip(day, '13:00')}
-                                    className="opacity-0 group-hover/col:opacity-100 transition-opacity w-3.5 h-3.5 hidden sm:flex items-center justify-center rounded text-slate-400 hover:text-teal-600 hover:bg-teal-50">
+                                    className="opacity-0 group-hover/col:opacity-100 transition-opacity w-3.5 h-3.5 hidden md:flex items-center justify-center rounded text-slate-400 hover:text-teal-600 hover:bg-teal-50">
                                     <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" /></svg>
                                   </button>
                                 )}
@@ -230,7 +230,7 @@ export default function OverviewBoard({
                                 <span className="text-[8px] font-bold uppercase tracking-wider text-slate-300">Night</span>
                                 {!selectionMode && onAddTrip && (
                                   <button type="button" onClick={() => onAddTrip(day, '18:30')}
-                                    className="opacity-0 group-hover/col:opacity-100 transition-opacity w-3.5 h-3.5 hidden sm:flex items-center justify-center rounded text-slate-400 hover:text-teal-600 hover:bg-teal-50">
+                                    className="opacity-0 group-hover/col:opacity-100 transition-opacity w-3.5 h-3.5 hidden md:flex items-center justify-center rounded text-slate-400 hover:text-teal-600 hover:bg-teal-50">
                                     <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" /></svg>
                                   </button>
                                 )}

@@ -25,10 +25,10 @@ export default function StaffPanel({ staff, selectedIds, unassignedIds = [], onT
   const unassignedCount = unassignedIds.length;
 
   return (
-    <div className="w-[332px] shrink-0 flex flex-col border-l border-slate-200 bg-white">
+    <div className="w-12 sm:w-[332px] shrink-0 flex flex-col border-l border-slate-200 bg-white">
       {/* Header */}
-      <div className="shrink-0 px-4 py-4 border-b border-slate-200 bg-slate-50">
-        <div className="flex items-center justify-between">
+      <div className="shrink-0 px-1 sm:px-4 py-2 sm:py-4 border-b border-slate-200 bg-slate-50">
+        <div className="hidden sm:flex items-center justify-between">
           <div className="flex items-center gap-2">
             <h2 className="text-sm font-bold text-slate-700">Staff</h2>
             {unassignedCount > 0 && !hasSelection && (
@@ -50,14 +50,14 @@ export default function StaffPanel({ staff, selectedIds, unassignedIds = [], onT
           )}
         </div>
         {hasSelection && (
-          <p className="text-[11px] text-teal-600 font-medium mt-1">
+          <p className="hidden sm:block text-[11px] text-teal-600 font-medium mt-1">
             {selectedIds.length} selected — click a trip to assign
           </p>
         )}
       </div>
 
       {/* Staff list */}
-      <div className="flex-1 overflow-y-auto min-h-0 p-3 grid grid-cols-1 sm:grid-cols-2 gap-1 content-start">
+      <div className="flex-1 overflow-y-auto min-h-0 p-1 sm:p-3 grid grid-cols-1 sm:grid-cols-2 gap-1 content-start">
         {staff.length === 0 ? (
           <p className="text-xs text-slate-400 italic text-center pt-8 col-span-2">No staff found</p>
         ) : (
@@ -68,7 +68,7 @@ export default function StaffPanel({ staff, selectedIds, unassignedIds = [], onT
               <button
                 key={member.id}
                 onClick={() => onToggle(member.id)}
-                className={`w-full flex items-center gap-2.5 px-2.5 py-2 sm:px-2.5 justify-center sm:justify-start rounded-lg text-left transition-all ${
+                className={`w-full flex items-center gap-2.5 px-1 sm:px-2.5 py-2 justify-center sm:justify-start rounded-lg text-left transition-all ${
                   isSelected
                     ? 'bg-teal-50 border border-teal-300 ring-1 ring-teal-200'
                     : isUnassigned
@@ -100,7 +100,7 @@ export default function StaffPanel({ staff, selectedIds, unassignedIds = [], onT
 
       {/* Bottom hint */}
       {!hasSelection && (
-        <div className="shrink-0 px-4 py-3 border-t border-slate-100">
+        <div className="hidden sm:block shrink-0 px-4 py-3 border-t border-slate-100">
           <p className="text-[11px] text-slate-400 text-center leading-snug">
             Select staff members,<br />then click a trip card
           </p>
