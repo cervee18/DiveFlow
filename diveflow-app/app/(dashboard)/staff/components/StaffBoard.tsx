@@ -19,11 +19,14 @@ interface StaffBoardProps {
   isLoading: boolean;
   selectedDate: string;
   selectedStaffIds: string[];
-  onTripAssign: (tripId: string) => void;
+  selectedTripIds: string[];
+  selectedActivityKeys: { tripId: string; activityId: string }[];
+  selectedJobKeys: { jobTypeId: string; halfDay: 'AM' | 'PM' }[];
+  onToggleTripSelection: (tripId: string) => void;
+  onToggleActivitySelection: (tripId: string, activityId: string) => void;
+  onToggleJobSelection: (jobTypeId: string, halfDay: 'AM' | 'PM') => void;
   onRemoveStaff: (tripId: string, staffId: string) => void;
-  onJobAssign: (jobTypeId: string, halfDay: 'AM' | 'PM') => void;
   onRemoveFromJob: (jobTypeId: string, staffId: string, halfDay: 'AM' | 'PM') => void;
-  onActivityAssign: (tripId: string, activityId: string) => void;
   onRemoveActivityStaff: (tripStaffId: string, tripId: string, staffId: string) => void;
   onAssignCaptain: (tripId: string, staffId: string) => void;
   onOpenTrip?: (tripId: string) => void;
@@ -40,20 +43,20 @@ function JobCard({
   assignments,
   halfDay,
   assignMode,
+  isSelectedAsTarget,
   selectedStaffIds,
-  onAssign,
+  onToggle,
   onRemoveFromJob,
 }: {
   jobType: JobType;
   assignments: DailyJob[];
   halfDay: 'AM' | 'PM';
   assignMode: boolean;
+  isSelectedAsTarget: boolean;
   selectedStaffIds: string[];
-  onAssign: () => void;
+  onToggle: () => void;
   onRemoveFromJob: (jobTypeId: string, staffId: string, halfDay: 'AM' | 'PM') => void;
 }) {
-  // Deduplicate by staff_id — same person on two trips in same half-day
-  // creates multiple rows but appears once in the card.
   const seen = new Set<string>();
   const uniqueAssignments = assignments.filter(j => {
     if (seen.has(j.staff_id)) return false;
@@ -62,15 +65,17 @@ function JobCard({
   });
 
   const assignedStaffIds = new Set(assignments.map(j => j.staff_id));
-  const willAdd    = selectedStaffIds.filter(id => !assignedStaffIds.has(id));
-  const willRemove = selectedStaffIds.filter(id =>  assignedStaffIds.has(id));
-  const showDivider = uniqueAssignments.length > 0 || (assignMode && willAdd.length > 0);
+  const willAdd    = isSelectedAsTarget ? selectedStaffIds.filter(id => !assignedStaffIds.has(id)) : [];
+  const willRemove = isSelectedAsTarget ? selectedStaffIds.filter(id =>  assignedStaffIds.has(id)) : [];
+  const showDivider = uniqueAssignments.length > 0 || willAdd.length > 0;
 
   return (
     <div
-      onClick={assignMode ? onAssign : undefined}
+      onClick={assignMode ? onToggle : undefined}
       className={`flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-100 border transition-all ${
-        assignMode
+        isSelectedAsTarget
+          ? 'border-teal-400 ring-2 ring-teal-100 cursor-pointer'
+          : assignMode
           ? 'border-slate-300 hover:border-teal-400 hover:ring-2 hover:ring-teal-100 cursor-pointer'
           : 'border-slate-200'
       }`}
@@ -89,7 +94,7 @@ function JobCard({
         )}
 
         {uniqueAssignments.map(job => {
-          const isWillRemove = assignMode && willRemove.includes(job.staff_id);
+          const isWillRemove = willRemove.includes(job.staff_id);
           const initials = memberInitials(job.staff);
           return (
             <button
@@ -109,7 +114,7 @@ function JobCard({
         })}
 
         {/* Preview: staff that will be added */}
-        {assignMode && willAdd.length > 0 && (
+        {willAdd.length > 0 && (
           <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-teal-500 text-white text-[10px] font-bold leading-none ring-1 ring-teal-400">
             +{willAdd.length}
           </span>
@@ -128,11 +133,14 @@ function Column({
   isLoading,
   selectedDate,
   selectedStaffIds,
-  onTripAssign,
+  selectedTripIds,
+  selectedActivityKeys,
+  selectedJobKeys,
+  onToggleTripSelection,
+  onToggleActivitySelection,
+  onToggleJobSelection,
   onRemoveStaff,
-  onJobAssign,
   onRemoveFromJob,
-  onActivityAssign,
   onRemoveActivityStaff,
   onAssignCaptain,
   onOpenTrip,
@@ -145,27 +153,26 @@ function Column({
   isLoading: boolean;
   selectedDate: string;
   selectedStaffIds: string[];
-  onTripAssign: (tripId: string) => void;
+  selectedTripIds: string[];
+  selectedActivityKeys: { tripId: string; activityId: string }[];
+  selectedJobKeys: { jobTypeId: string; halfDay: 'AM' | 'PM' }[];
+  onToggleTripSelection: (tripId: string) => void;
+  onToggleActivitySelection: (tripId: string, activityId: string) => void;
+  onToggleJobSelection: (jobTypeId: string, halfDay: 'AM' | 'PM') => void;
   onRemoveStaff: (tripId: string, staffId: string) => void;
-  onJobAssign: (jobTypeId: string, halfDay: 'AM' | 'PM') => void;
   onRemoveFromJob: (jobTypeId: string, staffId: string, halfDay: 'AM' | 'PM') => void;
-  onActivityAssign: (tripId: string, activityId: string) => void;
   onRemoveActivityStaff: (tripStaffId: string, tripId: string, staffId: string) => void;
   onAssignCaptain: (tripId: string, staffId: string) => void;
   onOpenTrip?: (tripId: string) => void;
 }) {
-  // Group job assignments by job_type_id
   const byType: Record<string, DailyJob[]> = {};
   for (const job of jobAssignments) {
     if (!byType[job.job_type_id]) byType[job.job_type_id] = [];
     byType[job.job_type_id].push(job);
   }
 
-  // Captain job type id — used to compute per-trip captain sets
   const captainJtId = jobTypes.find(jt => jt.name === 'Captain')?.id;
 
-  // These job types are either auto-synced from trips or auto-generated —
-  // they should not appear as manual assignment cards in the grid.
   const TRIP_ONLY_JOBS = new Set(['Captain', 'Private', 'Course', 'Crew', 'Unassigned']);
   const gridJobTypes = jobTypes.filter(jt => !TRIP_ONLY_JOBS.has(jt.name));
 
@@ -206,8 +213,9 @@ function Column({
                     assignments={byType[jt.id] ?? []}
                     halfDay={halfDay}
                     assignMode={assignMode}
+                    isSelectedAsTarget={selectedJobKeys.some(k => k.jobTypeId === jt.id && k.halfDay === halfDay)}
                     selectedStaffIds={selectedStaffIds}
-                    onAssign={() => onJobAssign(jt.id, halfDay)}
+                    onToggle={() => onToggleJobSelection(jt.id, halfDay)}
                     onRemoveFromJob={onRemoveFromJob}
                   />
                 ))}
@@ -230,7 +238,6 @@ function Column({
             ) : (
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-2">
                 {trips.map(trip => {
-                  // Staff whose sdj row for this trip is Captain
                   const captainStaffIds = new Set(
                     captainJtId
                       ? jobAssignments
@@ -238,17 +245,25 @@ function Column({
                           .map(j => j.staff_id)
                       : []
                   );
+                  const isSelectedAsTarget = selectedTripIds.includes(trip.id);
+                  const selectedActivityIds = new Set(
+                    selectedActivityKeys
+                      .filter(k => k.tripId === trip.id)
+                      .map(k => k.activityId)
+                  );
                   return (
                     <StaffTripCard
                       key={trip.id}
                       trip={trip}
                       selectedDate={selectedDate}
                       assignMode={assignMode}
+                      isSelectedAsTarget={isSelectedAsTarget}
+                      selectedActivityIds={selectedActivityIds}
                       selectedStaffIds={selectedStaffIds}
                       captainStaffIds={captainStaffIds}
-                      onAssign={() => onTripAssign(trip.id)}
+                      onToggle={() => onToggleTripSelection(trip.id)}
                       onRemoveStaff={staffId => onRemoveStaff(trip.id, staffId)}
-                      onAssignActivity={activityId => onActivityAssign(trip.id, activityId)}
+                      onToggleActivity={activityId => onToggleActivitySelection(trip.id, activityId)}
                       onRemoveActivityStaff={onRemoveActivityStaff}
                       onAssignCaptain={staffId => onAssignCaptain(trip.id, staffId)}
                       onOpenTrip={onOpenTrip}
@@ -273,11 +288,14 @@ export default function StaffBoard({
   isLoading,
   selectedDate,
   selectedStaffIds,
-  onTripAssign,
+  selectedTripIds,
+  selectedActivityKeys,
+  selectedJobKeys,
+  onToggleTripSelection,
+  onToggleActivitySelection,
+  onToggleJobSelection,
   onRemoveStaff,
-  onJobAssign,
   onRemoveFromJob,
-  onActivityAssign,
   onRemoveActivityStaff,
   onAssignCaptain,
   onOpenTrip,
@@ -293,11 +311,14 @@ export default function StaffBoard({
         isLoading={isLoading}
         selectedDate={selectedDate}
         selectedStaffIds={selectedStaffIds}
-        onTripAssign={onTripAssign}
+        selectedTripIds={selectedTripIds}
+        selectedActivityKeys={selectedActivityKeys}
+        selectedJobKeys={selectedJobKeys}
+        onToggleTripSelection={onToggleTripSelection}
+        onToggleActivitySelection={onToggleActivitySelection}
+        onToggleJobSelection={onToggleJobSelection}
         onRemoveStaff={onRemoveStaff}
-        onJobAssign={onJobAssign}
         onRemoveFromJob={onRemoveFromJob}
-        onActivityAssign={onActivityAssign}
         onRemoveActivityStaff={onRemoveActivityStaff}
         onAssignCaptain={onAssignCaptain}
         onOpenTrip={onOpenTrip}
@@ -311,11 +332,14 @@ export default function StaffBoard({
         isLoading={isLoading}
         selectedDate={selectedDate}
         selectedStaffIds={selectedStaffIds}
-        onTripAssign={onTripAssign}
+        selectedTripIds={selectedTripIds}
+        selectedActivityKeys={selectedActivityKeys}
+        selectedJobKeys={selectedJobKeys}
+        onToggleTripSelection={onToggleTripSelection}
+        onToggleActivitySelection={onToggleActivitySelection}
+        onToggleJobSelection={onToggleJobSelection}
         onRemoveStaff={onRemoveStaff}
-        onJobAssign={onJobAssign}
         onRemoveFromJob={onRemoveFromJob}
-        onActivityAssign={onActivityAssign}
         onRemoveActivityStaff={onRemoveActivityStaff}
         onAssignCaptain={onAssignCaptain}
         onOpenTrip={onOpenTrip}

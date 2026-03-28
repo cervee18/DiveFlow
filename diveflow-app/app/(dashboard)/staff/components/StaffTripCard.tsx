@@ -33,14 +33,19 @@ interface StaffTripCardProps {
   trip: any;
   selectedDate: string;
   assignMode?: boolean;
+  /** The card body (generic assignment) is queued as a target */
+  isSelectedAsTarget?: boolean;
+  /** Activity IDs within this trip that are queued as targets */
+  selectedActivityIds?: Set<string>;
   selectedStaffIds?: string[];
   captainStaffIds?: Set<string>;
-  onAssign?: () => void;
+  /** Toggle this card as a generic assignment target */
+  onToggle?: () => void;
   onRemoveStaff?: (staffId: string) => void;
-  onAssignActivity?: (activityId: string) => void;
+  /** Toggle an activity as an assignment target */
+  onToggleActivity?: (activityId: string) => void;
   onRemoveActivityStaff?: (tripStaffId: string, tripId: string, staffId: string) => void;
   onAssignCaptain?: (staffId: string) => void;
-  /** When provided, clicking a card in non-assign mode opens the TripDrawer instead of navigating */
   onOpenTrip?: (tripId: string) => void;
 }
 
@@ -48,11 +53,13 @@ export default function StaffTripCard({
   trip,
   selectedDate,
   assignMode = false,
+  isSelectedAsTarget = false,
+  selectedActivityIds = new Set(),
   selectedStaffIds = [],
   captainStaffIds = new Set(),
-  onAssign,
+  onToggle,
   onRemoveStaff,
-  onAssignActivity,
+  onToggleActivity,
   onRemoveActivityStaff,
   onAssignCaptain,
   onOpenTrip,
@@ -75,7 +82,7 @@ export default function StaffTripCard({
   }
   const allTripStaff = Array.from(allTripStaffMap.values());
 
-  // Generic-only staff IDs (activity_id = null) — used for assign-mode preview
+  // Generic-only staff IDs (activity_id = null)
   const genericIds = new Set(
     (trip.trip_staff ?? [])
       .filter((ts: any) => !ts.activity_id)
@@ -93,15 +100,15 @@ export default function StaffTripCard({
     activityStaffMap[ts.activity_id].push({ tripStaffId: ts.id, staffId: ts.staff.id ?? ts.staff_id, initials });
   }
 
-  // Assign-mode preview for card-body click (generic assignment toggle)
-  const willAddToTrip      = selectedStaffIds.filter(id => !genericIds.has(id));
-  const willRemoveFromTrip = selectedStaffIds.filter(id =>  genericIds.has(id));
+  // Only show add/remove preview when this specific card is a selected target
+  const willAddToTrip      = isSelectedAsTarget ? selectedStaffIds.filter(id => !genericIds.has(id)) : [];
+  const willRemoveFromTrip = isSelectedAsTarget ? selectedStaffIds.filter(id =>  genericIds.has(id)) : [];
 
   const hasStaff = allTripStaff.length > 0;
 
   const handleClick = () => {
     if (captainMode) { setCaptainMode(false); return; }
-    if (assignMode) onAssign?.();
+    if (assignMode) onToggle?.();
     else if (onOpenTrip) onOpenTrip(trip.id);
     else router.push(`/trips?date=${selectedDate}&tripId=${trip.id}`);
   };
@@ -109,7 +116,7 @@ export default function StaffTripCard({
   const handleStaffChipClick = (e: React.MouseEvent, staffId: string, captainLicense: boolean) => {
     e.stopPropagation();
     if (captainMode) {
-      if (!captainLicense) return; // silently ignore — chip is visually disabled
+      if (!captainLicense) return;
       onAssignCaptain?.(staffId);
       setCaptainMode(false);
     } else {
@@ -122,10 +129,12 @@ export default function StaffTripCard({
       role="button"
       tabIndex={0}
       onClick={handleClick}
-      onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') handleClick(); }}
+      onKeyDown={e => { if (!assignMode && (e.key === 'Enter' || e.key === ' ')) handleClick(); }}
       className={`w-full text-left rounded-xl p-3 shadow-sm border transition-all cursor-pointer ${
         captainMode
           ? 'bg-white border-blue-400 ring-2 ring-blue-100'
+          : isSelectedAsTarget
+          ? 'bg-white border-teal-400 ring-2 ring-teal-100 shadow-md'
           : assignMode
           ? 'bg-white border-slate-200 hover:border-teal-400 hover:ring-2 hover:ring-teal-100 hover:shadow-md'
           : 'bg-white border-slate-200 hover:shadow-md hover:border-teal-300'
@@ -166,7 +175,7 @@ export default function StaffTripCard({
             )}
             {allTripStaff.map(s => {
               const isCaptain    = captainStaffIds.has(s.staffId);
-              const isWillRemove = !captainMode && assignMode && willRemoveFromTrip.includes(s.staffId);
+              const isWillRemove = !captainMode && willRemoveFromTrip.includes(s.staffId);
               const isDisabled   = captainMode && !s.captainLicense;
 
               let chipClass = '';
@@ -211,7 +220,7 @@ export default function StaffTripCard({
                 </button>
               );
             })}
-            {assignMode && willAddToTrip.length > 0 && (
+            {willAddToTrip.length > 0 && (
               <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-teal-500 text-white text-[10px] font-bold leading-none ring-1 ring-teal-400">
                 +{willAddToTrip.length}
               </span>
@@ -238,18 +247,21 @@ export default function StaffTripCard({
       {trip.activities?.length > 0 && (
         <div className="flex flex-col gap-1 mt-1.5">
           {trip.activities.map((activity: { id: string; name: string }) => {
-            const assigned = activityStaffMap[activity.id] ?? [];
+            const assigned   = activityStaffMap[activity.id] ?? [];
             const assignedIds = new Set(assigned.map(s => s.staffId));
-            const willAddToActivity    = assignMode ? selectedStaffIds.filter(id => !assignedIds.has(id)) : [];
-            const willRemoveFromActivity = assignMode ? assigned.filter(s => selectedStaffIds.includes(s.staffId)) : [];
+            const isActivityTarget = selectedActivityIds.has(activity.id);
+            const willAddToActivity    = isActivityTarget ? selectedStaffIds.filter(id => !assignedIds.has(id)) : [];
+            const willRemoveFromActivity = isActivityTarget ? assigned.filter(s => selectedStaffIds.includes(s.staffId)) : [];
 
             return (
               <div key={activity.id} className="flex items-center flex-wrap gap-1">
                 {/* Activity name chip — clickable in assign mode */}
                 <span
-                  onClick={assignMode ? e => { e.stopPropagation(); onAssignActivity?.(activity.id); } : undefined}
+                  onClick={assignMode ? e => { e.stopPropagation(); onToggleActivity?.(activity.id); } : undefined}
                   className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold leading-none transition-colors ${
-                    assignMode
+                    isActivityTarget
+                      ? 'bg-indigo-200 text-indigo-800 border border-indigo-400 cursor-pointer ring-1 ring-indigo-300'
+                      : assignMode
                       ? 'bg-indigo-100 text-indigo-700 border border-indigo-300 cursor-pointer hover:bg-indigo-200 hover:border-indigo-400'
                       : 'bg-indigo-50 text-indigo-600 border border-indigo-200'
                   }`}

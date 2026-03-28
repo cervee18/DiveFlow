@@ -11,8 +11,10 @@ interface StaffPanelProps {
   staff: StaffMember[];
   selectedIds: string[];
   unassignedIds?: string[];
+  selectedTargetCount?: number;
   onToggle: (id: string) => void;
-  onClear: () => void;
+  onCancel: () => void;
+  onSave: () => void;
 }
 
 function memberInitials(s: StaffMember): string {
@@ -20,8 +22,16 @@ function memberInitials(s: StaffMember): string {
   return `${s.first_name?.[0] ?? ''}${s.last_name?.[0] ?? ''}`.toUpperCase() || '?';
 }
 
-export default function StaffPanel({ staff, selectedIds, unassignedIds = [], onToggle, onClear }: StaffPanelProps) {
-  const hasSelection   = selectedIds.length > 0;
+export default function StaffPanel({
+  staff,
+  selectedIds,
+  unassignedIds = [],
+  selectedTargetCount = 0,
+  onToggle,
+  onCancel,
+  onSave,
+}: StaffPanelProps) {
+  const hasSelection    = selectedIds.length > 0;
   const unassignedCount = unassignedIds.length;
 
   return (
@@ -42,17 +52,31 @@ export default function StaffPanel({ staff, selectedIds, unassignedIds = [], onT
           </div>
           {hasSelection && (
             <button
-              onClick={onClear}
+              onClick={onCancel}
               className="text-[11px] font-semibold text-slate-400 hover:text-slate-600 transition-colors"
             >
-              Clear
+              Cancel
             </button>
           )}
         </div>
         {hasSelection && (
           <p className="hidden sm:block text-[11px] text-teal-600 font-medium mt-1">
-            {selectedIds.length} selected — click a trip to assign
+            {selectedIds.length} selected — click trips or jobs to queue
           </p>
+        )}
+        {hasSelection && (
+          <button
+            onClick={onSave}
+            className={`hidden sm:flex mt-2 w-full items-center justify-center gap-1.5 py-1.5 rounded-lg text-xs font-bold transition-colors ${
+              selectedTargetCount > 0
+                ? 'bg-teal-500 text-white hover:bg-teal-600'
+                : 'bg-slate-200 text-slate-500 hover:bg-slate-300'
+            }`}
+          >
+            {selectedTargetCount > 0
+              ? `Save assignments (${selectedTargetCount})`
+              : 'Save / Exit'}
+          </button>
         )}
       </div>
 
@@ -78,7 +102,7 @@ export default function StaffPanel({ staff, selectedIds, unassignedIds = [], onT
               >
                 {/* Initials chip */}
                 <span className={`inline-flex items-center justify-center w-7 h-7 rounded-full text-[11px] font-bold leading-none shrink-0 ${
-                  isSelected   ? 'bg-teal-500 text-white'
+                  isSelected    ? 'bg-teal-500 text-white'
                   : isUnassigned ? 'bg-amber-400 text-white'
                   : 'bg-slate-200 text-slate-600'
                 }`}>
@@ -86,7 +110,7 @@ export default function StaffPanel({ staff, selectedIds, unassignedIds = [], onT
                 </span>
                 {/* Name */}
                 <span className={`hidden sm:inline text-xs font-medium truncate ${
-                  isSelected   ? 'text-teal-700'
+                  isSelected    ? 'text-teal-700'
                   : isUnassigned ? 'text-amber-800'
                   : 'text-slate-600'
                 }`}>
@@ -102,7 +126,7 @@ export default function StaffPanel({ staff, selectedIds, unassignedIds = [], onT
       {!hasSelection && (
         <div className="hidden sm:block shrink-0 px-4 py-3 border-t border-slate-100">
           <p className="text-[11px] text-slate-400 text-center leading-snug">
-            Select staff members,<br />then click a trip card
+            Select staff, click trips or jobs,<br />then Save — or press Enter
           </p>
         </div>
       )}
