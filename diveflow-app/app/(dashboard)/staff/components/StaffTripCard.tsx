@@ -132,7 +132,7 @@ export default function StaffTripCard({
       }`}
     >
       {/* Type · Vessel · Label  +  generic staff chips on the right */}
-      <div className="flex items-start justify-between gap-2 mb-1.5">
+      <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-1.5 mb-1.5">
         <div className="flex items-center gap-1.5 flex-wrap min-w-0">
           {trip.trip_types?.name && (
             <span className="text-base font-bold text-slate-800 leading-none">
@@ -158,9 +158,9 @@ export default function StaffTripCard({
         </div>
 
         {/* Staff chips + Captain button */}
-        <div className="flex flex-col items-end gap-1 shrink-0">
+        <div className="flex flex-col items-start lg:items-end gap-1 shrink-0">
           {/* Staff chips */}
-          <div className="flex flex-wrap justify-end gap-1">
+          <div className="flex flex-wrap justify-start lg:justify-end gap-1">
             {allTripStaff.length === 0 && willAddToTrip.length === 0 && (
               <span className="text-[11px] text-slate-300 italic leading-none mt-0.5">—</span>
             )}

@@ -75,7 +75,7 @@ export default function ClientVisitHistory({
   };
 
   return (
-    <div className="w-6/12 bg-white rounded-xl shadow-sm border border-slate-200 h-full overflow-hidden flex flex-col">
+    <div className="w-full lg:w-6/12 bg-white rounded-xl shadow-sm border border-slate-200 h-[600px] lg:h-full overflow-hidden flex flex-col">
       <div className="p-5 border-b border-slate-100 flex justify-between items-center bg-slate-50/50 shrink-0">
         <h2 className="text-lg font-semibold text-slate-800">Visit History</h2>
         <button 

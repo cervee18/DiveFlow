@@ -805,7 +805,7 @@ export default function TripManifest({
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
               </svg>
-              Print
+              <span className="hidden lg:inline">Print</span>
             </button>
           )}
           <button
@@ -815,7 +815,7 @@ export default function TripManifest({
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
             </svg>
-            Add Diver
+            <span className="hidden lg:inline">Add Diver</span>
           </button>
         </div>
       </div>
@@ -915,7 +915,7 @@ export default function TripManifest({
                         </Link>
                         
                         {/* Row action buttons (appear on hover) */}
-                        <div className="flex items-center gap-0.5 opacity-0 group-hover/row:opacity-100 transition-opacity focus-within:opacity-100">
+                        <div className="flex items-center gap-0.5 opacity-100 lg:opacity-0 lg:group-hover/row:opacity-100 transition-opacity focus-within:opacity-100">
                           {/* Add to another trip */}
                           <button
                             onClick={() => {
@@ -1127,7 +1127,7 @@ export default function TripManifest({
                   <td className="px-3 py-2 border-r sticky left-[10px] bg-white z-10 shadow-[1px_0_0_0_#e2e8f0]">
                     <button
                       onClick={() => setIsAddModalOpen(true)}
-                      className="flex items-center gap-1.5 text-slate-300 hover:text-teal-600 transition-colors opacity-0 group-hover/empty:opacity-100 focus:opacity-100 text-[11px] font-semibold"
+                      className="flex items-center gap-1.5 text-slate-300 hover:text-teal-600 transition-colors opacity-100 lg:opacity-0 lg:group-hover/empty:opacity-100 focus:opacity-100 text-[11px] font-semibold"
                     >
                       <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />

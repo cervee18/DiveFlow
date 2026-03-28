@@ -53,7 +53,7 @@ export default function ClientProfileForm({
   };
 
   return (
-    <div className="w-6/12 bg-white rounded-xl shadow-sm border border-slate-200 flex flex-col h-full overflow-hidden">
+    <div className="w-full lg:w-6/12 bg-white rounded-xl shadow-sm border border-slate-200 flex flex-col h-auto lg:h-full overflow-hidden">
       <div className="p-5 border-b border-slate-100 flex justify-between items-center bg-slate-50/50 shrink-0">
         <h2 className="text-lg font-semibold text-slate-800 flex items-center gap-5 truncate">
           <span className="truncate">
@@ -75,8 +75,10 @@ export default function ClientProfileForm({
             </span>
           )}
         </h2>
-        <button onClick={onClose} className="text-sm text-slate-500 hover:text-slate-800 font-medium shrink-0">
-          Close
+        <button onClick={onClose} className="text-slate-400 hover:text-slate-700 transition-colors shrink-0">
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+          </svg>
         </button>
       </div>
       

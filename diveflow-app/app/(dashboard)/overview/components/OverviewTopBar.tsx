@@ -18,7 +18,7 @@ export default function OverviewTopBar({
   onTogglePanel,
 }: OverviewTopBarProps) {
   return (
-    <div className="px-6 py-4 flex items-center gap-6 shrink-0 border-b border-slate-200 bg-white">
+    <div className="px-4 lg:px-6 py-4 flex items-center gap-6 shrink-0 border-b border-slate-200 bg-white">
       {/* Title + subtitle */}
       <div className="flex-1">
         <h1 className="text-2xl font-semibold text-slate-800">Overview</h1>
@@ -33,7 +33,7 @@ export default function OverviewTopBar({
 
             <button
         onClick={onTogglePanel}
-        className={`hidden md:flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-lg border transition-colors ${
+        className={`hidden lg:flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-lg border transition-colors ${
           isPanelOpen
             ? 'bg-teal-600 text-white border-teal-600 hover:bg-teal-700'
             : 'bg-white text-slate-600 border-slate-300 hover:border-teal-400 hover:text-teal-600'

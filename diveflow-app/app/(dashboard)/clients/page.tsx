@@ -177,7 +177,7 @@ function ClientsContent() {
   };
 
   return (
-    <div className="p-8 max-w-7xl mx-auto w-full flex flex-col gap-8 h-[calc(100vh-4rem)] relative">
+    <div className="p-4 lg:p-8 max-w-7xl mx-auto w-full flex flex-col gap-8 h-auto lg:h-[calc(100vh-4rem)] overflow-y-auto lg:overflow-hidden relative">
       <ClientTopBar
         searchQuery={searchQuery}
         setSearchQuery={setSearchQuery}
@@ -196,7 +196,7 @@ function ClientsContent() {
           onSelectClient={handleSelectClient}
         />
       ) : (
-        <div className="flex gap-6 items-start flex-1 min-h-0">
+        <div className="flex flex-col lg:flex-row gap-6 items-start lg:flex-1 lg:min-h-0">
           <ClientProfileForm 
             selectedClient={selectedClient}
             certLevels={certLevels}

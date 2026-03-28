@@ -121,7 +121,6 @@ function JobCard({
 
 function Column({
   title,
-  subtitle,
   halfDay,
   trips,
   jobTypes,
@@ -139,7 +138,6 @@ function Column({
   onOpenTrip,
 }: {
   title: string;
-  subtitle: string;
   halfDay: 'AM' | 'PM';
   trips: any[];
   jobTypes: JobType[];
@@ -179,7 +177,6 @@ function Column({
       <div className="shrink-0 px-6 py-4 bg-slate-50 border-b border-slate-200">
         <div className="flex items-baseline gap-2">
           <h2 className="text-sm font-bold text-slate-700">{title}</h2>
-          <span className="text-xs text-slate-400">{subtitle}</span>
           {!isLoading && (
             <span className="ml-auto text-xs font-semibold px-1.5 py-0.5 rounded-full bg-slate-200 text-slate-500">
               {trips.length}
@@ -201,7 +198,7 @@ function Column({
           <>
             {/* Job type cards — 2-column grid */}
             {gridJobTypes.length > 0 && (
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-2">
                 {gridJobTypes.map(jt => (
                   <JobCard
                     key={jt.id}
@@ -231,7 +228,7 @@ function Column({
                 <span className="text-sm">No trips</span>
               </div>
             ) : (
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-2">
                 {trips.map(trip => {
                   // Staff whose sdj row for this trip is Captain
                   const captainStaffIds = new Set(
@@ -289,7 +286,6 @@ export default function StaffBoard({
     <div className="flex flex-1 min-h-0 overflow-hidden">
       <Column
         title="Morning"
-        subtitle="before 12:00"
         halfDay="AM"
         trips={morningTrips}
         jobTypes={jobTypes}
@@ -307,8 +303,7 @@ export default function StaffBoard({
         onOpenTrip={onOpenTrip}
       />
       <Column
-        title="Afternoon & Night"
-        subtitle="12:00 and later"
+        title="Afternoon"
         halfDay="PM"
         trips={afternoonTrips}
         jobTypes={jobTypes}

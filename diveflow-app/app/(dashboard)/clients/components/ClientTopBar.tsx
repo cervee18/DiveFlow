@@ -51,63 +51,70 @@ export default function ClientTopBar({
   };
 
   return (
-    <div className="flex flex-wrap sm:flex-nowrap items-start gap-3 sm:gap-8 z-20 shrink-0">
+    <div className="flex flex-col lg:flex-row lg:flex-nowrap lg:items-start gap-3 lg:gap-8 z-20 shrink-0">
+      {/* Title */}
       <div className="flex-shrink-0">
         <h1 className="text-2xl font-semibold text-slate-800">Client Directory</h1>
         <p className="text-sm text-slate-500 mt-1">Search, edit, and manage diver profiles.</p>
       </div>
 
-      <div className="flex-1 order-3 sm:order-2 w-full sm:w-auto min-w-0 relative" ref={searchRef}>
-        <div className="relative">
-          <input
-            type="text"
-            placeholder="Search by diver name or email..."
-            value={searchQuery}
-            onChange={handleInputChange}
-            onFocus={() => searchQuery.trim().length >= 2 && setShowDropdown(true)}
-            className="w-full px-4 py-3 pl-11 bg-white border border-slate-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-teal-500 text-slate-800"
-          />
-          <svg className="absolute left-4 top-3.5 h-5 w-5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-          </svg>
+      {/* Search + button — equal width on mobile, normal flow on desktop */}
+      <div className="flex gap-2 lg:flex-1 lg:gap-8 lg:items-start">
+
+        <div className="flex-[9] lg:flex-1 min-w-0 relative" ref={searchRef}>
+          <div className="relative">
+            <input
+              type="text"
+              placeholder="Search by diver name or email..."
+              value={searchQuery}
+              onChange={handleInputChange}
+              onFocus={() => searchQuery.trim().length >= 2 && setShowDropdown(true)}
+              className="w-full px-4 py-3 pl-11 bg-white border border-slate-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-teal-500 text-slate-800 placeholder:text-transparent lg:placeholder:text-slate-400"
+            />
+            <svg className="absolute left-4 top-3.5 h-5 w-5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
+          </div>
+
+          {showDropdown && (
+            <div className="absolute top-full mt-2 w-full bg-white border border-slate-200 rounded-lg shadow-lg overflow-hidden z-50">
+              {isSearching ? (
+                <div className="p-4 text-center text-sm text-slate-500">Searching...</div>
+              ) : searchResults.length === 0 ? (
+                <div className="p-4 text-center text-sm text-slate-500">No divers found.</div>
+              ) : (
+                <ul className="divide-y divide-slate-100 max-h-96 overflow-y-auto">
+                  {searchResults.map((client) => (
+                    <li key={client.id}>
+                      <button
+                        onClick={() => handleSelect(client)}
+                        className="w-full text-left px-4 py-3 hover:bg-teal-50 transition-colors flex justify-between items-center"
+                      >
+                        <div>
+                          <p className="text-sm font-medium text-slate-800">{client.first_name} {client.last_name}</p>
+                          <p className="text-xs text-slate-500">{client.email}</p>
+                        </div>
+                        <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
+                          {certLevels.find(c => c.id === client.cert_level)?.abbreviation || "No Cert"}
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
         </div>
 
-        {showDropdown && (
-          <div className="absolute top-full mt-2 w-full bg-white border border-slate-200 rounded-lg shadow-lg overflow-hidden z-50">
-            {isSearching ? (
-              <div className="p-4 text-center text-sm text-slate-500">Searching...</div>
-            ) : searchResults.length === 0 ? (
-              <div className="p-4 text-center text-sm text-slate-500">No divers found.</div>
-            ) : (
-              <ul className="divide-y divide-slate-100 max-h-96 overflow-y-auto">
-                {searchResults.map((client) => (
-                  <li key={client.id}>
-                    <button
-                      onClick={() => handleSelect(client)}
-                      className="w-full text-left px-4 py-3 hover:bg-teal-50 transition-colors flex justify-between items-center"
-                    >
-                      <div>
-                        <p className="text-sm font-medium text-slate-800">{client.first_name} {client.last_name}</p>
-                        <p className="text-xs text-slate-500">{client.email}</p>
-                      </div>
-                      <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
-                        {certLevels.find(c => c.id === client.cert_level)?.abbreviation || "No Cert"}
-                      </span>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-        )}
-      </div>
+        <button
+          onClick={onOpenAddModal}
+          className="flex-[1] lg:flex-none bg-teal-600 hover:bg-teal-700 text-white px-5 py-3 rounded-lg text-sm font-medium shadow-sm transition-colors whitespace-nowrap"
+        >
+          <span className="lg:hidden text-lg leading-none">+</span>
+          <span className="hidden lg:inline">+ New Client</span>
+        </button>
 
-      <button
-        onClick={onOpenAddModal}
-        className="bg-teal-600 hover:bg-teal-700 text-white px-5 py-3 rounded-lg text-sm font-medium shadow-sm flex-shrink-0 transition-colors order-2 sm:order-3 ml-auto sm:ml-0"
-      >
-        + New Client
-      </button>
+      </div>
     </div>
   );
 }
