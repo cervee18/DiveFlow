@@ -2815,9 +2815,36 @@ ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON TAB
 ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON TABLES TO "authenticated";
 ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON TABLES TO "service_role";
 
+-- Create an RPC to fetch users securely for the organization admin
+CREATE OR REPLACE FUNCTION public.get_organization_users()
+RETURNS TABLE (
+  id uuid,
+  email text,
+  first_name text,
+  last_name text,
+  role text,
+  created_at timestamptz
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, auth
+AS $$
+DECLARE
+  v_org_id uuid;
+  v_admin_role text;
+BEGIN
+  -- Grab caller's org and role
+  SELECT organization_id, role::text INTO v_org_id, v_admin_role
+  FROM public.profiles
+  WHERE id = auth.uid();
 
+  -- Auth guard: must be admin
+  IF v_admin_role != 'admin' THEN
+    RAISE EXCEPTION 'unauthorized';
+  END IF;
 
-
-
-
-
+  RETURN QUERY
+  SELECT 
+    p.id,
+END;
+$$;

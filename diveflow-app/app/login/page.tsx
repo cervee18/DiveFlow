@@ -30,6 +30,8 @@ export default async function LoginPage({
     const email = formData.get("email") as string;
     const password = formData.get("password") as string;
     const confirmPassword = formData.get("confirmPassword") as string;
+    const firstName = formData.get("firstName") as string;
+    const lastName = formData.get("lastName") as string;
 
     if (password !== confirmPassword) {
       return redirect("/login?mode=signup&message=Passwords do not match");
@@ -46,7 +48,11 @@ export default async function LoginPage({
       email, 
       password,
       options: {
-        emailRedirectTo: `${origin}/auth/callback`
+        emailRedirectTo: `${origin}/auth/callback`,
+        data: {
+          first_name: firstName,
+          last_name: lastName
+        }
       }
     });
 
@@ -97,18 +103,47 @@ export default async function LoginPage({
           </div>
 
           {isSignUp && (
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1" htmlFor="confirmPassword">
-                Confirm Password
-              </label>
-              <input
-                className="w-full px-4 py-2 border rounded-md bg-white border-slate-300 focus:outline-none focus:ring-2 focus:ring-teal-500"
-                type="password"
-                name="confirmPassword"
-                placeholder="••••••••"
-                required
-              />
-            </div>
+            <>
+              <div className="flex gap-4">
+                <div className="flex-1">
+                  <label className="block text-sm font-medium text-slate-700 mb-1" htmlFor="firstName">
+                    First Name
+                  </label>
+                  <input
+                    className="w-full px-4 py-2 border rounded-md bg-white border-slate-300 focus:outline-none focus:ring-2 focus:ring-teal-500"
+                    type="text"
+                    name="firstName"
+                    placeholder="Jane"
+                    required
+                  />
+                </div>
+                <div className="flex-1">
+                  <label className="block text-sm font-medium text-slate-700 mb-1" htmlFor="lastName">
+                    Last Name
+                  </label>
+                  <input
+                    className="w-full px-4 py-2 border rounded-md bg-white border-slate-300 focus:outline-none focus:ring-2 focus:ring-teal-500"
+                    type="text"
+                    name="lastName"
+                    placeholder="Doe"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1" htmlFor="confirmPassword">
+                  Confirm Password
+                </label>
+                <input
+                  className="w-full px-4 py-2 border rounded-md bg-white border-slate-300 focus:outline-none focus:ring-2 focus:ring-teal-500"
+                  type="password"
+                  name="confirmPassword"
+                  placeholder="••••••••"
+                  required
+                />
+              </div>
+            </>
           )}
 
           {message && (

@@ -9,7 +9,7 @@ import MobileNav from "@/app/(dashboard)/components/MobileNav";
 const STAFF_ONLY_PATHS = ['/overview', '/clients', '/trips', '/staff'];
 
 // Routes that require admin-level access only
-const ADMIN_ONLY_PATHS = ['/logs', '/statistics', '/inventory'];
+const ADMIN_ONLY_PATHS = ['/logs', '/statistics', '/inventory', '/management'];
 
 export default async function DashboardLayout({
   children,
@@ -76,6 +76,9 @@ export default async function DashboardLayout({
               <div className="mt-6 mb-2 px-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">
                 Admin Tools
               </div>
+              <Link href="/management" className="flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium text-slate-400 hover:bg-slate-800 hover:text-teal-400 transition-colors">
+                Management
+              </Link>
               <Link href="/logs" className="flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium text-slate-400 hover:bg-slate-800 hover:text-teal-400 transition-colors">
                 Logs
               </Link>
