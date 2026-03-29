@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import AddDiverModal from './AddDiverModal';
 import MoveClientModal from './MoveClientModal';
@@ -105,6 +105,7 @@ export default function TripManifest({
     handleChange,
     handleClientChange,
     handleSave,
+    handleDiscard,
     handleBulkDelete,
     handleMoveSuccess,
     getSizesFor,
@@ -117,6 +118,34 @@ export default function TripManifest({
     setMoveMode(mode);
     setIsMoveModalOpen(true);
   };
+
+  // Keyboard shortcuts: Enter → save, Escape → discard (and block drawer close)
+  const handleSaveRef = useRef(handleSave);
+  handleSaveRef.current = handleSave;
+  const handleDiscardRef = useRef(handleDiscard);
+  handleDiscardRef.current = handleDiscard;
+  const hasPendingRef = useRef(false);
+  hasPendingRef.current = Object.keys(pendingChanges).length > 0 || Object.keys(pendingClientChanges).length > 0;
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Enter') {
+        const target = e.target as HTMLElement;
+        const isTextInput = target.tagName === 'INPUT' &&
+          ['text', 'number', 'date'].includes((target as HTMLInputElement).type);
+        if (!isTextInput && hasPendingRef.current) {
+          e.preventDefault();
+          handleSaveRef.current();
+        }
+      }
+      if (e.key === 'Escape' && hasPendingRef.current) {
+        e.stopImmediatePropagation(); // prevent TripDrawer from closing
+        handleDiscardRef.current();
+      }
+    };
+    window.addEventListener('keydown', onKey, { capture: true });
+    return () => window.removeEventListener('keydown', onKey, { capture: true });
+  }, []);
 
   // Cert level grouping
   const NONPROF_ORDER = ['DSD', 'SD', 'OWD', 'AOWD', 'Resc'];

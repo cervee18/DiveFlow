@@ -376,6 +376,11 @@ export function useTripManifest({
 
   const clearSelection = useCallback(() => setSelectedIds(new Set()), []);
 
+  const handleDiscard = useCallback(() => {
+    setPendingChanges({});
+    setPendingClientChanges({});
+  }, []);
+
   const handleBulkDelete = useCallback(async () => {
     if (selectedIds.size === 0) return;
     const count = selectedIds.size;
@@ -453,6 +458,7 @@ export function useTripManifest({
     handleChange,
     handleClientChange,
     handleSave,
+    handleDiscard,
     handleBulkDelete,
     handleMoveSuccess,
     getSizesFor,
