@@ -1,0 +1,23 @@
+CREATE TABLE IF NOT EXISTS "public"."clients" (
+"id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+"user_id" "uuid",
+"first_name" "text" NOT NULL,
+"last_name" "text" NOT NULL,
+"email" "text",
+"phone" "text",
+"cert_number" "text",
+"cert_level" "uuid",
+"cert_organization" "text",
+"nitrox_cert_number" "text",
+"last_dive_date" "date",
+"address_street" "text",
+"address_city" "text",
+"address_zip" "text",
+"address_country" "text",
+"notes" "text",
+"created_at" timestamp with time zone DEFAULT "now"(),
+"updated_at" timestamp with time zone DEFAULT "now"(),
+"organization_id" "uuid" NOT NULL,
+"location_id" "uuid",
+"client_number" bigint NOT NULL
+);

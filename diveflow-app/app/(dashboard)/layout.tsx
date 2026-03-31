@@ -96,6 +96,9 @@ export default async function DashboardLayout({
           <div className="text-xs font-medium text-slate-400 truncate px-2">
             {user.email}
           </div>
+          <Link href="/profile" className="flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium text-slate-400 hover:bg-slate-800 hover:text-teal-400 transition-colors">
+            My Profile
+          </Link>
           <form action={signOut}>
             <button
               type="submit"

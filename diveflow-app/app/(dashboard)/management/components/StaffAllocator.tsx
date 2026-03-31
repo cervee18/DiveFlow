@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { promoteToStaff, searchOrganizationUsers, addClientToOrganization } from "../actions";
+import ReadOnlyPassportModal from "./ReadOnlyPassportModal";
 
 export default function StaffAllocator({ adminOrgId }: { adminOrgId: string }) {
   const [users, setUsers] = useState<any[]>([]);
@@ -9,6 +10,7 @@ export default function StaffAllocator({ adminOrgId }: { adminOrgId: string }) {
   const [isLoading, setIsLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [roleSelection, setRoleSelection] = useState<Record<string, string>>({});
+  const [viewPassportId, setViewPassportId] = useState<string | null>(null);
   
   useEffect(() => {
     let active = true;
@@ -139,9 +141,13 @@ export default function StaffAllocator({ adminOrgId }: { adminOrgId: string }) {
               return (
                 <tr key={u.id} className="hover:bg-slate-50 transition-colors">
                   <td className="px-4 py-3">
-                    <div className="font-medium text-slate-800">
+                    <button 
+                      onClick={() => setViewPassportId(u.id)}
+                      className="font-medium text-slate-800 hover:text-indigo-600 hover:underline text-left"
+                      title="View Global Passport"
+                    >
                       {u.first_name || "Missing"} {u.last_name || "Name"}
-                    </div>
+                    </button>
                     <div className="text-xs text-slate-500 font-mono mt-0.5">{u.email}</div>
                   </td>
                   
@@ -246,6 +252,13 @@ export default function StaffAllocator({ adminOrgId }: { adminOrgId: string }) {
           </tbody>
         </table>
       </div>
+
+      {viewPassportId && (
+        <ReadOnlyPassportModal 
+           userId={viewPassportId} 
+           onClose={() => setViewPassportId(null)} 
+        />
+      )}
     </div>
   );
 }

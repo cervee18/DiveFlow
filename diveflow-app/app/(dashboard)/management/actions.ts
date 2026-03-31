@@ -61,3 +61,18 @@ export async function promoteToStaff(userId: string, targetRole: string) {
   revalidatePath("/management");
   return { success: true };
 }
+
+export async function getReadOnlyPassport(userId: string) {
+  const supabase = await createClient();
+  
+  const { data, error } = await supabase.rpc("get_global_passport", {
+    p_user_id: userId
+  });
+  
+  if (error) {
+    console.error("Error fetching passport:", error);
+    return { data: null, error: error.message || JSON.stringify(error) };
+  }
+  
+  return { data, error: null };
+}
