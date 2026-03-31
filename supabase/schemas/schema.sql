@@ -65,6 +65,49 @@ CREATE TYPE "public"."user_role" AS ENUM (
 ALTER TYPE "public"."user_role" OWNER TO "postgres";
 
 
+CREATE OR REPLACE FUNCTION "public"."add_client_to_organization"("p_user_id" "uuid") RETURNS "void"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO 'public', 'auth'
+    AS $$
+DECLARE
+  v_org_id uuid;
+  v_admin_role text;
+  v_user_email text;
+  v_first_name text;
+  v_last_name text;
+  v_exists boolean;
+BEGIN
+  SELECT organization_id, role::text INTO v_org_id, v_admin_role
+  FROM public.profiles WHERE id = auth.uid();
+
+  IF COALESCE(v_admin_role, '') != 'admin' THEN
+    RAISE EXCEPTION 'unauthorized: lacking admin privileges';
+  END IF;
+
+  SELECT EXISTS(SELECT 1 FROM public.clients WHERE user_id = p_user_id AND organization_id = v_org_id)
+  INTO v_exists;
+
+  IF v_exists THEN
+    RAISE EXCEPTION 'User is already a client in your dive center.';
+  END IF;
+
+  SELECT email, raw_user_meta_data->>'first_name', raw_user_meta_data->>'last_name'
+  INTO v_user_email, v_first_name, v_last_name
+  FROM auth.users WHERE id = p_user_id;
+
+  IF v_user_email IS NULL THEN
+    RAISE EXCEPTION 'User not found in the global registry.';
+  END IF;
+
+  INSERT INTO public.clients (user_id, email, first_name, last_name, organization_id)
+  VALUES (p_user_id, v_user_email, COALESCE(v_first_name, 'Unknown'), COALESCE(v_last_name, 'Unknown'), v_org_id);
+END;
+$$;
+
+
+ALTER FUNCTION "public"."add_client_to_organization"("p_user_id" "uuid") OWNER TO "postgres";
+
+
 CREATE OR REPLACE FUNCTION "public"."add_clients_to_trip"("p_trip_id" "uuid", "p_client_ids" "uuid"[], "p_trip_date" "date") RETURNS "void"
     LANGUAGE "plpgsql" SECURITY DEFINER
     SET "search_path" TO 'public'
@@ -266,56 +309,49 @@ DECLARE
   v_last_name text;
   v_user_org_id uuid;
 BEGIN
-  -- Grab caller's org and role
   SELECT organization_id, role::text INTO v_org_id, v_admin_role
-  FROM public.profiles
-  WHERE id = auth.uid();
+  FROM public.profiles WHERE id = auth.uid();
 
-  -- Auth guard Check
-  IF v_admin_role != 'admin' THEN
+  IF COALESCE(v_admin_role, '') != 'admin' THEN
     RAISE EXCEPTION 'unauthorized: only admins can elevate staff';
   END IF;
   
-  -- Target role must be valid
   IF p_target_role NOT IN ('client', 'staff_1', 'staff_2', 'admin') THEN
     RAISE EXCEPTION 'invalid role type';
   END IF;
 
-  -- Ensure target user belongs to the same org, or is unassigned
+  -- Cross-Tenant Hijack Guard
   SELECT organization_id INTO v_user_org_id
-  FROM public.profiles
-  WHERE id = p_user_id;
+  FROM public.profiles WHERE id = p_user_id;
 
   IF v_user_org_id IS NOT NULL AND v_user_org_id != v_org_id THEN
-    RAISE EXCEPTION 'user belongs to a different organization';
+    RAISE EXCEPTION 'User is currently employed by another dive organization and cannot be escalated. They can only be added as a local Client.';
   END IF;
 
-  -- Grab user metadata from auth schema
   SELECT email, raw_user_meta_data->>'first_name', raw_user_meta_data->>'last_name'
   INTO v_user_email, v_first_name, v_last_name
-  FROM auth.users
-  WHERE id = p_user_id;
+  FROM auth.users WHERE id = p_user_id;
 
-  IF v_first_name IS NULL OR v_last_name IS NULL THEN
-    v_first_name := COALESCE(v_first_name, 'Unknown');
-    v_last_name := COALESCE(v_last_name, 'Unknown');
-  END IF;
-
-  -- Bypass the `prevent_profile_escalation` trigger momentarily for this secure admin transaction
+  -- Bypass trigger
   PERFORM set_config('request.jwt.claim.role', 'service_role', true);
 
-  -- 1. Update Profile Role AND lock their organization_id securely
+  -- Update Role & Lock OR Free them if demoted to Client
   UPDATE public.profiles
   SET 
     role = p_target_role::public.user_role,
-    organization_id = v_org_id
+    organization_id = CASE WHEN p_target_role = 'client' THEN NULL ELSE v_org_id END
   WHERE id = p_user_id;
 
-  -- 2. Insert into public.staff (Do not duplicate if email already exists)
-  -- Note: If downgraded to client, we keep their staff record intact so old trips aren't orphaned by missing FK constraints.
+  -- Scaffold local client container if missing
+  IF NOT EXISTS (SELECT 1 FROM public.clients WHERE user_id = p_user_id AND organization_id = v_org_id) THEN
+    INSERT INTO public.clients (user_id, email, first_name, last_name, organization_id)
+    VALUES (p_user_id, v_user_email, COALESCE(v_first_name, 'Unknown'), COALESCE(v_last_name, 'Unknown'), v_org_id);
+  END IF;
+
+  -- Assign to local Staff roster
   IF p_target_role IN ('staff_1', 'staff_2', 'admin') THEN
     INSERT INTO public.staff (user_id, email, first_name, last_name, organization_id)
-    VALUES (p_user_id, v_user_email, v_first_name, v_last_name, v_org_id)
+    VALUES (p_user_id, v_user_email, COALESCE(v_first_name, 'Unknown'), COALESCE(v_last_name, 'Unknown'), v_org_id)
     ON CONFLICT (email) DO NOTHING;
   END IF;
 
@@ -868,7 +904,7 @@ $$;
 ALTER FUNCTION "public"."propagate_trip_client_changes"("p_client_id" "uuid", "p_current_trip_id" "uuid", "p_trip_date" "text", "p_equipment" "jsonb", "p_pick_up" boolean) OWNER TO "postgres";
 
 
-CREATE OR REPLACE FUNCTION "public"."search_organization_users"("p_query" "text") RETURNS TABLE("id" "uuid", "email" "text", "first_name" "text", "last_name" "text", "role" "text", "created_at" timestamp with time zone)
+CREATE OR REPLACE FUNCTION "public"."search_global_identities"("p_query" "text") RETURNS TABLE("id" "uuid", "email" "text", "first_name" "text", "last_name" "text", "role" "text", "created_at" timestamp with time zone, "organization_id" "uuid", "is_local_client" boolean)
     LANGUAGE "plpgsql" SECURITY DEFINER
     SET "search_path" TO 'public', 'auth'
     AS $$
@@ -876,14 +912,11 @@ DECLARE
   v_org_id uuid;
   v_admin_role text;
 BEGIN
-  -- Grab caller's org and role
   SELECT p.organization_id, p.role::text INTO v_org_id, v_admin_role
-  FROM public.profiles p
-  WHERE p.id = auth.uid();
+  FROM public.profiles p WHERE p.id = auth.uid();
 
-  -- Auth guard: must be admin
-  IF v_admin_role != 'admin' THEN
-    RAISE EXCEPTION 'unauthorized: lacking admin role privileges';
+  IF COALESCE(v_admin_role, '') != 'admin' THEN
+    RAISE EXCEPTION 'unauthorized: lacking admin privileges';
   END IF;
 
   RETURN QUERY
@@ -893,24 +926,33 @@ BEGIN
     (u.raw_user_meta_data->>'first_name')::text AS first_name,
     (u.raw_user_meta_data->>'last_name')::text AS last_name,
     p.role::text,
-    p.created_at
-  FROM public.profiles p
-  JOIN auth.users u ON u.id = p.id
-  -- Match admin's org OR match users who just signed up and haven't been assigned an org yet
-  WHERE (p.organization_id = v_org_id OR p.organization_id IS NULL)
-    AND (
-      p_query IS NULL OR p_query = '' OR
-      u.email ILIKE '%' || p_query || '%' OR
-      (u.raw_user_meta_data->>'first_name') ILIKE '%' || p_query || '%' OR
-      (u.raw_user_meta_data->>'last_name') ILIKE '%' || p_query || '%'
-    )
-  ORDER BY p.created_at DESC
+    p.created_at,
+    p.organization_id,
+    (c.id IS NOT NULL) AS is_local_client
+  FROM auth.users u
+  JOIN public.profiles p ON p.id = u.id
+  LEFT JOIN public.clients c ON c.user_id = u.id AND c.organization_id = v_org_id
+  WHERE 
+    -- Scenario A: Empty Query -> Only show users who either work here or are already a client here
+    ((p_query IS NULL OR length(trim(p_query)) < 3) 
+     AND (p.organization_id = v_org_id OR c.id IS NOT NULL))
+    OR 
+    -- Scenario B: Valid >= 3 Query -> Search globally
+    (length(trim(p_query)) >= 3 
+     AND (
+       u.email ILIKE '%' || p_query || '%' OR
+       (u.raw_user_meta_data->>'first_name') ILIKE '%' || p_query || '%' OR
+       (u.raw_user_meta_data->>'last_name') ILIKE '%' || p_query || '%'
+     ))
+  ORDER BY 
+    (p.organization_id = v_org_id OR c.id IS NOT NULL) DESC,
+    p.created_at DESC
   LIMIT 50;
 END;
 $$;
 
 
-ALTER FUNCTION "public"."search_organization_users"("p_query" "text") OWNER TO "postgres";
+ALTER FUNCTION "public"."search_global_identities"("p_query" "text") OWNER TO "postgres";
 
 
 CREATE OR REPLACE FUNCTION "public"."update_updated_at"() RETURNS "trigger"
@@ -2607,6 +2649,12 @@ GRANT USAGE ON SCHEMA "public" TO "service_role";
 
 
 
+GRANT ALL ON FUNCTION "public"."add_client_to_organization"("p_user_id" "uuid") TO "anon";
+GRANT ALL ON FUNCTION "public"."add_client_to_organization"("p_user_id" "uuid") TO "authenticated";
+GRANT ALL ON FUNCTION "public"."add_client_to_organization"("p_user_id" "uuid") TO "service_role";
+
+
+
 GRANT ALL ON FUNCTION "public"."add_clients_to_trip"("p_trip_id" "uuid", "p_client_ids" "uuid"[], "p_trip_date" "date") TO "anon";
 GRANT ALL ON FUNCTION "public"."add_clients_to_trip"("p_trip_id" "uuid", "p_client_ids" "uuid"[], "p_trip_date" "date") TO "authenticated";
 GRANT ALL ON FUNCTION "public"."add_clients_to_trip"("p_trip_id" "uuid", "p_client_ids" "uuid"[], "p_trip_date" "date") TO "service_role";
@@ -2703,9 +2751,9 @@ GRANT ALL ON FUNCTION "public"."propagate_trip_client_changes"("p_client_id" "uu
 
 
 
-GRANT ALL ON FUNCTION "public"."search_organization_users"("p_query" "text") TO "anon";
-GRANT ALL ON FUNCTION "public"."search_organization_users"("p_query" "text") TO "authenticated";
-GRANT ALL ON FUNCTION "public"."search_organization_users"("p_query" "text") TO "service_role";
+GRANT ALL ON FUNCTION "public"."search_global_identities"("p_query" "text") TO "anon";
+GRANT ALL ON FUNCTION "public"."search_global_identities"("p_query" "text") TO "authenticated";
+GRANT ALL ON FUNCTION "public"."search_global_identities"("p_query" "text") TO "service_role";
 
 
 
