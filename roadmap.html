@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DiveFlow Development Roadmap - Ocean Frontiers</title>
+    <style>
+        /* General Styles */
+        :root {
+            --primary-blue: #005fa3;
+            --secondary-blue: #eef7ff;
+            --text-dark: #333;
+            --text-light: #666;
+            --accent-color: #00a8e8;
+            --success-green: #28a745;
+        }
+
+        * {
+            box-sizing: border-box;
+            -webkit-print-color-adjust: exact !important; /* Force colors in PDF */
+            print-color-adjust: exact !important;
+        }
+
+        body {
+            font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+            line-height: 1.5;
+            color: var(--text-dark);
+            margin: 0;
+            padding: 0;
+            background-color: #f0f2f5;
+        }
+
+        .page-wrapper {
+            max-width: 850px;
+            margin: 20px auto;
+            background: #fff;
+            padding: 40px 60px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+        }
+
+        header {
+            border-bottom: 3px solid var(--primary-blue);
+            margin-bottom: 30px;
+            padding-bottom: 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-end;
+        }
+
+        .header-title h1 {
+            color: var(--primary-blue);
+            font-size: 24pt;
+            margin: 0;
+            text-transform: uppercase;
+        }
+
+        .header-author {
+            text-align: right;
+            color: var(--text-light);
+            font-size: 10pt;
+        }
+
+        /* Roadmap Structure */
+        .roadmap-container {
+            margin-top: 20px;
+        }
+
+        .phase-card {
+            margin-bottom: 30px;
+            border: 1px solid #e1e4e8;
+            border-radius: 8px;
+            overflow: hidden;
+            page-break-inside: avoid; /* Prevents splitting a phase across two pages */
+        }
+
+        .phase-header {
+            background-color: var(--primary-blue);
+            color: white;
+            padding: 15px 25px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .phase-header h2 {
+            margin: 0;
+            font-size: 16pt;
+        }
+
+        .phase-badge {
+            background: var(--accent-color);
+            padding: 5px 12px;
+            border-radius: 15px;
+            font-size: 9pt;
+            font-weight: bold;
+        }
+
+        .phase-body {
+            padding: 20px 25px;
+            background-color: white;
+        }
+
+        .phase-goal {
+            font-weight: bold;
+            color: var(--primary-blue);
+            margin-bottom: 15px;
+            font-size: 11pt;
+        }
+
+        .feature-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px 30px;
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+
+        .feature-grid li {
+            position: relative;
+            padding-left: 20px;
+            font-size: 10.5pt;
+        }
+
+        .feature-grid li::before {
+            content: '•';
+            position: absolute;
+            left: 0;
+            color: var(--accent-color);
+            font-weight: bold;
+            font-size: 14pt;
+            line-height: 1;
+        }
+
+        .tech-info {
+            margin-top: 40px;
+            padding: 15px;
+            background-color: var(--secondary-blue);
+            border-radius: 6px;
+            text-align: center;
+            font-size: 9.5pt;
+            color: var(--primary-blue);
+            border: 1px solid #cfe2ff;
+        }
+
+        footer {
+            margin-top: 30px;
+            text-align: center;
+            font-size: 8.5pt;
+            color: #999;
+            border-top: 1px solid #eee;
+            padding-top: 15px;
+        }
+
+        /* Print Specifics */
+        @media print {
+            body { background: white; }
+            .page-wrapper {
+                margin: 0;
+                box-shadow: none;
+                width: 100%;
+                padding: 20px;
+            }
+            @page {
+                margin: 0.5in;
+            }
+        }
+    </style>
+</head>
+<body>
+
+<div class="page-wrapper">
+    <header>
+        <div class="header-title">
+            <h1>DiveFlow Roadmap</h1>
+            <p style="margin:5px 0 0 0; font-size: 11pt; color: var(--text-light);">
+                Strategic Implementation for <strong>Ocean Frontiers</strong>
+            </p>
+        </div>
+        <div class="header-author">
+            <strong>Project Architect:</strong><br>
+            Guillermo Cervero
+        </div>
+    </header>
+
+    <div class="roadmap-container">
+        
+        <div class="phase-card">
+            <div class="phase-header">
+                <h2>Phase 1: Operational Core (v1.0)</h2>
+                <div class="phase-badge">By End of Month 2</div>
+            </div>
+            <div class="phase-body">
+                <div class="phase-goal">Objective: Centralize Ocean Frontiers operations and automate daily logistics.</div>
+                <ul class="feature-grid">
+                    <li>Operations Dashboard</li>
+                    <li>Staff Scheduling</li>
+                    <li>Client CRM & History</li>
+                    <li>Core Booking System</li>
+                    <li>Automated Trip Notes</li>
+                    <li>Team Onboarding Support</li>
+                </ul>
+            </div>
+        </div>
+
+        <div class="phase-card">
+            <div class="phase-header">
+                <h2>Phase 2: Point of Sale (POS)</h2>
+                <div class="phase-badge">By End of Month 4</div>
+            </div>
+            <div class="phase-body">
+                <div class="phase-goal">Objective: Integrate all revenue streams directly into the DiveFlow ecosystem.</div>
+                <ul class="feature-grid">
+                    <li>Product & Service Catalogue</li>
+                    <li>Transaction Processing</li>
+                    <li>Receipt Generation</li>
+                    <li>Daily Sales Reporting</li>
+                    <li>Inventory Tracking</li>
+                    <li>Direct Invoicing</li>
+                </ul>
+            </div>
+        </div>
+
+        <div class="phase-card">
+            <div class="phase-header">
+                <h2>Phase 3: Online Payments</h2>
+                <div class="phase-badge">By End of Month 5</div>
+            </div>
+            <div class="phase-body">
+                <div class="phase-goal">Objective: Launch the digital checkout and automated Cayman-based payment pipeline.</div>
+                <ul class="feature-grid">
+                    <li>Plug N Pay Integration</li>
+                    <li>Online Checkout Flow</li>
+                    <li>Automated Deposits</li>
+                    <li>Instant Email Confirmations</li>
+                    <li>Real-time Capacity Sync</li>
+                    <li>Secure Payment Gateway</li>
+                </ul>
+            </div>
+        </div>
+
+    </div>
+
+    <div class="tech-info">
+        Built for performance using <strong>FastAPI, Next.js, and Supabase</strong>.<br>
+        Designed specifically for the unique operational requirements of Ocean Frontiers.
+    </div>
+
+    <footer>
+        Confidential Strategic Proposal © 2026 | Prepared specifically for the team at <strong>Ocean Frontiers</strong>
+    </footer>
+</div>
+
+</body>
+</html>

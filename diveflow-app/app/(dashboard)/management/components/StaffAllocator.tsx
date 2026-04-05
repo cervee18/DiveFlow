@@ -11,6 +11,7 @@ export default function StaffAllocator({ adminOrgId }: { adminOrgId: string }) {
   const [searchQuery, setSearchQuery] = useState("");
   const [roleSelection, setRoleSelection] = useState<Record<string, string>>({});
   const [viewPassportId, setViewPassportId] = useState<string | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   
   useEffect(() => {
     let active = true;
@@ -26,9 +27,15 @@ export default function StaffAllocator({ adminOrgId }: { adminOrgId: string }) {
       }
 
       setIsLoading(true);
-      const data = await searchOrganizationUsers(searchQuery);
+      setErrorMessage(null);
+      const res = await searchOrganizationUsers(searchQuery);
       if (active) {
-        setUsers(data || []);
+        if (res && res.error) {
+           setErrorMessage(res.error);
+           setUsers([]);
+        } else {
+           setUsers(res?.data || []);
+        }
         setIsLoading(false);
       }
     };
@@ -55,7 +62,7 @@ export default function StaffAllocator({ adminOrgId }: { adminOrgId: string }) {
     } else {
       // Refresh the list directly
       const updated = await searchOrganizationUsers(searchQuery);
-      setUsers(updated || []);
+      setUsers(updated?.data || []);
     }
   };
 
@@ -68,7 +75,7 @@ export default function StaffAllocator({ adminOrgId }: { adminOrgId: string }) {
       alert("Error adding client: " + result.error);
     } else {
       const updated = await searchOrganizationUsers(searchQuery);
-      setUsers(updated || []);
+      setUsers(updated?.data || []);
     }
   };
 
@@ -104,6 +111,12 @@ export default function StaffAllocator({ adminOrgId }: { adminOrgId: string }) {
               <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
             </svg>
           </div>
+        )}
+
+        {errorMessage && (
+           <div className="bg-rose-50 text-rose-700 p-4 rounded-lg border border-rose-200 text-sm mb-4 font-mono">
+              <strong>Global Search Error:</strong> {errorMessage}
+           </div>
         )}
 
         <table className="w-full text-left text-sm whitespace-nowrap">

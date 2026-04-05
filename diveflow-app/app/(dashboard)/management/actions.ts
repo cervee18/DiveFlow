@@ -22,10 +22,10 @@ export async function searchOrganizationUsers(query: string = "") {
   
   if (error) {
     console.error("Error searching users:", error);
-    return [];
+    return { data: [], error: error.message || JSON.stringify(error) };
   }
   
-  return data;
+  return { data, error: null };
 }
 
 export async function addClientToOrganization(userId: string) {
