@@ -503,6 +503,59 @@ $$;
 ALTER FUNCTION "public"."get_activity_logs"("p_org_id" "uuid", "p_entity_type" "text", "p_from" timestamp with time zone, "p_to" timestamp with time zone, "p_limit" integer, "p_offset" integer) OWNER TO "postgres";
 
 
+CREATE OR REPLACE FUNCTION "public"."get_global_passport"("p_user_id" "uuid") RETURNS json
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    AS $$
+DECLARE
+  v_caller_role text;
+  v_passport json;
+BEGIN
+  -- Strict Check: Is caller properly authenticated?
+  IF auth.uid() IS NULL THEN
+    RAISE EXCEPTION 'Not authenticated';
+  END IF;
+
+  -- Cast ENUM to text explicitly to avoid PL/pgSQL type mismatch
+  SELECT role::text INTO v_caller_role FROM public.profiles WHERE id = auth.uid();
+  
+  IF v_caller_role NOT IN ('staff_1', 'staff_2', 'admin', 'super_admin') THEN
+    RAISE EXCEPTION 'Unauthorized: Insufficient privileges to view global passports';
+  END IF;
+
+  SELECT json_build_object(
+    'id', p.id,
+    'first_name', p.first_name,
+    'last_name', p.last_name,
+    'email', p.email,
+    'phone', p.phone,
+    'address_street', p.address_street,
+    'address_city', p.address_city,
+    'address_zip', p.address_zip,
+    'address_country', p.address_country,
+    'emergency_contact_name', p.emergency_contact_name,
+    'emergency_contact_phone', p.emergency_contact_phone,
+    'cert_organization', p.cert_organization,
+    'cert_level', p.cert_level,
+    'cert_level_name', cl.name,
+    'cert_level_abbr', cl.abbreviation,
+    'cert_number', p.cert_number,
+    'nitrox_cert_number', p.nitrox_cert_number,
+    'last_dive_date', p.last_dive_date,
+    'role', p.role,
+    'organization_id', p.organization_id
+  ) INTO v_passport
+  FROM public.profiles p
+  LEFT JOIN public.certification_levels cl ON p.cert_level = cl.id
+  WHERE p.id = p_user_id;
+
+  RETURN v_passport;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."get_global_passport"("p_user_id" "uuid") OWNER TO "postgres";
+
+
 CREATE OR REPLACE FUNCTION "public"."get_overview_trips"("p_org_id" "uuid", "p_start" timestamp with time zone, "p_end" timestamp with time zone) RETURNS TABLE("id" "uuid", "label" "text", "start_time" timestamp with time zone, "max_divers" integer, "entry_mode" "text", "vessel_id" "uuid", "vessel_name" "text", "vessel_abbreviation" "text", "trip_type_name" "text", "trip_type_abbreviation" "text", "trip_type_color" "text", "trip_type_category" "text", "trip_type_number_of_dives" integer, "booked_divers" bigint, "activity_counts" "jsonb")
     LANGUAGE "sql" STABLE SECURITY DEFINER
     AS $$
@@ -920,17 +973,20 @@ BEGIN
   END IF;
 
   RETURN QUERY
-  SELECT 
-    p.id,
-    u.email::text,
-    (u.raw_user_meta_data->>'first_name')::text AS first_name,
-    (u.raw_user_meta_data->>'last_name')::text AS last_name,
-    p.role::text,
-    p.created_at,
-    p.organization_id,
-    (c.id IS NOT NULL) AS is_local_client
-  FROM auth.users u
-  JOIN public.profiles p ON p.id = u.id
+SELECT 
+  p.id,
+  u.email,
+  (u.raw_user_meta_data->>'first_name')::text AS first_name, -- ✅ Pulls from global Auth
+  (u.raw_user_meta_data->>'last_name')::text AS last_name,   -- ✅ Pulls from global Auth
+  
+  -- If you added passport info (like cert_level) to their global auth metadata, pull it like this:
+  (u.raw_user_meta_data->>'cert_level')::text AS global_cert_level,
+  (u.raw_user_meta_data->>'number_of_dives')::int AS global_dive_count,
+
+  p.role,
+  p.organization_id
+FROM auth.users u
+JOIN public.profiles p ON p.id = u.id
   LEFT JOIN public.clients c ON c.user_id = u.id AND c.organization_id = v_org_id
   WHERE 
     -- Scenario A: Empty Query -> Only show users who either work here or are already a client here
@@ -1268,7 +1324,19 @@ CREATE TABLE IF NOT EXISTS "public"."profiles" (
     "organization_id" "uuid",
     "is_active" boolean DEFAULT true,
     "created_at" timestamp with time zone DEFAULT "now"(),
-    "updated_at" timestamp with time zone DEFAULT "now"()
+    "updated_at" timestamp with time zone DEFAULT "now"(),
+    "phone" "text",
+    "address_street" "text",
+    "address_city" "text",
+    "address_zip" "text",
+    "address_country" "text",
+    "emergency_contact_name" "text",
+    "emergency_contact_phone" "text",
+    "cert_organization" "text",
+    "cert_level" "uuid",
+    "cert_number" "text",
+    "nitrox_cert_number" "text",
+    "last_dive_date" "date"
 );
 
 
@@ -2126,6 +2194,11 @@ ALTER TABLE ONLY "public"."locations"
 
 
 ALTER TABLE ONLY "public"."profiles"
+    ADD CONSTRAINT "profiles_cert_level_fkey" FOREIGN KEY ("cert_level") REFERENCES "public"."certification_levels"("id") ON DELETE SET NULL;
+
+
+
+ALTER TABLE ONLY "public"."profiles"
     ADD CONSTRAINT "profiles_id_fkey" FOREIGN KEY ("id") REFERENCES "auth"."users"("id") ON DELETE CASCADE;
 
 
@@ -2694,6 +2767,12 @@ GRANT ALL ON FUNCTION "public"."get_active_alerts"("p_org_id" "uuid") TO "servic
 GRANT ALL ON FUNCTION "public"."get_activity_logs"("p_org_id" "uuid", "p_entity_type" "text", "p_from" timestamp with time zone, "p_to" timestamp with time zone, "p_limit" integer, "p_offset" integer) TO "anon";
 GRANT ALL ON FUNCTION "public"."get_activity_logs"("p_org_id" "uuid", "p_entity_type" "text", "p_from" timestamp with time zone, "p_to" timestamp with time zone, "p_limit" integer, "p_offset" integer) TO "authenticated";
 GRANT ALL ON FUNCTION "public"."get_activity_logs"("p_org_id" "uuid", "p_entity_type" "text", "p_from" timestamp with time zone, "p_to" timestamp with time zone, "p_limit" integer, "p_offset" integer) TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."get_global_passport"("p_user_id" "uuid") TO "anon";
+GRANT ALL ON FUNCTION "public"."get_global_passport"("p_user_id" "uuid") TO "authenticated";
+GRANT ALL ON FUNCTION "public"."get_global_passport"("p_user_id" "uuid") TO "service_role";
 
 
 
