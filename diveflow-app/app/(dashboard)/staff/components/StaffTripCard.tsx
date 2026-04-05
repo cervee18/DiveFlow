@@ -39,6 +39,7 @@ interface StaffTripCardProps {
   selectedActivityIds?: Set<string>;
   selectedStaffIds?: string[];
   captainStaffIds?: Set<string>;
+  conflictedStaffIds?: Set<string>;
   /** Toggle this card as a generic assignment target */
   onToggle?: () => void;
   onRemoveStaff?: (staffId: string) => void;
@@ -57,6 +58,7 @@ export default function StaffTripCard({
   selectedActivityIds = new Set(),
   selectedStaffIds = [],
   captainStaffIds = new Set(),
+  conflictedStaffIds = new Set(),
   onToggle,
   onRemoveStaff,
   onToggleActivity,
@@ -178,6 +180,8 @@ export default function StaffTripCard({
               const isWillRemove = !captainMode && willRemoveFromTrip.includes(s.staffId);
               const isDisabled   = captainMode && !s.captainLicense;
 
+              const isConflicted = conflictedStaffIds.has(s.staffId);
+
               let chipClass = '';
               if (isWillRemove) {
                 chipClass = 'bg-red-100 text-red-500 ring-1 ring-red-300';
@@ -189,6 +193,8 @@ export default function StaffTripCard({
                   : 'bg-blue-700 text-white hover:bg-blue-800';
               } else if (captainMode) {
                 chipClass = 'bg-teal-100 text-teal-700 ring-1 ring-blue-300 hover:bg-blue-600 hover:text-white hover:ring-blue-500';
+              } else if (isConflicted) {
+                chipClass = 'bg-rose-500 text-white shadow-sm ring-2 ring-rose-300';
               } else {
                 chipClass = 'bg-teal-100 text-teal-700 hover:bg-red-100 hover:text-red-500';
               }
@@ -272,6 +278,7 @@ export default function StaffTripCard({
                 {/* Staff already assigned to this activity */}
                 {assigned.map(s => {
                   const isWillRemove = willRemoveFromActivity.some(r => r.staffId === s.staffId);
+                  const isConflicted = conflictedStaffIds.has(s.staffId);
                   return (
                     <button
                       key={s.tripStaffId}
@@ -280,6 +287,8 @@ export default function StaffTripCard({
                       className={`group inline-flex items-center justify-center w-5 h-5 rounded-full text-[9px] font-bold leading-none transition-colors ${
                         isWillRemove
                           ? 'bg-red-100 text-red-500 ring-1 ring-red-300'
+                          : isConflicted
+                          ? 'bg-rose-500 text-white ring-2 ring-rose-300 shadow-sm'
                           : 'bg-indigo-200 text-indigo-700 hover:bg-red-100 hover:text-red-500'
                       }`}
                     >

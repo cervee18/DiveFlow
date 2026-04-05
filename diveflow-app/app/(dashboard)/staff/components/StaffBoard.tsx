@@ -45,6 +45,7 @@ function JobCard({
   assignMode,
   isSelectedAsTarget,
   selectedStaffIds,
+  conflictedStaffIds,
   onToggle,
   onRemoveFromJob,
 }: {
@@ -54,6 +55,7 @@ function JobCard({
   assignMode: boolean;
   isSelectedAsTarget: boolean;
   selectedStaffIds: string[];
+  conflictedStaffIds: Set<string>;
   onToggle: () => void;
   onRemoveFromJob: (jobTypeId: string, staffId: string, halfDay: 'AM' | 'PM') => void;
 }) {
@@ -104,6 +106,8 @@ function JobCard({
               className={`group inline-flex items-center justify-center w-6 h-6 rounded-full text-[10px] font-bold leading-none transition-colors ${
                 isWillRemove
                   ? 'bg-red-100 text-red-500 ring-1 ring-red-300'
+                  : conflictedStaffIds.has(job.staff_id)
+                  ? 'bg-rose-500 text-white ring-2 ring-rose-300 shadow-sm'
                   : 'bg-slate-300 text-slate-700 hover:bg-red-100 hover:text-red-500'
               }`}
             >
@@ -178,6 +182,18 @@ function Column({
 
   const assignMode = selectedStaffIds.length > 0;
 
+  // Calculate conflicts for this half day
+  const unassignedJtId = jobTypes.find(jt => jt.name === 'Unassigned')?.id;
+  const staffJobCount = new Map<string, number>();
+  for (const j of jobAssignments) {
+    if (j.job_type_id !== unassignedJtId) {
+       staffJobCount.set(j.staff_id, (staffJobCount.get(j.staff_id) || 0) + 1);
+    }
+  }
+  const conflictedStaffIds = new Set(
+    [...staffJobCount.entries()].filter(([_, count]) => count > 1).map(([id]) => id)
+  );
+
   return (
     <div className="flex flex-col flex-1 min-w-0 min-h-0 border-r border-slate-200 last:border-r-0">
       {/* Column header */}
@@ -215,6 +231,7 @@ function Column({
                     assignMode={assignMode}
                     isSelectedAsTarget={selectedJobKeys.some(k => k.jobTypeId === jt.id && k.halfDay === halfDay)}
                     selectedStaffIds={selectedStaffIds}
+                    conflictedStaffIds={conflictedStaffIds}
                     onToggle={() => onToggleJobSelection(jt.id, halfDay)}
                     onRemoveFromJob={onRemoveFromJob}
                   />
@@ -261,6 +278,7 @@ function Column({
                       selectedActivityIds={selectedActivityIds}
                       selectedStaffIds={selectedStaffIds}
                       captainStaffIds={captainStaffIds}
+                      conflictedStaffIds={conflictedStaffIds}
                       onToggle={() => onToggleTripSelection(trip.id)}
                       onRemoveStaff={staffId => onRemoveStaff(trip.id, staffId)}
                       onToggleActivity={activityId => onToggleActivitySelection(trip.id, activityId)}

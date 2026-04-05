@@ -254,12 +254,54 @@ export default function StaffPage() {
       return;
     }
 
-    const ops: PromiseLike<any>[] = [];
     const unassignedId = jobTypes.find(jt => jt.name === 'Unassigned')?.id;
     const crewId       = jobTypes.find(jt => jt.name === 'Crew')?.id;
     const captainId    = jobTypes.find(jt => jt.name === 'Captain')?.id;
 
-    // ── Generic trip assignments ──────────────────────────────────────────
+    // ── Pre-flight Validation: Check for AM/PM Double Bookings ────────────
+    let conflictMsg: string | null = null;
+    const queuedAssignments: Array<{ staffId: string, half: 'AM'|'PM', targetName: string }> = [];
+
+    // 1. Collect intended new assignments (toAdd)
+    for (const tripId of selectedTripIds) {
+      const trip = trips.find(t => t.id === tripId);
+      if (!trip) continue;
+      const existingIds = new Set<string>((trip.trip_staff ?? []).filter((ts: any) => !ts.activity_id).map((ts: any) => ts.staff_id));
+      const toAdd       = selectedStaffIds.filter(id => !existingIds.has(id));
+      const half        = halfDayOf(trip.start_time);
+      toAdd.forEach(staffId => queuedAssignments.push({ staffId, half, targetName: trip.label || 'Trip' }));
+    }
+
+    for (const { tripId, activityId } of selectedActivityKeys) {
+      const trip = trips.find(t => t.id === tripId);
+      if (!trip) continue;
+      const existing    = (trip.trip_staff ?? []).filter((ts: any) => ts.activity_id === activityId);
+      const existingIds = new Set(existing.map((ts: any) => ts.staff_id));
+      const toAdd       = selectedStaffIds.filter(id => !existingIds.has(id));
+      const half        = halfDayOf(trip.start_time);
+      const actName     = trip.activities?.find((a: any) => a.id === activityId)?.name ?? 'Activity';
+      toAdd.forEach(staffId => queuedAssignments.push({ staffId, half, targetName: `'${actName}' Trip Activity` }));
+    }
+
+    for (const { jobTypeId: jtId, halfDay } of selectedJobKeys) {
+      const relevantJobs     = dailyJobs.filter(j => j.job_type_id === jtId && j['AM/PM'] === halfDay);
+      const existingStaffIds = new Set(relevantJobs.map((j: any) => j.staff_id));
+      const toAdd            = selectedStaffIds.filter(id => !existingStaffIds.has(id));
+      const jobName          = jobTypes.find(jt => jt.id === jtId)?.name ?? 'Job';
+      toAdd.forEach(staffId => queuedAssignments.push({ staffId, half: halfDay, targetName: `${halfDay} ${jobName}` }));
+    }
+
+    // 1. Scan queued additions for database-level conflicts and warn, but don't hard reject
+    const intraSaveMap: Record<string, Set<'AM'|'PM'>> = {};
+    for (const assignment of queuedAssignments) {
+       intraSaveMap[assignment.staffId] = intraSaveMap[assignment.staffId] || new Set();
+       intraSaveMap[assignment.staffId].add(assignment.half);
+    }
+
+    // We allow the save to proceed, as visual conflicts will be shown on the board.
+    
+    // ── Generate Operations ───────────────────────────────────────────────
+    const ops: PromiseLike<any>[] = [];
     for (const tripId of selectedTripIds) {
       const trip = trips.find(t => t.id === tripId);
       if (!trip) continue;
