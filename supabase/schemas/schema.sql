@@ -364,32 +364,27 @@ ALTER FUNCTION "public"."elevate_user_to_staff"("p_user_id" "uuid", "p_target_ro
 
 CREATE OR REPLACE FUNCTION "public"."get_active_alerts"("p_org_id" "uuid") RETURNS TABLE("alert_type" "text", "severity" "text", "trip_id" "uuid", "trip_start" timestamp with time zone, "trip_label" "text", "client_id" "uuid", "client_name" "text", "message" "text")
     LANGUAGE "sql" STABLE SECURITY DEFINER
-    SET "search_path" TO 'public'
+    SET "search_path" TO 'public', 'auth'
     AS $$
 
   -- missing_waiver: client has no waiver, trip starts within 2 days
   SELECT
-    'missing_waiver'::text,
-    'critical'::text,
-    t.id,
-    t.start_time,
-    COALESCE(t.label, tt.name, 'Trip'),
-    c.id,
-    c.first_name || ' ' || c.last_name,
-    'Missing waiver: ' || c.first_name || ' ' || c.last_name
+    'missing_waiver'::text                                AS alert_type,
+    'critical'::text                                      AS severity,
+    t.id                                                  AS trip_id,
+    t.start_time                                          AS trip_start,
+    COALESCE(t.label, tt.name, 'Trip')                   AS trip_label,
+    c.id                                                  AS client_id,
+    c.first_name || ' ' || c.last_name                   AS client_name,
+    'Missing waiver: ' || c.first_name || ' ' || c.last_name AS message
   FROM public.trip_clients tc
-  JOIN public.trips t       ON t.id  = tc.trip_id
+  JOIN public.trips t     ON t.id  = tc.trip_id
   LEFT JOIN public.trip_types tt ON tt.id = t.trip_type_id
-  JOIN public.clients c     ON c.id  = tc.client_id
+  JOIN public.clients c   ON c.id  = tc.client_id
   WHERE t.organization_id = p_org_id
     AND tc.waiver         = false
     AND t.start_time      > now()
     AND t.start_time     <= now() + INTERVAL '2 days'
-    -- Auth guard: caller must belong to this org
-    AND EXISTS (
-      SELECT 1 FROM public.profiles
-      WHERE id = auth.uid() AND organization_id = p_org_id
-    )
     AND NOT EXISTS (
       SELECT 1 FROM public.alert_resolutions ar
       WHERE ar.org_id      = p_org_id
@@ -411,17 +406,13 @@ CREATE OR REPLACE FUNCTION "public"."get_active_alerts"("p_org_id" "uuid") RETUR
     c.first_name || ' ' || c.last_name,
     'Missing deposit: ' || c.first_name || ' ' || c.last_name
   FROM public.trip_clients tc
-  JOIN public.trips t       ON t.id  = tc.trip_id
+  JOIN public.trips t     ON t.id  = tc.trip_id
   LEFT JOIN public.trip_types tt ON tt.id = t.trip_type_id
-  JOIN public.clients c     ON c.id  = tc.client_id
+  JOIN public.clients c   ON c.id  = tc.client_id
   WHERE t.organization_id = p_org_id
     AND tc.deposit        = false
     AND t.start_time      > now()
     AND t.start_time     <= now() + INTERVAL '7 days'
-    AND EXISTS (
-      SELECT 1 FROM public.profiles
-      WHERE id = auth.uid() AND organization_id = p_org_id
-    )
     AND NOT EXISTS (
       SELECT 1 FROM public.alert_resolutions ar
       WHERE ar.org_id      = p_org_id
@@ -447,10 +438,6 @@ CREATE OR REPLACE FUNCTION "public"."get_active_alerts"("p_org_id" "uuid") RETUR
   WHERE t.organization_id = p_org_id
     AND t.start_time      > now()
     AND t.start_time     <= now() + INTERVAL '7 days'
-    AND EXISTS (
-      SELECT 1 FROM public.profiles
-      WHERE id = auth.uid() AND organization_id = p_org_id
-    )
     AND NOT EXISTS (
       SELECT 1 FROM public.trip_staff ts WHERE ts.trip_id = t.id
     )
@@ -461,7 +448,35 @@ CREATE OR REPLACE FUNCTION "public"."get_active_alerts"("p_org_id" "uuid") RETUR
         AND ar.trip_id    = t.id
     )
 
-  ORDER BY 4 ASC, 1 ASC;  -- 4 = trip_start, 1 = alert_type
+  UNION ALL
+
+  -- staff_double_booked: staff has >= 2 daily jobs on same date + AM/PM block
+  SELECT
+    'staff_double_booked'::text,
+    'warning'::text,
+    NULL::uuid,
+    j.job_date::timestamptz,
+    'Multiple Assignments'::text,
+    s.id,
+    COALESCE(s.first_name || ' ' || s.last_name, 'Staff'),
+    COALESCE(s.first_name, 'Staff') || ' double-booked on ' || j.job_date::text || ' (' || j."AM/PM" || ')'
+  FROM public.staff_daily_job j
+  JOIN public.staff s ON s.id = j.staff_id
+  LEFT JOIN public.job_types jt ON jt.id = j.job_type_id
+  WHERE j.organization_id = p_org_id
+    AND j.job_date >= current_date
+    AND jt.name != 'Unassigned'
+  GROUP BY j.job_date, j."AM/PM", s.id, s.first_name, s.last_name
+  HAVING count(*) > 1
+    AND NOT EXISTS (
+      SELECT 1 FROM public.alert_resolutions ar
+      WHERE ar.org_id     = p_org_id
+        AND ar.alert_type = 'staff_double_booked'
+        AND ar.client_id  = s.id
+        AND ar.notes      = (j.job_date::text || '_' || j."AM/PM")
+    )
+
+  ORDER BY trip_start ASC, alert_type ASC;
 
 $$;
 
@@ -2096,17 +2111,7 @@ ALTER TABLE ONLY "public"."activity_logs"
 
 
 ALTER TABLE ONLY "public"."alert_resolutions"
-    ADD CONSTRAINT "alert_resolutions_client_id_fkey" FOREIGN KEY ("client_id") REFERENCES "public"."clients"("id") ON DELETE CASCADE;
-
-
-
-ALTER TABLE ONLY "public"."alert_resolutions"
     ADD CONSTRAINT "alert_resolutions_resolved_by_fkey" FOREIGN KEY ("resolved_by") REFERENCES "public"."staff"("id") ON DELETE SET NULL;
-
-
-
-ALTER TABLE ONLY "public"."alert_resolutions"
-    ADD CONSTRAINT "alert_resolutions_trip_id_fkey" FOREIGN KEY ("trip_id") REFERENCES "public"."trips"("id") ON DELETE CASCADE;
 
 
 
