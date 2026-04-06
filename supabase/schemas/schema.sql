@@ -505,28 +505,28 @@ ALTER FUNCTION "public"."get_activity_logs"("p_org_id" "uuid", "p_entity_type" "
 
 CREATE OR REPLACE FUNCTION "public"."get_global_passport"("p_user_id" "uuid") RETURNS json
     LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO 'public', 'auth'
     AS $$
 DECLARE
   v_caller_role text;
   v_passport json;
 BEGIN
-  -- Strict Check: Is caller properly authenticated?
   IF auth.uid() IS NULL THEN
     RAISE EXCEPTION 'Not authenticated';
   END IF;
 
-  -- Cast ENUM to text explicitly to avoid PL/pgSQL type mismatch
-  SELECT role::text INTO v_caller_role FROM public.profiles WHERE id = auth.uid();
+  SELECT p.role::text INTO v_caller_role FROM public.profiles p WHERE p.id = auth.uid();
   
   IF v_caller_role NOT IN ('staff_1', 'staff_2', 'admin', 'super_admin') THEN
-    RAISE EXCEPTION 'Unauthorized: Insufficient privileges to view global passports';
+    RAISE EXCEPTION 'Unauthorized: Insufficient privileges';
   END IF;
 
+  -- Crucial fix: We dynamically weave the first_name and last_name securely from auth.users (u)
   SELECT json_build_object(
     'id', p.id,
-    'first_name', p.first_name,
-    'last_name', p.last_name,
-    'email', p.email,
+    'email', u.email,
+    'first_name', u.raw_user_meta_data->>'first_name',
+    'last_name', u.raw_user_meta_data->>'last_name',
     'phone', p.phone,
     'address_street', p.address_street,
     'address_city', p.address_city,
@@ -545,6 +545,7 @@ BEGIN
     'organization_id', p.organization_id
   ) INTO v_passport
   FROM public.profiles p
+  JOIN auth.users u ON u.id = p.id
   LEFT JOIN public.certification_levels cl ON p.cert_level = cl.id
   WHERE p.id = p_user_id;
 
@@ -965,6 +966,7 @@ DECLARE
   v_org_id uuid;
   v_admin_role text;
 BEGIN
+  -- Verify the administrator
   SELECT p.organization_id, p.role::text INTO v_org_id, v_admin_role
   FROM public.profiles p WHERE p.id = auth.uid();
 
@@ -973,27 +975,22 @@ BEGIN
   END IF;
 
   RETURN QUERY
-SELECT 
-  p.id,
-  u.email,
-  (u.raw_user_meta_data->>'first_name')::text AS first_name, -- ✅ Pulls from global Auth
-  (u.raw_user_meta_data->>'last_name')::text AS last_name,   -- ✅ Pulls from global Auth
-  
-  -- If you added passport info (like cert_level) to their global auth metadata, pull it like this:
-  (u.raw_user_meta_data->>'cert_level')::text AS global_cert_level,
-  (u.raw_user_meta_data->>'number_of_dives')::int AS global_dive_count,
-
-  p.role,
-  p.organization_id
-FROM auth.users u
-JOIN public.profiles p ON p.id = u.id
+  SELECT 
+    p.id,
+    u.email::text,
+    (u.raw_user_meta_data->>'first_name')::text AS first_name,
+    (u.raw_user_meta_data->>'last_name')::text AS last_name,
+    p.role::text,
+    p.created_at,
+    p.organization_id,
+    (c.id IS NOT NULL) AS is_local_client
+  FROM auth.users u
+  JOIN public.profiles p ON p.id = u.id
   LEFT JOIN public.clients c ON c.user_id = u.id AND c.organization_id = v_org_id
   WHERE 
-    -- Scenario A: Empty Query -> Only show users who either work here or are already a client here
     ((p_query IS NULL OR length(trim(p_query)) < 3) 
      AND (p.organization_id = v_org_id OR c.id IS NOT NULL))
     OR 
-    -- Scenario B: Valid >= 3 Query -> Search globally
     (length(trim(p_query)) >= 3 
      AND (
        u.email ILIKE '%' || p_query || '%' OR
