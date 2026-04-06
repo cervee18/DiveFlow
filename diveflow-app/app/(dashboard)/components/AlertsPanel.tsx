@@ -7,7 +7,7 @@ import TripDrawer from '@/app/(dashboard)/components/TripDrawer';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type AlertType = 'missing_waiver' | 'missing_deposit' | 'no_staff';
+type AlertType = 'missing_waiver' | 'missing_deposit' | 'no_staff' | 'staff_double_booked';
 type Severity  = 'critical' | 'warning';
 type Category  = 'all' | 'staff' | 'clients';
 
@@ -34,9 +34,10 @@ const ALERT_LABELS: Record<AlertType, string> = {
   missing_waiver:  'Missing Waiver',
   missing_deposit: 'Missing Deposit',
   no_staff:        'No Staff',
+  staff_double_booked: 'Double Booked',
 };
 
-const STAFF_ALERT_TYPES:  AlertType[] = ['no_staff'];
+const STAFF_ALERT_TYPES:  AlertType[] = ['no_staff', 'staff_double_booked'];
 const CLIENT_ALERT_TYPES: AlertType[] = ['missing_waiver', 'missing_deposit'];
 
 function alertKey(a: Alert): string {
@@ -200,11 +201,18 @@ export default function AlertsPanel() {
     const key = alertKey(alert);
     setDismissing(prev => new Set(prev).add(key));
 
+    let dismissalNotes: string | null = null;
+    if (alert.alert_type === 'staff_double_booked') {
+      const match = alert.message.match(/on (\d{4}-\d{2}-\d{2}) \((AM|PM)\)/);
+      if (match) dismissalNotes = `${match[1]}_${match[2]}`;
+    }
+
     const { error } = await supabase.from('alert_resolutions').insert({
       org_id:     orgId,
       alert_type: alert.alert_type,
       trip_id:    alert.trip_id,
       client_id:  alert.client_id ?? null,
+      notes:      dismissalNotes,
       // resolved_by: null until staff.profile_id is linked to auth
     });
 

@@ -233,8 +233,8 @@ export default function StaffTripCard({
             )}
           </div>
 
-          {/* Captain button — only when there's staff and not in assign mode */}
-          {hasStaff && !assignMode && (
+          {/* Captain button — only when there's staff and not in assign mode, and not Pool/Class */}
+          {hasStaff && !assignMode && !['Pool', 'Class'].includes(trip.trip_types?.name) && (
             <button
               onClick={e => { e.stopPropagation(); setCaptainMode(prev => !prev); }}
               className={`text-[9px] font-bold px-1.5 py-0.5 rounded transition-colors leading-none ${

@@ -321,16 +321,11 @@ export default function StaffPage() {
         ops.push(supabase.from('trip_staff').insert(
           toAdd.map(staff_id => ({ trip_id: tripId, staff_id, role_id: null }))
         ));
-        const sdjRows = toAdd.map((staff_id, index) => {
-          let resolvedJobTypeId = crewId;
-          if (tripIsEmpty && index === 0 && captainId) {
-            const member = allStaff.find(s => s.id === staff_id);
-            if (member?.captain_license) resolvedJobTypeId = captainId;
-          }
+        const sdjRows = toAdd.map((staff_id) => {
           return {
             organization_id: userOrgId,
             staff_id,
-            job_type_id: resolvedJobTypeId,
+            job_type_id: crewId,
             job_date: selectedDate,
             'AM/PM': half,
             trip_id: tripId,
