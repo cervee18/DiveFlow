@@ -70,7 +70,7 @@ export async function getClientTabData(clientId: string) {
     if (visitInvoices && visitInvoices.length > 0) {
       const { data: vPayments } = await supabase
         .from('pos_payments')
-        .select('id, amount, payment_method, created_at, recorded_by_email, client_id, invoice_id, voided_at, void_reason')
+        .select('id, amount, payment_method, created_at, recorded_by_email, client_id, invoice_id, voided_at, void_reason, payment_group_id')
         .in('invoice_id', visitInvoices.map(i => i.id))
         .order('created_at', { ascending: false });
       allPayments.push(...(vPayments ?? []));
@@ -87,7 +87,7 @@ export async function getClientTabData(clientId: string) {
   if (clientInvoices && clientInvoices.length > 0) {
     const { data: tPayments } = await supabase
       .from('pos_payments')
-      .select('id, amount, payment_method, created_at, recorded_by_email, client_id, invoice_id, voided_at, void_reason')
+      .select('id, amount, payment_method, created_at, recorded_by_email, client_id, invoice_id, voided_at, void_reason, payment_group_id')
       .in('invoice_id', clientInvoices.map(i => i.id))
       .order('created_at', { ascending: false });
     allPayments.push(...(tPayments ?? []));
@@ -95,11 +95,32 @@ export async function getClientTabData(clientId: string) {
 
   allPayments.sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
 
+  // Group payments that share a payment_group_id into a single display record
+  const groupedPayments: any[] = [];
+  const seenGroups = new Set<string>();
+  for (const p of allPayments) {
+    if (!p.payment_group_id) {
+      groupedPayments.push({ ...p, ids: [p.id] });
+      continue;
+    }
+    if (seenGroups.has(p.payment_group_id)) continue;
+    seenGroups.add(p.payment_group_id);
+    const siblings = allPayments.filter(x => x.payment_group_id === p.payment_group_id);
+    const allVoided = siblings.every(x => !!x.voided_at);
+    groupedPayments.push({
+      ...p,
+      ids: siblings.map(x => x.id),
+      amount: siblings.reduce((s, x) => s + Number(x.amount), 0),
+      voided_at: allVoided ? p.voided_at : null,
+      void_reason: allVoided ? p.void_reason : null,
+    });
+  }
+
   return {
     data: {
       visits: visitPayloads,
       parkedCarts: parkedCarts ?? [],
-      payments: allPayments,
+      payments: groupedPayments,
     }
   };
 }
@@ -237,7 +258,10 @@ export async function payClientFullTab(
     paymentRows[0].amount = enteredAmount;
   }
 
-  // ── 5. Record one payment row per member ─────────────────────────────────
+  // ── 5. Record one payment row per member, all sharing the same group ID ────
+  // payment_group_id lets the history UI collapse these into a single display row.
+  const paymentGroupId = crypto.randomUUID();
+
   for (const row of paymentRows) {
     if (row.amount <= 0) continue;
 
@@ -253,6 +277,7 @@ export async function payClientFullTab(
       client_id: row.clientId,
       recorded_by: user.id,
       recorded_by_email: user.email ?? null,
+      payment_group_id: paymentGroupId,
     });
     if (payErr) return { error: payErr.message };
   }
@@ -261,7 +286,7 @@ export async function payClientFullTab(
   return { success: true };
 }
 
-export async function voidPayment(paymentId: string, reason: string) {
+export async function voidPayment(paymentIds: string[], reason: string) {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { error: 'Unauthorized' };
@@ -269,7 +294,7 @@ export async function voidPayment(paymentId: string, reason: string) {
   const { error } = await supabase
     .from('pos_payments')
     .update({ voided_at: new Date().toISOString(), void_reason: reason || 'Voided by staff' })
-    .eq('id', paymentId);
+    .in('id', paymentIds);
 
   if (error) return { error: error.message };
 

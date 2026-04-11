@@ -14,52 +14,106 @@ export default async function POSHistoryPage() {
 
   if (!profile) return null;
 
-  const { data: transactions } = await supabase
-    .from('pos_transactions')
+  // Fetch all payments for this org, joined to invoice → visit and client
+  const { data: rawPayments } = await supabase
+    .from('pos_payments')
     .select(`
       id,
+      amount,
+      payment_method,
       created_at,
-      pos_invoices(
-        id,
-        status,
+      recorded_by_email,
+      voided_at,
+      void_reason,
+      payment_group_id,
+      client_id,
+      clients(first_name, last_name),
+      pos_invoices!inner(
+        organization_id,
         visits(start_date, end_date)
-      ),
-      pos_invoice_items(
-        quantity,
-        unit_price,
-        pos_products(name)
-      ),
-      pos_payments(
-        amount,
-        payment_method,
-        notes,
-        recorded_by_email,
-        clients(first_name, last_name)
       )
     `)
+    .eq('pos_invoices.organization_id', profile.organization_id)
     .order('created_at', { ascending: false })
-    .limit(200);
+    .limit(500);
 
-  const rows = transactions ?? [];
+  const payments = rawPayments ?? [];
 
-  const totalCollected = rows.reduce((sum, t) => {
-    const payments = (t.pos_payments as any[]) ?? [];
-    return sum + payments.reduce((s: number, p: any) => s + Number(p.amount), 0);
-  }, 0);
+  // Group by payment_group_id; ungrouped rows are their own entry
+  type DisplayPayment = {
+    ids: string[];
+    amount: number;
+    payment_method: string;
+    created_at: string;
+    recorded_by_email: string | null;
+    voided_at: string | null;
+    void_reason: string | null;
+    clients: Array<{ first_name: string; last_name: string }>;
+    visit: { start_date: string; end_date: string } | null;
+  };
 
-  const methodTotals = rows.reduce<Record<string, number>>((acc, t) => {
-    const payments = (t.pos_payments as any[]) ?? [];
-    payments.forEach((p: any) => {
-      acc[p.payment_method] = (acc[p.payment_method] ?? 0) + Number(p.amount);
+  const grouped: DisplayPayment[] = [];
+  const seenGroups = new Set<string>();
+
+  for (const p of payments) {
+    const invoice = (p as any).pos_invoices;
+    const visit = invoice?.visits ?? null;
+
+    if (!(p as any).payment_group_id) {
+      const client = (p as any).clients;
+      grouped.push({
+        ids: [p.id],
+        amount: Number(p.amount),
+        payment_method: p.payment_method,
+        created_at: p.created_at,
+        recorded_by_email: p.recorded_by_email,
+        voided_at: p.voided_at,
+        void_reason: p.void_reason,
+        clients: client ? [client] : [],
+        visit,
+      });
+      continue;
+    }
+
+    const groupId = (p as any).payment_group_id;
+    if (seenGroups.has(groupId)) continue;
+    seenGroups.add(groupId);
+
+    const siblings = payments.filter((x: any) => x.payment_group_id === groupId);
+    const allVoided = siblings.every((x: any) => !!x.voided_at);
+    const clientList = siblings
+      .map((x: any) => x.clients)
+      .filter(Boolean)
+      .filter((c: any, idx: number, arr: any[]) =>
+        arr.findIndex((o: any) => o.first_name === c.first_name && o.last_name === c.last_name) === idx
+      );
+
+    grouped.push({
+      ids: siblings.map((x: any) => x.id),
+      amount: siblings.reduce((s: number, x: any) => s + Number(x.amount), 0),
+      payment_method: p.payment_method,
+      created_at: p.created_at,
+      recorded_by_email: p.recorded_by_email,
+      voided_at: allVoided ? p.voided_at : null,
+      void_reason: allVoided ? p.void_reason : null,
+      clients: clientList,
+      visit: (siblings[0] as any).pos_invoices?.visits ?? null,
     });
+  }
+
+  const activePayments = grouped.filter(p => !p.voided_at);
+  const totalCollected = activePayments.reduce((s, p) => s + p.amount, 0);
+
+  const methodTotals = activePayments.reduce<Record<string, number>>((acc, p) => {
+    acc[p.payment_method] = (acc[p.payment_method] ?? 0) + p.amount;
     return acc;
   }, {});
 
   return (
-    <div className="max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-8">
+    <div className="max-w-4xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-8">
       <div className="mb-8">
         <h1 className="text-2xl font-semibold text-slate-800">History</h1>
-        <p className="text-sm text-slate-500 mt-1">All checkout transactions, most recent first.</p>
+        <p className="text-sm text-slate-500 mt-1">All payments, most recent first.</p>
       </div>
 
       {/* Summary Cards */}
@@ -70,7 +124,7 @@ export default async function POSHistoryPage() {
         </div>
         <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
           <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Transactions</p>
-          <p className="text-2xl font-black text-slate-800 mt-1">{rows.length}</p>
+          <p className="text-2xl font-black text-slate-800 mt-1">{activePayments.length}</p>
         </div>
         {Object.entries(methodTotals).map(([method, total]) => (
           <div key={method} className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
@@ -80,119 +134,54 @@ export default async function POSHistoryPage() {
         ))}
       </div>
 
-      {/* Transactions */}
-      <div className="space-y-4">
-        {rows.length === 0 ? (
-          <div className="bg-white border border-slate-200 rounded-xl shadow-sm flex flex-col items-center justify-center h-48">
-            <p className="text-sm font-semibold text-slate-600">No transactions yet.</p>
-            <p className="text-xs text-slate-400 mt-1">Completed checkouts will appear here.</p>
+      {/* Payment rows */}
+      <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden divide-y divide-slate-100">
+        {grouped.length === 0 ? (
+          <div className="flex flex-col items-center justify-center h-48">
+            <p className="text-sm font-semibold text-slate-600">No payments yet.</p>
+            <p className="text-xs text-slate-400 mt-1">Completed payments will appear here.</p>
           </div>
         ) : (
-          rows.map((t) => {
-            const invoice = t.pos_invoices as any;
-            const visit = invoice?.visits as any;
-            const items = (t.pos_invoice_items as any[]) ?? [];
-            const payments = (t.pos_payments as any[]) ?? [];
-
-            const itemsTotal = items.reduce((s: number, i: any) => s + (Number(i.unit_price) * i.quantity), 0);
-            const paidTotal = payments.reduce((s: number, p: any) => s + Number(p.amount), 0);
-
-            const date = new Date(t.created_at);
+          grouped.map((p, idx) => {
+            const isVoided = !!p.voided_at;
+            const date = new Date(p.created_at);
             const dateStr = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
             const timeStr = date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
 
             return (
-              <div key={t.id} className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
-                {/* Transaction Header */}
-                <div className="px-5 py-3 bg-slate-50 border-b border-slate-200 flex items-center justify-between gap-4">
-                  <div className="flex items-center gap-4">
-                    <div>
-                      <span className="font-semibold text-slate-800 text-sm">{dateStr}</span>
-                      <span className="text-xs text-slate-400 ml-2">{timeStr}</span>
-                    </div>
-                    {visit ? (
-                      <span className="text-xs bg-slate-200 text-slate-600 px-2 py-1 rounded font-medium">
-                        Visit: {visit.start_date} → {visit.end_date}
+              <div key={idx} className={`px-5 py-3.5 flex items-center justify-between gap-4 ${isVoided ? 'opacity-50' : ''}`}>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-indigo-50 text-indigo-700 border border-indigo-100 ${isVoided ? 'line-through' : ''}`}>
+                      {p.payment_method}
+                    </span>
+                    {isVoided && (
+                      <span className="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 bg-rose-100 text-rose-500 rounded">
+                        Voided
                       </span>
-                    ) : (
-                      <span className="text-xs bg-slate-100 text-slate-400 px-2 py-1 rounded italic">Walk-in</span>
+                    )}
+                    {p.clients.length > 0 && (
+                      <span className="text-xs text-slate-500">
+                        {p.clients.map(c => `${c.first_name} ${c.last_name}`).join(', ')}
+                      </span>
+                    )}
+                    {p.visit && (
+                      <span className="text-xs bg-slate-100 text-slate-500 px-2 py-0.5 rounded font-medium">
+                        {p.visit.start_date} → {p.visit.end_date}
+                      </span>
                     )}
                   </div>
-                  <span className="font-mono font-black text-emerald-600 text-lg">${paidTotal.toFixed(2)}</span>
+                  <p className="text-xs text-slate-400 mt-1">
+                    {dateStr} · {timeStr}
+                    {p.recorded_by_email && <> · {p.recorded_by_email}</>}
+                  </p>
+                  {isVoided && p.void_reason && (
+                    <p className="text-xs text-rose-400 italic mt-0.5">"{p.void_reason}"</p>
+                  )}
                 </div>
-
-                <div className="grid grid-cols-2 divide-x divide-slate-100">
-                  {/* Items */}
-                  <div className="p-4">
-                    <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-3">Items Sold</p>
-                    {items.length === 0 ? (
-                      <p className="text-xs text-slate-400 italic">No items recorded</p>
-                    ) : (
-                      <div className="space-y-1.5">
-                        {items.map((item: any, i: number) => (
-                          <div key={i} className="flex justify-between items-center text-sm">
-                            <span className="text-slate-700">
-                              {item.quantity > 1 && (
-                                <span className="text-xs font-bold text-slate-400 mr-1">{item.quantity}×</span>
-                              )}
-                              {item.pos_products?.name ?? '—'}
-                            </span>
-                            <span className="font-mono text-slate-800 font-medium">
-                              ${(Number(item.unit_price) * item.quantity).toFixed(2)}
-                            </span>
-                          </div>
-                        ))}
-                        <div className="flex justify-between items-center text-xs text-slate-400 pt-1.5 border-t border-slate-100 mt-1.5">
-                          <span>Items subtotal</span>
-                          <span className="font-mono">${itemsTotal.toFixed(2)}</span>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Payments */}
-                  <div className="p-4">
-                    <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-3">Payment</p>
-                    {payments.length === 0 ? (
-                      <p className="text-xs text-slate-400 italic">No payment recorded</p>
-                    ) : (
-                      <div className="space-y-3">
-                        {payments.map((p: any, i: number) => {
-                          const client = p.clients as any;
-                          const staffName = p.recorded_by_email ?? null;
-                          return (
-                            <div key={i} className="space-y-1.5">
-                              <div className="flex items-center justify-between gap-3">
-                                <div className="flex items-center gap-2">
-                                  <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-indigo-50 text-indigo-700 border border-indigo-100">
-                                    {p.payment_method}
-                                  </span>
-                                  {client ? (
-                                    <span className="text-xs text-slate-500">{client.first_name} {client.last_name}</span>
-                                  ) : (
-                                    <span className="text-xs text-slate-400 italic">Unassigned</span>
-                                  )}
-                                </div>
-                                <span className="font-mono font-bold text-emerald-600">${Number(p.amount).toFixed(2)}</span>
-                              </div>
-                              {staffName && (
-                                <div className="flex items-center gap-1.5 text-xs text-slate-400">
-                                  <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                                    <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" />
-                                  </svg>
-                                  Recorded by {staffName}
-                                </div>
-                              )}
-                              {p.notes && (
-                                <p className="text-xs text-slate-400 italic">{p.notes}</p>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-                </div>
+                <span className={`font-mono font-bold text-base shrink-0 ${isVoided ? 'line-through text-slate-400' : 'text-emerald-600'}`}>
+                  ${p.amount.toFixed(2)}
+                </span>
               </div>
             );
           })

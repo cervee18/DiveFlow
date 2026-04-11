@@ -3,14 +3,17 @@
 import { useState, useRef } from 'react';
 import { formatDate, fmtMoney } from './helpers';
 import type { VisitSelection, VisitMemberSelection } from './types';
+import InlineProductAdd from './InlineProductAdd';
 
 interface VisitCardProps {
   visit: { visitId: string; startDate: string; endDate: string; payload: any };
   selectedClientId: string;
+  products: any[];
   onSelectionChange: (sel: VisitSelection) => void;
+  onAddItem: (visitId: string, invoiceId: string | null, clientId: string, productId: string, price: number, qty: number) => Promise<void>;
 }
 
-export default function VisitCard({ visit, selectedClientId, onSelectionChange }: VisitCardProps) {
+export default function VisitCard({ visit, selectedClientId, products, onSelectionChange, onAddItem }: VisitCardProps) {
   const { payload } = visit;
   const clients: Record<string, any> = payload.clients ?? {};
   const memberIds = Object.keys(clients);
@@ -130,8 +133,7 @@ export default function VisitCard({ visit, selectedClientId, onSelectionChange }
 
                   <button
                     onClick={() => toggleMemberExpand(memberId)}
-                    disabled={!hasItems}
-                    className="flex items-center gap-1 text-xs text-slate-400 hover:text-slate-600 transition-colors disabled:opacity-0 disabled:pointer-events-none ml-0.5"
+                    className="flex items-center gap-1 text-xs text-slate-400 hover:text-slate-600 transition-colors ml-0.5"
                   >
                     <span>{itemCount} item{itemCount !== 1 ? 's' : ''}</span>
                     <svg className={`w-3.5 h-3.5 transition-transform ${isMemberExpanded ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
@@ -152,9 +154,19 @@ export default function VisitCard({ visit, selectedClientId, onSelectionChange }
                   </div>
                 </div>
 
-                {/* Expandable line items */}
+                {/* Expandable section */}
                 {isMemberExpanded && (
-                  <div className="px-5 pb-3 space-y-1">
+                  <div className="px-5 pb-3 space-y-2">
+                    {/* Inline product add */}
+                    <InlineProductAdd
+                      products={products}
+                      onAdd={(productId, price, qty) =>
+                        onAddItem(visit.visitId, payload.invoice_id ?? null, memberId, productId, price, qty)
+                      }
+                    />
+
+                    {/* Line items */}
+                    <div className="space-y-1">
                     {autoItems.map((item: any, idx: number) => (
                       <div key={`a-${idx}`} className="flex justify-between items-center text-xs text-slate-500 px-2.5 py-1.5 bg-slate-50 rounded-lg">
                         <div className="flex items-center gap-2">
@@ -185,7 +197,8 @@ export default function VisitCard({ visit, selectedClientId, onSelectionChange }
                         <span className="font-mono">−{fmtMoney(p.amount)}</span>
                       </div>
                     ))}
-                    {!hasItems && <p className="text-xs text-slate-400 italic px-2">No charges</p>}
+                    {!hasItems && <p className="text-xs text-slate-400 italic px-2">No charges yet</p>}
+                    </div>
                   </div>
                 )}
               </div>

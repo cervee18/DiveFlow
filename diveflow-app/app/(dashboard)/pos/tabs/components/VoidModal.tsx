@@ -3,7 +3,7 @@
 import { fmtMoney } from './helpers';
 
 interface VoidModalProps {
-  target: { id: string; amount: number; method: string };
+  target: { ids: string[]; amount: number; method: string };
   reason: string;
   error: string;
   isPending: boolean;

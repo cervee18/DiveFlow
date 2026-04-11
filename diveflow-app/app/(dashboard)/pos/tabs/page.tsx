@@ -8,10 +8,22 @@ export default async function ClientTabsPage({
 }) {
   const { clientId } = await searchParams;
 
+  const supabase = await createClient();
+
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return null;
+
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('organization_id')
+    .eq('id', user.id)
+    .single();
+
+  const orgId = profile?.organization_id;
+
   let initialClient: { id: string; name: string } | null = null;
 
   if (clientId) {
-    const supabase = await createClient();
     const { data } = await supabase
       .from('clients')
       .select('id, first_name, last_name')
@@ -22,6 +34,14 @@ export default async function ClientTabsPage({
     }
   }
 
+  const { data: products } = orgId ? await supabase
+    .from('pos_products')
+    .select('id, name, price')
+    .eq('organization_id', orgId)
+    .eq('is_active', true)
+    .eq('is_automated', false)
+    .order('name') : { data: [] };
+
   return (
     <div className="flex flex-col h-[calc(100vh-4rem)] bg-slate-50 p-6">
       <div className="mb-4">
@@ -31,7 +51,7 @@ export default async function ClientTabsPage({
         </p>
       </div>
       <div className="flex-1 overflow-hidden">
-        <TabsClient initialClient={initialClient} />
+        <TabsClient initialClient={initialClient} products={products ?? []} />
       </div>
     </div>
   );

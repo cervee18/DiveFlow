@@ -2,6 +2,7 @@
 
 import { useState, useTransition, useMemo, useRef, useEffect } from 'react';
 import { searchClients, getClientTabData, payClientFullTab, voidPayment, deleteParkedCartFromTabs } from './actions';
+import { addManualItem } from '../sell/actions';
 import { SectionLabel, EmptyState, fmtMoney } from './components/helpers';
 import { type Client, type VisitSelection } from './components/types';
 import ClientSearchPanel from './components/ClientSearchPanel';
@@ -11,7 +12,7 @@ import PaymentHistorySection from './components/PaymentHistorySection';
 import PayModal from './components/PayModal';
 import VoidModal from './components/VoidModal';
 
-export default function TabsClient({ initialClient }: { initialClient?: { id: string; name: string } | null }) {
+export default function TabsClient({ initialClient, products }: { initialClient?: { id: string; name: string } | null; products: any[] }) {
   const [isPending, startTransition] = useTransition();
 
   // Client search
@@ -34,7 +35,7 @@ export default function TabsClient({ initialClient }: { initialClient?: { id: st
   const [payError, setPayError] = useState('');
 
   // Void modal
-  const [voidTarget, setVoidTarget] = useState<{ id: string; amount: number; method: string } | null>(null);
+  const [voidTarget, setVoidTarget] = useState<{ ids: string[]; amount: number; method: string } | null>(null);
   const [voidReason, setVoidReason] = useState('');
   const [voidError, setVoidError] = useState('');
 
@@ -82,12 +83,12 @@ export default function TabsClient({ initialClient }: { initialClient?: { id: st
     setVisitsSelection({});
   };
 
-  const refreshTab = async () => {
+  const refreshTab = async (silent = false) => {
     if (!selectedClient) return;
-    setIsLoadingData(true);
+    if (!silent) setIsLoadingData(true);
     const res = await getClientTabData(selectedClient.id);
-    setIsLoadingData(false);
-    setVisitsSelection({});
+    if (!silent) setIsLoadingData(false);
+    if (!silent) setVisitsSelection({});
     if (res.data) setTabData(res.data);
   };
 
@@ -138,7 +139,7 @@ export default function TabsClient({ initialClient }: { initialClient?: { id: st
   };
 
   const openVoidModal = (p: any) => {
-    setVoidTarget({ id: p.id, amount: p.amount, method: p.payment_method });
+    setVoidTarget({ ids: p.ids ?? [p.id], amount: p.amount, method: p.payment_method });
     setVoidReason('');
     setVoidError('');
   };
@@ -146,7 +147,7 @@ export default function TabsClient({ initialClient }: { initialClient?: { id: st
   const confirmVoid = () => {
     if (!voidTarget) return;
     startTransition(async () => {
-      const res = await voidPayment(voidTarget.id, voidReason || 'Voided by staff');
+      const res = await voidPayment(voidTarget.ids, voidReason || 'Voided by staff');
       if (res.error) { setVoidError(res.error); return; }
       setVoidTarget(null);
       await refreshTab();
@@ -158,6 +159,11 @@ export default function TabsClient({ initialClient }: { initialClient?: { id: st
     setTabData((prev: any) =>
       prev ? { ...prev, parkedCarts: prev.parkedCarts.filter((c: any) => c.id !== cartId) } : prev
     );
+  };
+
+  const handleAddItem = async (visitId: string, invoiceId: string | null, clientId: string, productId: string, price: number, qty: number) => {
+    await addManualItem(visitId, invoiceId, productId, clientId, price, qty);
+    await refreshTab(true);
   };
 
   return (
@@ -222,7 +228,9 @@ export default function TabsClient({ initialClient }: { initialClient?: { id: st
                         key={v.visitId}
                         visit={v}
                         selectedClientId={selectedClient.id}
+                        products={products}
                         onSelectionChange={sel => setVisitsSelection(prev => ({ ...prev, [sel.visitId]: sel }))}
+                        onAddItem={handleAddItem}
                       />
                     ))}
                   </div>
