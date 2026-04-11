@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { formatDate, fmtMoney } from './helpers';
 import type { VisitSelection, VisitMemberSelection } from './types';
 import InlineProductAdd from './InlineProductAdd';
@@ -61,15 +61,12 @@ export default function VisitCard({ visit, selectedClientId, products, onSelecti
     });
   };
 
-  // Report initial selection on mount
-  const didReport = useRef(false);
-  if (!didReport.current) {
-    didReport.current = true;
-    Promise.resolve().then(() => {
-      const { balance, members } = calcSelection(toggledIds);
-      onSelectionChange({ visitId: visit.visitId, invoiceId: payload.invoice_id ?? null, balance, members });
-    });
-  }
+  // Re-report selection whenever visit data changes (initial mount + silent refreshes)
+  useEffect(() => {
+    const { balance, members } = calcSelection(toggledIds);
+    onSelectionChange({ visitId: visit.visitId, invoiceId: payload.invoice_id ?? null, balance, members });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visit]);
 
   return (
     <div className={`border rounded-xl overflow-hidden shadow-sm ${isPaid ? 'border-emerald-200 bg-emerald-50/30' : 'border-slate-200 bg-white'}`}>

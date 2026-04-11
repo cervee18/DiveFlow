@@ -18,7 +18,7 @@ export default async function POSProductsPage() {
   const [productsRes, categoriesRes, tripsRes, coursesRes, rentalsRes, orgRes, tiersRes] = await Promise.all([
     supabase
       .from('pos_products')
-      .select('*, pos_categories(name)')
+      .select('*, pos_categories(name), course_id')
       .eq('organization_id', profile.organization_id)
       .order('is_active', { ascending: false })
       .order('name', { ascending: true }),

@@ -15,7 +15,6 @@ export default async function POSSellPage() {
     .from('pos_products')
     .select('*')
     .eq('organization_id', orgId)
-    .eq('is_automated', false)
     .eq('is_active', true)
     .order('name');
 

@@ -157,6 +157,7 @@ export default function ProductsClient({
         isOpen={isProductModalOpen}
         onClose={() => setIsProductModalOpen(false)}
         categories={categories}
+        courses={courses}
         editingProduct={editingProduct}
       />
       <AutomatedBillingModal

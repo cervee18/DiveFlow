@@ -29,6 +29,7 @@ export async function upsertProduct(payload: {
   price: number;
   is_automated: boolean;
   is_active: boolean;
+  course_id?: string | null;
 }) {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -46,6 +47,7 @@ export async function upsertProduct(payload: {
     price: payload.price,
     is_automated: payload.is_automated,
     is_active: payload.is_active,
+    course_id: payload.course_id || null,
   };
 
   let res;

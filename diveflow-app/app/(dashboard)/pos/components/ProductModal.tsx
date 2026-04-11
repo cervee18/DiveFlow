@@ -7,16 +7,18 @@ interface ProductModalProps {
   isOpen: boolean;
   onClose: () => void;
   categories: any[];
+  courses: any[];
   editingProduct?: any | null;
 }
 
-export default function ProductModal({ isOpen, onClose, categories, editingProduct }: ProductModalProps) {
+export default function ProductModal({ isOpen, onClose, categories, courses, editingProduct }: ProductModalProps) {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [categoryId, setCategoryId] = useState('');
   const [price, setPrice] = useState('0.00');
   const [isAutomated, setIsAutomated] = useState(false);
   const [isActive, setIsActive] = useState(true);
+  const [courseId, setCourseId] = useState('');
   
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -29,6 +31,7 @@ export default function ProductModal({ isOpen, onClose, categories, editingProdu
       setPrice(Number(editingProduct.price ?? 0).toFixed(2));
       setIsAutomated(!!editingProduct.is_automated);
       setIsActive(!!editingProduct.is_active);
+      setCourseId(editingProduct.course_id ?? '');
     } else {
       setName('');
       setDescription('');
@@ -36,6 +39,7 @@ export default function ProductModal({ isOpen, onClose, categories, editingProdu
       setPrice('0.00');
       setIsAutomated(false);
       setIsActive(true);
+      setCourseId('');
     }
   }, [editingProduct, isOpen]);
 
@@ -62,7 +66,8 @@ export default function ProductModal({ isOpen, onClose, categories, editingProdu
       category_id: categoryId,
       price: numPrice,
       is_automated: isAutomated,
-      is_active: isActive
+      is_active: isActive,
+      course_id: courseId || null,
     });
 
     setLoading(false);
@@ -131,6 +136,26 @@ export default function ProductModal({ isOpen, onClose, categories, editingProdu
               />
             </div>
           </div>
+
+          {courses.length > 0 && (
+            <div>
+              <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">
+                Linked Course <span className="normal-case font-normal text-slate-400">(optional — waives trips when added to tab)</span>
+              </label>
+              <select
+                value={courseId}
+                onChange={e => setCourseId(e.target.value)}
+                className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 text-slate-800 focus:outline-none focus:border-teal-500 focus:ring-1 focus:ring-teal-500 bg-white"
+              >
+                <option value="">No course link</option>
+                {courses.map((c: any) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name} ({c.included_trips} trip{c.included_trips !== 1 ? 's' : ''} waived)
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
 
           <div>
             <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">Description (Optional)</label>

@@ -39,7 +39,6 @@ export default async function ClientTabsPage({
     .select('id, name, price')
     .eq('organization_id', orgId)
     .eq('is_active', true)
-    .eq('is_automated', false)
     .order('name') : { data: [] };
 
   return (
