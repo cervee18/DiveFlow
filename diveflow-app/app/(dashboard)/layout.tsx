@@ -92,8 +92,17 @@ export default async function DashboardLayout({
               <div className="mt-6 mb-2 px-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">
                 Point of Sale
               </div>
+              <Link href="/pos/sell" className="flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium text-slate-400 hover:bg-slate-800 hover:text-teal-400 transition-colors">
+                Sell
+              </Link>
               <Link href="/pos/products" className="flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium text-slate-400 hover:bg-slate-800 hover:text-teal-400 transition-colors">
                 Products
+              </Link>
+              <Link href="/pos/tabs" className="flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium text-slate-400 hover:bg-slate-800 hover:text-teal-400 transition-colors">
+                Client Tabs
+              </Link>
+              <Link href="/pos/history" className="flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium text-slate-400 hover:bg-slate-800 hover:text-teal-400 transition-colors">
+                History
               </Link>
             </>
           )}

@@ -59,6 +59,32 @@ export async function upsertProduct(payload: {
   revalidatePath('/pos/products');
   return { data: res.data };
 }
+// ── Internal helper ──────────────────────────────────────────────────────────
+// Finds an existing category by name (case-insensitive) or creates a new one.
+// Returns the category id, or null on failure.
+async function findOrCreateCategory(
+  supabase: Awaited<ReturnType<typeof import('@/utils/supabase/server').createClient>>,
+  orgId: string,
+  categoryName: string,
+): Promise<string | null> {
+  const { data: existing } = await supabase
+    .from('pos_categories')
+    .select('id')
+    .eq('organization_id', orgId)
+    .ilike('name', categoryName)
+    .maybeSingle();
+
+  if (existing) return existing.id;
+
+  const { data: created } = await supabase
+    .from('pos_categories')
+    .insert({ organization_id: orgId, name: categoryName })
+    .select('id')
+    .single();
+
+  return created?.id ?? null;
+}
+
 export async function setTripTypePrice(id: string, name: string, priceStr: string) {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -79,8 +105,10 @@ export async function setTripTypePrice(id: string, name: string, priceStr: strin
     if (trip?.pos_product_id) {
        await supabase.from('pos_products').update({ price }).eq('id', trip.pos_product_id);
     } else {
+       const categoryId = await findOrCreateCategory(supabase, profile.organization_id, 'Trip');
        const { data: prod } = await supabase.from('pos_products').insert({
          organization_id: profile.organization_id,
+         category_id: categoryId,
          name: `Trip: ${name}`,
          price,
          is_automated: true
@@ -94,73 +122,75 @@ export async function setTripTypePrice(id: string, name: string, priceStr: strin
   revalidatePath('/pos/products');
 }
 
-export async function setActivityPrice(id: string, name: string, priceStr: string) {
+export async function setTripTypeBillingMode(id: string, billingViaActivity: boolean) {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return;
+
+  // When switching to activity-billed, clear any fixed price so there's no orphan product
+  if (billingViaActivity) {
+    const { data: trip } = await supabase.from('trip_types').select('pos_product_id').eq('id', id).single();
+    if (trip?.pos_product_id) {
+      await supabase.from('trip_types').update({ pos_product_id: null, billing_via_activity: true }).eq('id', id);
+    } else {
+      await supabase.from('trip_types').update({ billing_via_activity: true }).eq('id', id);
+    }
+  } else {
+    await supabase.from('trip_types').update({ billing_via_activity: false }).eq('id', id);
+  }
+
+  revalidatePath('/pos/settings');
+  revalidatePath('/pos/products');
+}
+
+export async function setPrivateInstructionPrice(priceStr: string) {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return;
   const { data: profile } = await supabase.from('profiles').select('organization_id').eq('id', user.id).single();
   if (!profile) return;
 
-  const { data: act } = await supabase.from('activities').select('pos_product_id').eq('id', id).single();
-  
+  const { data: org } = await supabase
+    .from('organizations')
+    .select('private_instruction_product_id')
+    .eq('id', profile.organization_id)
+    .single();
+
   if (!priceStr.trim()) {
-    if (act?.pos_product_id) {
-       await supabase.from('activities').update({ pos_product_id: null }).eq('id', id);
+    // Clear the pointer (but leave the product intact)
+    if (org?.private_instruction_product_id) {
+      await supabase.from('organizations').update({ private_instruction_product_id: null }).eq('id', profile.organization_id);
     }
   } else {
     const price = parseFloat(priceStr);
     if (isNaN(price) || price < 0) return;
-    
-    if (act?.pos_product_id) {
-       await supabase.from('pos_products').update({ price }).eq('id', act.pos_product_id);
+
+    if (org?.private_instruction_product_id) {
+      await supabase.from('pos_products').update({ price }).eq('id', org.private_instruction_product_id);
     } else {
-       const { data: prod } = await supabase.from('pos_products').insert({
-         organization_id: profile.organization_id,
-         name: `Activity: ${name}`,
-         price,
-         is_automated: true
-       }).select().single();
-       if (prod) {
-         await supabase.from('activities').update({ pos_product_id: prod.id }).eq('id', id);
-       }
+      const categoryId = await findOrCreateCategory(supabase, profile.organization_id, 'Instruction');
+      const { data: prod } = await supabase.from('pos_products').insert({
+        organization_id: profile.organization_id,
+        category_id: categoryId,
+        name: 'Private Instruction',
+        price,
+        is_automated: true,
+      }).select().single();
+      if (prod) {
+        await supabase.from('organizations').update({ private_instruction_product_id: prod.id }).eq('id', profile.organization_id);
+      }
     }
   }
   revalidatePath('/pos/settings');
   revalidatePath('/pos/products');
 }
 
-export async function setCoursePrice(id: string, name: string, priceStr: string) {
+export async function setCourseIncludedTrips(id: string, trips: number) {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return;
-  const { data: profile } = await supabase.from('profiles').select('organization_id').eq('id', user.id).single();
-  if (!profile) return;
-
-  const { data: crs } = await supabase.from('courses').select('pos_product_id').eq('id', id).single();
-  
-  if (!priceStr.trim()) {
-    if (crs?.pos_product_id) {
-       await supabase.from('courses').update({ pos_product_id: null }).eq('id', id);
-    }
-  } else {
-    const price = parseFloat(priceStr);
-    if (isNaN(price) || price < 0) return;
-    
-    if (crs?.pos_product_id) {
-       await supabase.from('pos_products').update({ price }).eq('id', crs.pos_product_id);
-    } else {
-       const { data: prod } = await supabase.from('pos_products').insert({
-         organization_id: profile.organization_id,
-         name: `Course: ${name}`,
-         price,
-         is_automated: true
-       }).select().single();
-       if (prod) {
-         await supabase.from('courses').update({ pos_product_id: prod.id }).eq('id', id);
-       }
-    }
-  }
-  revalidatePath('/pos/settings');
+  const safeCount = Math.max(0, Math.round(trips));
+  await supabase.from('courses').update({ included_trips: safeCount }).eq('id', id);
   revalidatePath('/pos/products');
 }
 
@@ -191,8 +221,10 @@ export async function setRentalPrice(rentalField: string, label: string, priceSt
     if (mapping?.pos_product_id) {
       await supabase.from('pos_products').update({ price }).eq('id', mapping.pos_product_id);
     } else {
+      const categoryId = await findOrCreateCategory(supabase, profile.organization_id, 'Rental');
       const { data: prod } = await supabase.from('pos_products').insert({
         organization_id: profile.organization_id,
+        category_id: categoryId,
         name: `Rental: ${label}`,
         price,
         is_automated: true
@@ -208,4 +240,50 @@ export async function setRentalPrice(rentalField: string, label: string, priceSt
   }
   revalidatePath('/pos/settings');
   revalidatePath('/pos/products');
+}
+
+export async function setTripPricingTiers(
+  tripTypeId: string,
+  tiers: { min_qty: number; unit_price: number }[]
+) {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { error: 'Unauthorized' };
+
+  const { data: profile } = await supabase.from('profiles').select('organization_id').eq('id', user.id).single();
+  if (!profile) return { error: 'No org' };
+
+  // Replace all tiers for this trip type atomically
+  await supabase.from('trip_pricing_tiers').delete().eq('trip_type_id', tripTypeId);
+
+  if (tiers.length > 0) {
+    const rows = tiers.map(t => ({
+      organization_id: profile.organization_id,
+      trip_type_id: tripTypeId,
+      min_qty: t.min_qty,
+      unit_price: t.unit_price,
+    }));
+    const { error } = await supabase.from('trip_pricing_tiers').insert(rows);
+    if (error) return { error: error.message };
+  }
+
+  revalidatePath('/pos/products');
+  return { success: true };
+}
+
+export async function setRentalDailyCap(capStr: string) {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { error: 'Unauthorized' };
+
+  const { data: profile } = await supabase.from('profiles').select('organization_id').eq('id', user.id).single();
+  if (!profile) return { error: 'No org' };
+
+  const cap = capStr.trim() ? parseFloat(capStr) : null;
+  if (capStr.trim() && (isNaN(cap!) || cap! < 0)) return { error: 'Invalid cap' };
+
+  await supabase.from('organizations').update({ rental_daily_cap: cap }).eq('id', profile.organization_id);
+
+  revalidatePath('/pos/products');
+  return { success: true };
 }

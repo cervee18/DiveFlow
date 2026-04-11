@@ -5,20 +5,24 @@ import CategoryModal from '../components/CategoryModal';
 import ProductModal from '../components/ProductModal';
 import AutomatedBillingModal from '../components/AutomatedBillingModal';
 
-export default function ProductsClient({ 
-  products, 
+export default function ProductsClient({
+  products,
   categories,
   tripTypes,
-  activities,
   courses,
-  rentalMappings 
-}: { 
-  products: any[]; 
+  rentalMappings,
+  privateInstructionPrice,
+  rentalDailyCap,
+  tiersMap,
+}: {
+  products: any[];
   categories: any[];
   tripTypes: any[];
-  activities: any[];
   courses: any[];
   rentalMappings: any[];
+  privateInstructionPrice: string;
+  rentalDailyCap: string;
+  tiersMap: Record<string, { min_qty: number; unit_price: number }[]>;
 }) {
   const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
   const [isProductModalOpen, setIsProductModalOpen] = useState(false);
@@ -159,9 +163,11 @@ export default function ProductsClient({
         isOpen={isAutomatedModalOpen}
         onClose={() => setIsAutomatedModalOpen(false)}
         tripTypes={tripTypes}
-        activities={activities}
         courses={courses}
         rentalMappings={rentalMappings}
+        privateInstructionPrice={privateInstructionPrice}
+        rentalDailyCap={rentalDailyCap}
+        tiersMap={tiersMap}
       />
     </>
   );

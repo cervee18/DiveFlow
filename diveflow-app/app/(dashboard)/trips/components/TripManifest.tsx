@@ -319,7 +319,7 @@ export default function TripManifest({
               {numberOfDives >= 2 && <th className="px-2 py-3 text-center border-r">T2</th>}
               <th className="px-2 py-3 text-center border-r">Wei.</th>
               <th className="px-2 py-3 text-center border-r" title="Private Instructor">Priv</th>
-              <th className="px-3 py-3 text-center border-r" style={{ width: '100px', minWidth: '100px', maxWidth: '100px' }}>Activity</th>
+              <th className="px-3 py-3 text-center border-r" style={{ width: '110px', minWidth: '110px', maxWidth: '110px' }}>Activity</th>
               <th className="px-3 py-3 text-center border-r">Next</th>
               <th className="px-3 py-3 w-48">Notes</th>
             </tr>
@@ -438,30 +438,25 @@ export default function TripManifest({
 
                     {/* Cert Level */}
                     <td className="px-1 py-1 border-r text-center" style={{ width: '70px', minWidth: '70px', maxWidth: '70px' }}>
-                      {diver.courses?.name
-                        ? <span className="text-teal-700 bg-teal-100 px-1.5 py-0.5 rounded text-[10px]">{diver.courses.name}</span>
-                        : (
-                          <select
-                            value={pendingClientChanges[diver.client_id]?.cert_level ?? diver.clients?.cert_level ?? ''}
-                            onChange={e => handleClientChange(diver.client_id, 'cert_level', e.target.value || null)}
-                            className="w-full bg-transparent border-none focus:ring-1 focus:ring-teal-500 rounded text-[10px] font-bold text-slate-700 cursor-pointer text-center"
-                          >
-                            <option value="">-</option>
-                            <optgroup label="Recreational">
-                              {nonprofCertLevels.map((cl: any) => (
-                                <option key={cl.id} value={cl.id}>{cl.abbreviation}</option>
-                              ))}
-                            </optgroup>
-                            {profCertLevels.length > 0 && (
-                              <optgroup label="Professional">
-                                {profCertLevels.map((cl: any) => (
-                                  <option key={cl.id} value={cl.id}>{cl.abbreviation}</option>
-                                ))}
-                              </optgroup>
-                            )}
-                          </select>
-                        )
-                      }
+                      <select
+                        value={pendingClientChanges[diver.client_id]?.cert_level ?? diver.clients?.cert_level ?? ''}
+                        onChange={e => handleClientChange(diver.client_id, 'cert_level', e.target.value || null)}
+                        className="w-full bg-transparent border-none focus:ring-1 focus:ring-teal-500 rounded text-[10px] font-bold text-slate-700 cursor-pointer text-center"
+                      >
+                        <option value="">-</option>
+                        <optgroup label="Recreational">
+                          {nonprofCertLevels.map((cl: any) => (
+                            <option key={cl.id} value={cl.id}>{cl.abbreviation}</option>
+                          ))}
+                        </optgroup>
+                        {profCertLevels.length > 0 && (
+                          <optgroup label="Professional">
+                            {profCertLevels.map((cl: any) => (
+                              <option key={cl.id} value={cl.id}>{cl.abbreviation}</option>
+                            ))}
+                          </optgroup>
+                        )}
+                      </select>
                     </td>
 
                     {/* Equipment dropdowns */}
@@ -508,23 +503,25 @@ export default function TripManifest({
                       <input type="checkbox" checked={rowChanges.private ?? diver.private ?? false} onChange={e => handleChange(diver.id, 'private', e.target.checked)} title="Private instructor" className="rounded border-slate-300 text-violet-600 focus:ring-violet-500 cursor-pointer" />
                     </td>
 
-                    {/* Activity */}
-                    <td className="px-1 py-1 border-r text-center" style={{ width: '100px', minWidth: '100px', maxWidth: '100px' }}>
-                      {diver.courses?.name
-                        ? <span className="text-teal-700 bg-teal-100 px-1.5 py-0.5 rounded text-[10px]">{diver.courses.name}</span>
-                        : (
-                          <select
-                            value={rowChanges.activity_id ?? diver.activity_id ?? ''}
-                            onChange={e => handleChange(diver.id, 'activity_id', e.target.value || null)}
-                            className="w-full bg-transparent border-none focus:ring-1 focus:ring-violet-500 rounded text-[10px] font-bold text-slate-700 cursor-pointer text-center"
-                          >
-                            <option value="">-</option>
-                            {activities.map((a: any) => (
-                              <option key={a.id} value={a.id}>{a.name}</option>
-                            ))}
-                          </select>
-                        )
-                      }
+                    {/* Activity — when set, trip charge is waived automatically */}
+                    <td className="px-1 py-1 border-r text-center" style={{ width: '110px', minWidth: '110px', maxWidth: '110px' }}>
+                      {(() => {
+                        const effectiveActivityId = rowChanges.activity_id !== undefined ? rowChanges.activity_id : (diver.activity_id ?? '');
+                        return (
+                          <div className="flex flex-col gap-0.5">
+                            <select
+                              value={effectiveActivityId}
+                              onChange={e => handleChange(diver.id, 'activity_id', e.target.value || null)}
+                              className={`w-full bg-transparent border-none focus:ring-1 focus:ring-violet-500 rounded text-[10px] font-bold cursor-pointer text-center ${effectiveActivityId ? 'text-violet-600' : 'text-slate-400'}`}
+                            >
+                              <option value="">—</option>
+                              {activities.map((a: any) => (
+                                <option key={a.id} value={a.id}>{a.name}</option>
+                              ))}
+                            </select>
+                          </div>
+                        );
+                      })()}
                     </td>
 
                     {/* Next trip */}

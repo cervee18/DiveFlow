@@ -133,7 +133,6 @@ export function useTripManifest({
           cert_level,
           certification_levels!cert_level ( abbreviation )
         ),
-        courses ( name ),
         activities ( name )
       `)
       .eq('trip_id', tripId)
@@ -298,7 +297,7 @@ export function useTripManifest({
       return;
     }
 
-    const TRIP_ONLY_FIELDS = new Set(['waiver', 'deposit', 'notes', 'activity_id']);
+    const TRIP_ONLY_FIELDS = new Set(['waiver', 'deposit', 'notes', 'activity_id', 'private']);
     const propagatableEntries = Object.entries(pendingChanges).filter(([, changes]) =>
       Object.keys(changes).some(k => !TRIP_ONLY_FIELDS.has(k))
     );
@@ -321,7 +320,8 @@ export function useTripManifest({
           const diver = manifest.find(d => d.id === id);
           if (!diver) return Promise.resolve({ error: null });
 
-          const { pick_up, waiver, deposit, notes, activity_id, ...equipmentChanges } = changes;
+          // eslint-disable-next-line @typescript-eslint/no-unused-vars
+          const { pick_up, waiver, deposit, notes, activity_id, private: _private, ...equipmentChanges } = changes;
           const hasPickUp = 'pick_up' in changes;
 
           return supabase.rpc('propagate_trip_client_changes', {
