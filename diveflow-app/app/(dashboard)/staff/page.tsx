@@ -9,6 +9,7 @@ import StaffBoard  from './components/StaffBoard';
 import StaffPanel  from './components/StaffPanel';
 import TripDrawer  from '@/app/(dashboard)/components/TripDrawer';
 import { getTodayStr, localHour } from './components/dateUtils';
+import { SelectedBubble, MoveDestination, bubbleKey } from './components/staffTypes';
 
 export default function StaffPage() {
   const supabase = createClient();
@@ -26,10 +27,12 @@ export default function StaffPage() {
   const [selectedStaffIds,     setSelectedStaffIds]     = useState<string[]>([]);
   const [selectedTripIds,      setSelectedTripIds]      = useState<string[]>([]);
   const [selectedActivityKeys, setSelectedActivityKeys] = useState<{ tripId: string; activityId: string }[]>([]);
-  const [selectedJobKeys,      setSelectedJobKeys]      = useState<{ jobTypeId: string; halfDay: 'AM' | 'PM' }[]>([]);
+  const [selectedJobKeys,      setSelectedJobKeys]      = useState<{ jobTypeId: string; halfDay: 'AM' | 'PM'; customLabel?: string }[]>([]);
   const [isLoading,            setIsLoading]            = useState(false);
   const [userOrgId,            setUserOrgId]            = useState<string | null>(null);
   const [drawerTripId,         setDrawerTripId]         = useState<string | null>(null);
+  const [selectedBubbles,      setSelectedBubbles]      = useState<SelectedBubble[]>([]);
+  const [customJobCards,       setCustomJobCards]       = useState<{ id: string; halfDay: 'AM' | 'PM'; label: string; jobTypeId: string }[]>([]);
 
   // Keep a ref to allStaff so callbacks can access it without stale closure
   const allStaffRef = useRef<any[]>([]);
@@ -149,7 +152,7 @@ export default function StaffPage() {
     const dayStart  = new Date(y, m - 1, d,  0,  0,  0,   0);
     const dayEnd    = new Date(y, m - 1, d, 23, 59, 59, 999);
 
-    const [tripsRes, jobsRes] = await Promise.all([
+    const [tripsRes, jobsRes, cardsRes] = await Promise.all([
       supabase
         .from('trips')
         .select(`
@@ -167,6 +170,12 @@ export default function StaffPage() {
       supabase
         .from('staff_daily_job')
         .select(`*, staff ( id, initials, first_name, last_name )`)
+        .eq('organization_id', userOrgId)
+        .eq('job_date', selectedDate),
+
+      supabase
+        .from('staff_custom_job_card')
+        .select('id, am_pm, custom_label, job_type_id')
         .eq('organization_id', userOrgId)
         .eq('job_date', selectedDate),
     ]);
@@ -209,6 +218,15 @@ export default function StaffPage() {
       setDailyJobs(freshJobs);
     }
 
+    if (!cardsRes.error && cardsRes.data) {
+      setCustomJobCards(cardsRes.data.map(c => ({
+        id:        c.id,
+        halfDay:   c.am_pm as 'AM' | 'PM',
+        label:     c.custom_label,
+        jobTypeId: c.job_type_id,
+      })));
+    }
+
     setIsLoading(false);
   }, [selectedDate, userOrgId, jobTypes, supabase]);
 
@@ -231,12 +249,14 @@ export default function StaffPage() {
     });
   }, []);
 
-  const handleToggleJobSelection = useCallback((jtId: string, halfDay: 'AM' | 'PM') => {
+  const handleToggleJobSelection = useCallback((jtId: string, halfDay: 'AM' | 'PM', customLabel?: string) => {
     setSelectedJobKeys(prev => {
-      const exists = prev.some(k => k.jobTypeId === jtId && k.halfDay === halfDay);
-      return exists
-        ? prev.filter(k => !(k.jobTypeId === jtId && k.halfDay === halfDay))
-        : [...prev, { jobTypeId: jtId, halfDay }];
+      const matches = (k: { jobTypeId: string; halfDay: 'AM' | 'PM'; customLabel?: string }) =>
+        k.jobTypeId === jtId && k.halfDay === halfDay &&
+        (customLabel ? k.customLabel === customLabel : !k.customLabel);
+      return prev.some(matches)
+        ? prev.filter(k => !matches(k))
+        : [...prev, { jobTypeId: jtId, halfDay, ...(customLabel ? { customLabel } : {}) }];
     });
   }, []);
 
@@ -246,6 +266,168 @@ export default function StaffPage() {
     setSelectedActivityKeys([]);
     setSelectedJobKeys([]);
   }, []);
+
+  // ─── Bubble-select-to-move handlers ──────────────────────────────────────
+
+  const handleToggleBubble = useCallback((bubble: SelectedBubble) => {
+    // Entering bubble mode clears assign mode
+    setSelectedStaffIds([]);
+    setSelectedTripIds([]);
+    setSelectedActivityKeys([]);
+    setSelectedJobKeys([]);
+    setSelectedBubbles(prev => {
+      const key    = bubbleKey(bubble);
+      const exists = prev.some(b => bubbleKey(b) === key);
+      return exists ? prev.filter(b => bubbleKey(b) !== key) : [...prev, bubble];
+    });
+  }, []);
+
+  const handleMoveBubbles = useCallback(async (dest: MoveDestination) => {
+    if (!userOrgId || selectedBubbles.length === 0) return;
+
+    const unassignedId = jobTypes.find(jt => jt.name === 'Unassigned')?.id;
+    const crewId       = jobTypes.find(jt => jt.name === 'Crew')?.id;
+    const ops: PromiseLike<any>[] = [];
+
+    for (const { staffId, source } of selectedBubbles) {
+      // ── Remove from source ────────────────────────────────────────────
+      if (source.kind === 'job') {
+        const rows = dailyJobs.filter(j =>
+          j.staff_id === staffId && j.job_type_id === source.jobTypeId && j['AM/PM'] === source.halfDay &&
+          (source.customLabel ? j.custom_label === source.customLabel : !j.custom_label)
+        );
+        for (const j of rows) {
+          ops.push(supabase.from('staff_daily_job').delete().eq('id', j.id));
+          if (j.trip_id) {
+            ops.push(supabase.from('trip_staff').delete()
+              .eq('trip_id', j.trip_id).eq('staff_id', staffId).is('activity_id', null));
+          }
+        }
+      } else if (source.kind === 'trip') {
+        ops.push(supabase.from('trip_staff').delete()
+          .eq('trip_id', source.tripId).eq('staff_id', staffId));
+        ops.push(supabase.from('staff_daily_job').delete()
+          .eq('trip_id', source.tripId).eq('staff_id', staffId).eq('job_date', selectedDate));
+      } else {
+        // trip-activity
+        ops.push(supabase.from('trip_staff').delete().eq('id', source.tripStaffId));
+        const actJob = (dailyJobs as any[]).find(j =>
+          j.staff_id === staffId && j.trip_id === source.tripId && j.activity_id === source.activityId
+        );
+        if (actJob) ops.push(supabase.from('staff_daily_job').delete().eq('id', actJob.id));
+      }
+
+      // ── Add to destination ────────────────────────────────────────────
+      if (dest.kind === 'job') {
+        const alreadyInJob = dailyJobs.some(j =>
+          j.staff_id === staffId && j.job_type_id === dest.jobTypeId && j['AM/PM'] === dest.halfDay &&
+          (dest.customLabel ? j.custom_label === dest.customLabel : !j.custom_label)
+        );
+        if (!alreadyInJob) {
+          ops.push(supabase.from('staff_daily_job').insert({
+            organization_id: userOrgId,
+            staff_id:        staffId,
+            job_type_id:     dest.jobTypeId,
+            job_date:        selectedDate,
+            'AM/PM':         dest.halfDay,
+            trip_id:         null,
+            ...(dest.customLabel ? { custom_label: dest.customLabel } : {}),
+          }));
+        }
+        if (unassignedId) {
+          ops.push(supabase.from('staff_daily_job').delete()
+            .eq('staff_id', staffId).eq('job_type_id', unassignedId)
+            .eq('job_date', selectedDate).eq('AM/PM', dest.halfDay));
+        }
+      } else {
+        // dest.kind === 'trip'
+        const trip        = trips.find(t => t.id === dest.tripId);
+        const half        = halfDayOf(trip?.start_time);
+        const alreadyOnTrip = (trip?.trip_staff ?? []).some(
+          (ts: any) => ts.staff_id === staffId && !ts.activity_id
+        );
+        if (!alreadyOnTrip) {
+          ops.push(supabase.from('trip_staff').insert({ trip_id: dest.tripId, staff_id: staffId, role_id: null }));
+          if (crewId) {
+            ops.push(supabase.from('staff_daily_job').insert({
+              organization_id: userOrgId,
+              staff_id:        staffId,
+              job_type_id:     crewId,
+              job_date:        selectedDate,
+              'AM/PM':         half,
+              trip_id:         dest.tripId,
+            }));
+          }
+          if (unassignedId) {
+            ops.push(supabase.from('staff_daily_job').delete()
+              .eq('staff_id', staffId).eq('job_type_id', unassignedId)
+              .eq('job_date', selectedDate).eq('AM/PM', half));
+          }
+        }
+      }
+    }
+
+    if (ops.length > 0) await Promise.all(ops);
+    setSelectedBubbles([]);
+    await fetchDayData();
+  }, [userOrgId, selectedBubbles, dailyJobs, trips, selectedDate, jobTypes, supabase, fetchDayData]);
+
+  const handleUnassignBubbles = useCallback(async () => {
+    if (!userOrgId || selectedBubbles.length === 0) return;
+
+    const unassignedId = jobTypes.find(jt => jt.name === 'Unassigned')?.id;
+    const ops: PromiseLike<any>[] = [];
+
+    for (const { staffId, source } of selectedBubbles) {
+      let halfDay: 'AM' | 'PM' = 'AM';
+
+      if (source.kind === 'job') {
+        halfDay = source.halfDay;
+        const rows = dailyJobs.filter(j =>
+          j.staff_id === staffId && j.job_type_id === source.jobTypeId && j['AM/PM'] === source.halfDay &&
+          (source.customLabel ? j.custom_label === source.customLabel : !j.custom_label)
+        );
+        for (const j of rows) {
+          ops.push(supabase.from('staff_daily_job').delete().eq('id', j.id));
+          if (j.trip_id) {
+            ops.push(supabase.from('trip_staff').delete()
+              .eq('trip_id', j.trip_id).eq('staff_id', staffId).is('activity_id', null));
+          }
+        }
+      } else if (source.kind === 'trip') {
+        const trip = trips.find(t => t.id === source.tripId);
+        halfDay    = halfDayOf(trip?.start_time);
+        ops.push(supabase.from('trip_staff').delete()
+          .eq('trip_id', source.tripId).eq('staff_id', staffId));
+        ops.push(supabase.from('staff_daily_job').delete()
+          .eq('trip_id', source.tripId).eq('staff_id', staffId).eq('job_date', selectedDate));
+      } else {
+        // trip-activity
+        const trip = trips.find(t => t.id === source.tripId);
+        halfDay    = halfDayOf(trip?.start_time);
+        ops.push(supabase.from('trip_staff').delete().eq('id', source.tripStaffId));
+        const actJob = (dailyJobs as any[]).find(j =>
+          j.staff_id === staffId && j.trip_id === source.tripId && j.activity_id === source.activityId
+        );
+        if (actJob) ops.push(supabase.from('staff_daily_job').delete().eq('id', actJob.id));
+      }
+
+      if (unassignedId) {
+        ops.push(supabase.from('staff_daily_job').insert({
+          organization_id: userOrgId,
+          staff_id:        staffId,
+          job_type_id:     unassignedId,
+          job_date:        selectedDate,
+          'AM/PM':         halfDay,
+          trip_id:         null,
+        }));
+      }
+    }
+
+    if (ops.length > 0) await Promise.all(ops);
+    setSelectedBubbles([]);
+    await fetchDayData();
+  }, [userOrgId, selectedBubbles, dailyJobs, trips, selectedDate, jobTypes, supabase, fetchDayData]);
 
   /** Applies all queued assignments across all selected targets, then exits assign mode. */
   const handleSaveAssignments = useCallback(async () => {
@@ -283,11 +465,14 @@ export default function StaffPage() {
       toAdd.forEach(staffId => queuedAssignments.push({ staffId, half, targetName: `'${actName}' Trip Activity` }));
     }
 
-    for (const { jobTypeId: jtId, halfDay } of selectedJobKeys) {
-      const relevantJobs     = dailyJobs.filter(j => j.job_type_id === jtId && j['AM/PM'] === halfDay);
+    for (const { jobTypeId: jtId, halfDay, customLabel } of selectedJobKeys) {
+      const relevantJobs     = dailyJobs.filter(j =>
+        j.job_type_id === jtId && j['AM/PM'] === halfDay &&
+        (customLabel ? j.custom_label === customLabel : !j.custom_label)
+      );
       const existingStaffIds = new Set(relevantJobs.map((j: any) => j.staff_id));
       const toAdd            = selectedStaffIds.filter(id => !existingStaffIds.has(id));
-      const jobName          = jobTypes.find(jt => jt.id === jtId)?.name ?? 'Job';
+      const jobName          = customLabel ?? (jobTypes.find(jt => jt.id === jtId)?.name ?? 'Job');
       toAdd.forEach(staffId => queuedAssignments.push({ staffId, half: halfDay, targetName: `${halfDay} ${jobName}` }));
     }
 
@@ -415,8 +600,11 @@ export default function StaffPage() {
     }
 
     // ── Job card assignments ──────────────────────────────────────────────
-    for (const { jobTypeId: jtId, halfDay } of selectedJobKeys) {
-      const relevantJobs     = dailyJobs.filter(j => j.job_type_id === jtId && j['AM/PM'] === halfDay);
+    for (const { jobTypeId: jtId, halfDay, customLabel } of selectedJobKeys) {
+      const relevantJobs     = dailyJobs.filter(j =>
+        j.job_type_id === jtId && j['AM/PM'] === halfDay &&
+        (customLabel ? j.custom_label === customLabel : !j.custom_label)
+      );
       const existingStaffIds = new Set(relevantJobs.map((j: any) => j.staff_id));
       const toAdd            = selectedStaffIds.filter(id => !existingStaffIds.has(id));
       const toRemove         = relevantJobs.filter((j: any) => selectedStaffIds.includes(j.staff_id));
@@ -430,6 +618,7 @@ export default function StaffPage() {
             job_date: selectedDate,
             'AM/PM': halfDay,
             trip_id: null,
+            ...(customLabel ? { custom_label: customLabel } : {}),
           }))
         ));
         if (unassignedId) {
@@ -460,16 +649,18 @@ export default function StaffPage() {
     trips, dailyJobs, selectedDate, jobTypes, allStaff, supabase, fetchDayData, handleCancelAssign,
   ]);
 
-  // Enter = save, Escape = cancel
+  // Enter = save assign, Escape = cancel either mode
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (selectedStaffIds.length === 0) return;
-      if (e.key === 'Enter')  handleSaveAssignments();
-      if (e.key === 'Escape') handleCancelAssign();
+      if (e.key === 'Escape') {
+        if (selectedBubbles.length > 0) { setSelectedBubbles([]); return; }
+        if (selectedStaffIds.length > 0) handleCancelAssign();
+      }
+      if (e.key === 'Enter' && selectedStaffIds.length > 0) handleSaveAssignments();
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [selectedStaffIds.length, handleSaveAssignments, handleCancelAssign]);
+  }, [selectedBubbles.length, selectedStaffIds.length, handleSaveAssignments, handleCancelAssign]);
 
   // ─── Remove / Captain Handlers (unchanged) ────────────────────────────────
 
@@ -598,6 +789,45 @@ export default function StaffPage() {
     await fetchDayData();
   }, [userOrgId, selectedDate, jobTypes, dailyJobs, trips, supabase, fetchDayData]);
 
+  // ─── Custom-label "Others" job handlers ──────────────────────────────────
+
+  const handleAddCustomLabel = useCallback(async (halfDay: 'AM' | 'PM', label: string) => {
+    const trimmed = label.trim();
+    if (!trimmed || !userOrgId) return;
+    const othersId = jobTypes.find(jt => jt.name === 'Others')?.id;
+    if (!othersId) return;
+    // Ignore if card already exists
+    if (customJobCards.some(c => c.halfDay === halfDay && c.label === trimmed)) return;
+    await supabase.from('staff_custom_job_card').insert({
+      organization_id: userOrgId,
+      job_date:        selectedDate,
+      am_pm:           halfDay,
+      custom_label:    trimmed,
+      job_type_id:     othersId,
+    });
+    await fetchDayData();
+  }, [userOrgId, jobTypes, customJobCards, selectedDate, supabase, fetchDayData]);
+
+  const handleDeleteCustomLabel = useCallback(async (halfDay: 'AM' | 'PM', label: string) => {
+    if (!userOrgId) return;
+    const othersId = jobTypes.find(jt => jt.name === 'Others')?.id;
+    if (!othersId) return;
+    await Promise.all([
+      supabase.from('staff_custom_job_card').delete()
+        .eq('organization_id', userOrgId)
+        .eq('job_date', selectedDate)
+        .eq('am_pm', halfDay)
+        .eq('custom_label', label),
+      supabase.from('staff_daily_job').delete()
+        .eq('organization_id', userOrgId)
+        .eq('job_type_id', othersId)
+        .eq('custom_label', label)
+        .eq('job_date', selectedDate)
+        .eq('AM/PM', halfDay),
+    ]);
+    await fetchDayData();
+  }, [userOrgId, jobTypes, selectedDate, supabase, fetchDayData]);
+
   // ─── Derived data ─────────────────────────────────────────────────────────
 
   const morningTrips   = trips.filter(t => localHour(t.start_time) < 12);
@@ -639,6 +869,8 @@ export default function StaffPage() {
           selectedTripIds={selectedTripIds}
           selectedActivityKeys={selectedActivityKeys}
           selectedJobKeys={selectedJobKeys}
+          selectedBubbles={selectedBubbles}
+          customJobCards={customJobCards}
           onToggleTripSelection={handleToggleTripSelection}
           onToggleActivitySelection={handleToggleActivitySelection}
           onToggleJobSelection={handleToggleJobSelection}
@@ -647,17 +879,27 @@ export default function StaffPage() {
           onRemoveActivityStaff={handleRemoveActivityStaff}
           onAssignCaptain={handleAssignCaptain}
           onOpenTrip={setDrawerTripId}
+          onToggleBubble={handleToggleBubble}
+          onMoveBubbles={handleMoveBubbles}
+          onAddCustomLabel={handleAddCustomLabel}
+          onDeleteCustomLabel={handleDeleteCustomLabel}
         />
         <StaffPanel
           staff={allStaff}
           selectedIds={selectedStaffIds}
           unassignedIds={unassignedStaffIds}
           selectedTargetCount={totalSelectedTargets}
-          onToggle={id => setSelectedStaffIds(prev =>
-            prev.includes(id) ? prev.filter(s => s !== id) : [...prev, id]
-          )}
+          selectedBubbles={selectedBubbles}
+          onToggle={id => {
+            setSelectedBubbles([]);
+            setSelectedStaffIds(prev =>
+              prev.includes(id) ? prev.filter(s => s !== id) : [...prev, id]
+            );
+          }}
           onCancel={handleCancelAssign}
           onSave={handleSaveAssignments}
+          onUnassignBubbles={handleUnassignBubbles}
+          onClearBubbles={() => setSelectedBubbles([])}
         />
       </div>
 
