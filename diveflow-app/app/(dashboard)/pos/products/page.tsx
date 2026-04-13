@@ -43,10 +43,10 @@ export default async function POSProductsPage() {
       .eq('organization_id', profile.organization_id),
 
     supabase
-      .from('organizations')
+      .from('org_pos_config')
       .select('private_instruction_product_id, rental_daily_cap, pos_products(price)')
-      .eq('id', profile.organization_id)
-      .single(),
+      .eq('organization_id', profile.organization_id)
+      .maybeSingle(),
 
     supabase
       .from('trip_pricing_tiers')

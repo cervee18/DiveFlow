@@ -152,23 +152,23 @@ export async function setPrivateInstructionPrice(priceStr: string) {
   const { data: profile } = await supabase.from('profiles').select('organization_id').eq('id', user.id).single();
   if (!profile) return;
 
-  const { data: org } = await supabase
-    .from('organizations')
+  const { data: posConfig } = await supabase
+    .from('org_pos_config')
     .select('private_instruction_product_id')
-    .eq('id', profile.organization_id)
-    .single();
+    .eq('organization_id', profile.organization_id)
+    .maybeSingle();
 
   if (!priceStr.trim()) {
     // Clear the pointer (but leave the product intact)
-    if (org?.private_instruction_product_id) {
-      await supabase.from('organizations').update({ private_instruction_product_id: null }).eq('id', profile.organization_id);
+    if (posConfig?.private_instruction_product_id) {
+      await supabase.from('org_pos_config').update({ private_instruction_product_id: null }).eq('organization_id', profile.organization_id);
     }
   } else {
     const price = parseFloat(priceStr);
     if (isNaN(price) || price < 0) return;
 
-    if (org?.private_instruction_product_id) {
-      await supabase.from('pos_products').update({ price }).eq('id', org.private_instruction_product_id);
+    if (posConfig?.private_instruction_product_id) {
+      await supabase.from('pos_products').update({ price }).eq('id', posConfig.private_instruction_product_id);
     } else {
       const categoryId = await findOrCreateCategory(supabase, profile.organization_id, 'Instruction');
       const { data: prod } = await supabase.from('pos_products').insert({
@@ -179,7 +179,9 @@ export async function setPrivateInstructionPrice(priceStr: string) {
         is_automated: true,
       }).select().single();
       if (prod) {
-        await supabase.from('organizations').update({ private_instruction_product_id: prod.id }).eq('id', profile.organization_id);
+        await supabase
+          .from('org_pos_config')
+          .upsert({ organization_id: profile.organization_id, private_instruction_product_id: prod.id });
       }
     }
   }
@@ -284,7 +286,9 @@ export async function setRentalDailyCap(capStr: string) {
   const cap = capStr.trim() ? parseFloat(capStr) : null;
   if (capStr.trim() && (isNaN(cap!) || cap! < 0)) return { error: 'Invalid cap' };
 
-  await supabase.from('organizations').update({ rental_daily_cap: cap }).eq('id', profile.organization_id);
+  await supabase
+    .from('org_pos_config')
+    .upsert({ organization_id: profile.organization_id, rental_daily_cap: cap });
 
   revalidatePath('/pos/products');
   return { success: true };

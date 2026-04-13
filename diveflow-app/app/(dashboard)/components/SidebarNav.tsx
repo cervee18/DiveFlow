@@ -293,7 +293,7 @@ export default function SidebarNav({ isStaff, isAdmin, userEmail }: Props) {
   ];
 
   const adminItems: NavItem[] = isAdmin ? [
-    { href: '/management', label: 'Management', icon: <CogIcon /> },
+    { href: '/management', label: 'Configuration', icon: <CogIcon /> },
     { href: '/logs',       label: 'Logs',       icon: <ListIcon /> },
     { href: '/statistics', label: 'Statistics', icon: <ChartIcon /> },
     { href: '/inventory',  label: 'Inventory',  icon: <BoxIcon /> },
