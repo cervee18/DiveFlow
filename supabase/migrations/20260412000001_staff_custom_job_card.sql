@@ -12,8 +12,10 @@ CREATE TABLE IF NOT EXISTS staff_custom_job_card (
 
 ALTER TABLE staff_custom_job_card ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "org members can manage custom job cards"
-  ON staff_custom_job_card FOR ALL
-  TO authenticated
-  USING (organization_id IN (SELECT organization_id FROM profiles WHERE id = auth.uid()))
-  WITH CHECK (organization_id IN (SELECT organization_id FROM profiles WHERE id = auth.uid()));
+DO $$ BEGIN
+  CREATE POLICY "org members can manage custom job cards"
+    ON staff_custom_job_card FOR ALL
+    TO authenticated
+    USING (organization_id IN (SELECT organization_id FROM profiles WHERE id = auth.uid()))
+    WITH CHECK (organization_id IN (SELECT organization_id FROM profiles WHERE id = auth.uid()));
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;

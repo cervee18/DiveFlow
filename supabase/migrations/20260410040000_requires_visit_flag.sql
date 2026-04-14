@@ -46,9 +46,11 @@ END;
 $$;
 
 DROP TRIGGER IF EXISTS guard_trip_client_visit ON public.trip_clients;
-CREATE TRIGGER guard_trip_client_visit
-  BEFORE INSERT ON public.trip_clients
-  FOR EACH ROW EXECUTE FUNCTION public.guard_trip_client_visit();
+DO $$ BEGIN
+  CREATE TRIGGER guard_trip_client_visit
+    BEFORE INSERT ON public.trip_clients
+    FOR EACH ROW EXECUTE FUNCTION public.guard_trip_client_visit();
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
 -- ── 4. AFTER DELETE on visit_clients: cascade to trips in the visit range ───
 -- When a client is removed from a visit, remove them from all trips that
@@ -85,9 +87,11 @@ END;
 $$;
 
 DROP TRIGGER IF EXISTS cascade_trip_removal_on_visit_client_delete ON public.visit_clients;
-CREATE TRIGGER cascade_trip_removal_on_visit_client_delete
-  AFTER DELETE ON public.visit_clients
-  FOR EACH ROW EXECUTE FUNCTION public.cascade_trip_removal_on_visit_client_delete();
+DO $$ BEGIN
+  CREATE TRIGGER cascade_trip_removal_on_visit_client_delete
+    AFTER DELETE ON public.visit_clients
+    FOR EACH ROW EXECUTE FUNCTION public.cascade_trip_removal_on_visit_client_delete();
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
 -- Note: if visit_clients has ON DELETE CASCADE from visits, deleting a visit
 -- will fire the above trigger for each member automatically.

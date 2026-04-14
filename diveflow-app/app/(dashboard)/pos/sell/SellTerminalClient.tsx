@@ -272,8 +272,19 @@ export default function SellTerminalClient({ manualProducts, categories, clients
               {addToTabError && <p className="text-xs text-red-500 mt-0.5">{addToTabError}</p>}
             </div>
             <div className="flex items-center gap-2">
-              {selectedClient ? (
-                /* Client selected → "Add to Tab" instead of "Park Sale" */
+              {/* Park Sale — always available */}
+              <button
+                onClick={onParkSale}
+                disabled={isPending}
+                className="flex items-center gap-2 px-4 py-2.5 border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 font-semibold rounded-xl disabled:opacity-50 transition-colors text-sm"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8l1.343 9.01A2 2 0 008.33 19h7.34a2 2 0 001.987-1.99L19 8" />
+                </svg>
+                Park Sale
+              </button>
+              {/* Add to Tab — only when a client is selected */}
+              {selectedClient && (
                 <button
                   onClick={onOpenAddToTab}
                   disabled={isPending}
@@ -283,18 +294,6 @@ export default function SellTerminalClient({ manualProducts, categories, clients
                     <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
                   </svg>
                   Add to Tab
-                </button>
-              ) : (
-                /* No client → classic "Park Sale" */
-                <button
-                  onClick={onParkSale}
-                  disabled={isPending}
-                  className="flex items-center gap-2 px-4 py-2.5 border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 font-semibold rounded-xl disabled:opacity-50 transition-colors text-sm"
-                >
-                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8l1.343 9.01A2 2 0 008.33 19h7.34a2 2 0 001.987-1.99L19 8" />
-                  </svg>
-                  Park Sale
                 </button>
               )}
               <button

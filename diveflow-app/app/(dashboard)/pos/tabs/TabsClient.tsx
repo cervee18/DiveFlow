@@ -1,16 +1,17 @@
 'use client';
 
 import { useState, useTransition, useMemo, useRef, useEffect } from 'react';
-import { searchClients, getClientTabData, payClientFullTab, voidPayment, deleteParkedCartFromTabs } from './actions';
+import { searchClients, getClientTabData, payClientFullTab, voidPayment, recordDeposit, voidDeposit } from './actions';
 import { addManualItem } from '../sell/actions';
 import { SectionLabel, EmptyState, fmtMoney } from './components/helpers';
 import { type Client, type VisitSelection } from './components/types';
 import ClientSearchPanel from './components/ClientSearchPanel';
 import VisitCard from './components/VisitCard';
-import ParkedSaleCard from './components/ParkedSaleCard';
-import PaymentHistorySection from './components/PaymentHistorySection';
+import StandaloneChargesCard from './components/StandaloneChargesCard';
+import TransactionHistoryCard, { type HistoryEntry, type PaymentRow } from './components/TransactionHistoryCard';
 import PayModal from './components/PayModal';
 import VoidModal from './components/VoidModal';
+import DepositModal from './components/DepositModal';
 
 export default function TabsClient({ initialClient, products }: { initialClient?: { id: string; name: string } | null; products: any[] }) {
   const [isPending, startTransition] = useTransition();
@@ -30,14 +31,24 @@ export default function TabsClient({ initialClient, products }: { initialClient?
 
   // Payment modal
   const [isPayModalOpen, setIsPayModalOpen] = useState(false);
-  const [payMethod, setPayMethod] = useState('Visa');
-  const [payAmount, setPayAmount] = useState('');
   const [payError, setPayError] = useState('');
 
-  // Void modal
+  // Void modal (payments)
   const [voidTarget, setVoidTarget] = useState<{ ids: string[]; amount: number; method: string } | null>(null);
   const [voidReason, setVoidReason] = useState('');
   const [voidError, setVoidError] = useState('');
+
+  // Deposit modal
+  const [isDepositModalOpen, setIsDepositModalOpen] = useState(false);
+  const [depositMethod, setDepositMethod] = useState('Cash');
+  const [depositAmount, setDepositAmount] = useState('');
+  const [depositNote, setDepositNote] = useState('');
+  const [depositError, setDepositError] = useState('');
+
+  // Void deposit modal
+  const [voidDepositTarget, setVoidDepositTarget] = useState<{ id: string; amount: number; method: string } | null>(null);
+  const [voidDepositReason, setVoidDepositReason] = useState('');
+  const [voidDepositError, setVoidDepositError] = useState('');
 
   // Auto-select client from URL param
   useEffect(() => {
@@ -61,6 +72,7 @@ export default function TabsClient({ initialClient, products }: { initialClient?
   const loadClientData = async (c: Client) => {
     setTabData(null);
     setVisitsSelection({});
+    setSelectedStandaloneIds(new Set());
     setIsLoadingData(true);
     const res = await getClientTabData(c.id);
     setIsLoadingData(false);
@@ -92,54 +104,88 @@ export default function TabsClient({ initialClient, products }: { initialClient?
     if (res.data) setTabData(res.data);
   };
 
+  // Standalone invoice selection: invoiceId → selected boolean
+  // Auto-select all unpaid invoices whenever the data (re)loads
+  const [selectedStandaloneIds, setSelectedStandaloneIds] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    const unpaid = (tabData?.standaloneInvoices ?? [])
+      .filter((inv: any) => inv.balance > 0)
+      .map((inv: any) => inv.invoiceId);
+    setSelectedStandaloneIds(new Set(unpaid));
+  }, [tabData?.standaloneInvoices]);
+
   // Derived data
-  const visits: any[]      = tabData?.visits ?? [];
-  const parkedCarts: any[] = tabData?.parkedCarts ?? [];
-  const payments: any[]    = tabData?.payments ?? [];
+  const visits: any[]              = tabData?.visits ?? [];
+  const standaloneInvoices: any[]  = tabData?.standaloneInvoices ?? [];
+  const history: HistoryEntry[]    = tabData?.history ?? [];
+  const deposits: any[]            = tabData?.deposits ?? [];
+  const creditBalance: number      = tabData?.creditBalance ?? 0;
 
   const visitSelectedBalance = useMemo(
     () => Object.values(visitsSelection).reduce((s, v) => s + Math.max(0, v.balance), 0),
     [visitsSelection]
   );
 
-  const parkedTotal = useMemo(
-    () => parkedCarts.reduce((s: number, cart: any) => {
-      const items: any[] = cart.pos_parked_cart_items ?? [];
-      return s + items.reduce((si: number, i: any) => si + Number(i.unit_price) * i.quantity, 0);
-    }, 0),
-    [parkedCarts]
+  const standaloneSelectedBalance = useMemo(
+    () => standaloneInvoices
+      .filter((inv: any) => selectedStandaloneIds.has(inv.invoiceId))
+      .reduce((s: number, inv: any) => s + Math.max(0, inv.balance), 0),
+    [standaloneInvoices, selectedStandaloneIds]
   );
 
-  const grandTotal = visitSelectedBalance + parkedTotal;
+  const grandTotal = visitSelectedBalance + standaloneSelectedBalance;
 
   const totalOutstanding = useMemo(() => {
     const visitOwed = visits.reduce((s: number, v: any) => s + Math.max(0, v.payload?.grand_totals?.master_balance ?? 0), 0);
-    return Math.round((visitOwed + parkedTotal) * 100) / 100;
-  }, [visits, parkedTotal]);
+    const standaloneOwed = standaloneInvoices.reduce((s: number, inv: any) => s + Math.max(0, inv.balance), 0);
+    return Math.round((visitOwed + standaloneOwed) * 100) / 100;
+  }, [visits, standaloneInvoices]);
 
   // Payment actions
   const openPayModal = () => {
-    setPayAmount(grandTotal.toFixed(2));
-    setPayMethod('Visa');
     setPayError('');
     setIsPayModalOpen(true);
   };
 
-  const confirmPayment = () => {
-    const amount = parseFloat(payAmount);
-    if (isNaN(amount) || amount <= 0) { setPayError('Enter a valid amount.'); return; }
+  const toggleStandalone = (invoiceId: string, _balance: number) => {
+    setSelectedStandaloneIds(prev => {
+      const next = new Set(prev);
+      if (next.has(invoiceId)) next.delete(invoiceId); else next.add(invoiceId);
+      return next;
+    });
+  };
+
+  const confirmPayment = (splits: Array<{ amount: number; method: string }>) => {
+    setPayError('');
     const visitSources = Object.values(visitsSelection).filter(v => v.balance > 0 && v.members.length > 0);
-    const parkedCartIds = parkedCarts.map((c: any) => c.id);
+
+    // Treat selected standalone invoices as single-member visit sources
+    const standaloneSources = standaloneInvoices
+      .filter((inv: any) => selectedStandaloneIds.has(inv.invoiceId) && inv.balance > 0)
+      .map((inv: any) => ({
+        visitId: inv.invoiceId,
+        invoiceId: inv.invoiceId,
+        balance: inv.balance,
+        members: [{ clientId: selectedClient!.id, balanceDue: inv.balance }],
+      }));
+
     startTransition(async () => {
-      const res = await payClientFullTab(selectedClient!.id, visitSources, parkedCartIds, parkedTotal, amount, payMethod);
+      const res = await payClientFullTab(
+        selectedClient!.id,
+        [...visitSources, ...standaloneSources],
+        [],
+        0,
+        splits,
+      );
       if (res.error) { setPayError(res.error); return; }
       setIsPayModalOpen(false);
+      setSelectedStandaloneIds(new Set());
       await refreshTab();
     });
   };
 
-  const openVoidModal = (p: any) => {
-    setVoidTarget({ ids: p.ids ?? [p.id], amount: p.amount, method: p.payment_method });
+  const openVoidModal = (row: PaymentRow) => {
+    setVoidTarget({ ids: row.ids, amount: row.amount, method: row.method });
     setVoidReason('');
     setVoidError('');
   };
@@ -154,11 +200,39 @@ export default function TabsClient({ initialClient, products }: { initialClient?
     });
   };
 
-  const onDeleteParkedCart = async (cartId: string) => {
-    await deleteParkedCartFromTabs(cartId);
-    setTabData((prev: any) =>
-      prev ? { ...prev, parkedCarts: prev.parkedCarts.filter((c: any) => c.id !== cartId) } : prev
-    );
+  const openDepositModal = () => {
+    setDepositAmount('');
+    setDepositMethod('Cash');
+    setDepositNote('');
+    setDepositError('');
+    setIsDepositModalOpen(true);
+  };
+
+  const confirmDeposit = () => {
+    const amount = parseFloat(depositAmount);
+    if (isNaN(amount) || amount <= 0) { setDepositError('Enter a valid amount.'); return; }
+    startTransition(async () => {
+      const res = await recordDeposit(selectedClient!.id, amount, depositMethod, depositNote);
+      if (res.error) { setDepositError(res.error); return; }
+      setIsDepositModalOpen(false);
+      await refreshTab();
+    });
+  };
+
+  const openVoidDepositModal = (dep: any) => {
+    setVoidDepositTarget({ id: dep.id, amount: dep.amount, method: dep.method });
+    setVoidDepositReason('');
+    setVoidDepositError('');
+  };
+
+  const confirmVoidDeposit = () => {
+    if (!voidDepositTarget) return;
+    startTransition(async () => {
+      const res = await voidDeposit(voidDepositTarget.id, voidDepositReason || 'Voided by staff');
+      if (res.error) { setVoidDepositError(res.error); return; }
+      setVoidDepositTarget(null);
+      await refreshTab();
+    });
   };
 
   const handleAddItem = async (visitId: string, invoiceId: string | null, clientId: string, productId: string, price: number, qty: number) => {
@@ -177,8 +251,6 @@ export default function TabsClient({ initialClient, products }: { initialClient?
         selectedClient={selectedClient}
         tabData={tabData}
         visits={visits}
-        parkedCarts={parkedCarts}
-        parkedTotal={parkedTotal}
         totalOutstanding={totalOutstanding}
         onSearchChange={onSearchChange}
         onDropdownOpen={() => setIsDropdownOpen(true)}
@@ -217,6 +289,31 @@ export default function TabsClient({ initialClient, products }: { initialClient?
 
           {selectedClient && tabData && !isLoadingData && (
             <>
+              {/* Credit balance banner + Add Deposit */}
+              <div className="flex items-center justify-between gap-3">
+                {creditBalance > 0 ? (
+                  <div className="flex-1 flex items-center gap-2.5 bg-teal-50 border border-teal-200 rounded-xl px-4 py-2.5">
+                    <div className="w-2 h-2 rounded-full bg-teal-400 shrink-0" />
+                    <div>
+                      <span className="text-sm font-bold text-teal-700">Credit on account · </span>
+                      <span className="text-sm font-mono font-black text-teal-700">{fmtMoney(creditBalance)}</span>
+                      <span className="text-xs text-teal-500 ml-1">available</span>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex-1" />
+                )}
+                <button
+                  onClick={openDepositModal}
+                  className="shrink-0 flex items-center gap-1.5 px-3 py-2 text-xs font-bold text-teal-700 border border-teal-200 bg-teal-50 hover:bg-teal-100 rounded-xl transition-colors"
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                  </svg>
+                  Add Deposit
+                </button>
+              </div>
+
               <section>
                 <SectionLabel>Visit Charges</SectionLabel>
                 {visits.length === 0 ? (
@@ -237,25 +334,79 @@ export default function TabsClient({ initialClient, products }: { initialClient?
                 )}
               </section>
 
-              <section>
-                <SectionLabel>Parked Sales</SectionLabel>
-                {parkedCarts.length === 0 ? (
-                  <EmptyState text="No parked sales for this client." />
-                ) : (
-                  <div className="space-y-2">
-                    {parkedCarts.map((cart: any) => (
-                      <ParkedSaleCard key={cart.id} cart={cart} onDelete={onDeleteParkedCart} />
+              {standaloneInvoices.length > 0 && (
+                <section>
+                  <SectionLabel>Direct Charges</SectionLabel>
+                  <div className="space-y-3">
+                    {standaloneInvoices.map((inv: any) => (
+                      <StandaloneChargesCard
+                        key={inv.invoiceId}
+                        invoice={inv}
+                        isSelected={selectedStandaloneIds.has(inv.invoiceId)}
+                        onToggle={toggleStandalone}
+                      />
                     ))}
                   </div>
-                )}
-              </section>
+                </section>
+              )}
 
               <section>
                 <SectionLabel>History</SectionLabel>
-                {payments.length === 0 ? (
-                  <EmptyState text="No payments recorded yet." />
+                {history.length === 0 && deposits.length === 0 ? (
+                  <EmptyState text="No transactions recorded yet." />
                 ) : (
-                  <PaymentHistorySection payments={payments} onVoid={openVoidModal} />
+                  <div className="space-y-2">
+                    {/* Deposits */}
+                    {deposits.map((dep: any) => (
+                      <div
+                        key={dep.id}
+                        className={`flex items-center justify-between px-4 py-3 rounded-xl border text-xs ${
+                          dep.voided
+                            ? 'bg-slate-50 border-slate-100 opacity-50'
+                            : 'bg-teal-50 border-teal-100'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${dep.voided ? 'bg-slate-300' : 'bg-teal-400'}`} />
+                          <div className="min-w-0">
+                            <p className={`font-semibold ${dep.voided ? 'line-through text-slate-400' : 'text-teal-800'}`}>
+                              Deposit · {dep.method}
+                              {dep.note && <span className="font-normal text-slate-500"> — {dep.note}</span>}
+                            </p>
+                            <p className="text-slate-400 mt-0.5">
+                              {new Date(dep.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                              {' · '}
+                              {new Date(dep.createdAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
+                              {dep.recordedByEmail && ` · by ${dep.recordedByEmail.includes('@') ? dep.recordedByEmail.split('@')[0] : dep.recordedByEmail}`}
+                              {dep.voided && dep.voidReason && ` · ${dep.voidReason}`}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span className={`font-mono font-bold ${dep.voided ? 'line-through text-slate-400' : 'text-teal-700'}`}>
+                            +{fmtMoney(dep.amount)}
+                          </span>
+                          {!dep.voided && (
+                            <button
+                              type="button"
+                              onClick={() => openVoidDepositModal(dep)}
+                              className="text-xs text-slate-300 hover:text-rose-500 transition-colors px-1 py-0.5 rounded hover:bg-rose-50"
+                            >
+                              Void
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                    {/* Invoice payments */}
+                    {history.map((entry, idx) => (
+                      <TransactionHistoryCard
+                        key={idx}
+                        entry={entry}
+                        onVoid={openVoidModal}
+                      />
+                    ))}
+                  </div>
                 )}
               </section>
             </>
@@ -267,11 +418,11 @@ export default function TabsClient({ initialClient, products }: { initialClient?
           <div className="shrink-0 mt-3 bg-white border border-slate-200 rounded-xl shadow-[0_-4px_12px_-2px_rgba(0,0,0,0.08)] px-6 py-4 flex items-center justify-between gap-4">
             <div>
               <p className="text-xs text-slate-400">
-                {visitSelectedBalance > 0 && parkedTotal > 0
-                  ? 'Visit charges + parked sales'
+                {visitSelectedBalance > 0 && standaloneSelectedBalance > 0
+                  ? 'Visit charges + direct charges'
                   : visitSelectedBalance > 0
                   ? `${Object.values(visitsSelection).filter(v => v.balance > 0).length} visit${Object.values(visitsSelection).filter(v => v.balance > 0).length !== 1 ? 's' : ''} selected`
-                  : `${parkedCarts.length} parked sale${parkedCarts.length !== 1 ? 's' : ''}`}
+                  : `${selectedStandaloneIds.size} direct charge${selectedStandaloneIds.size !== 1 ? 's' : ''} selected`}
               </p>
               <p className="text-2xl font-black font-mono text-slate-800">{fmtMoney(grandTotal)}</p>
             </div>
@@ -306,16 +457,40 @@ export default function TabsClient({ initialClient, products }: { initialClient?
         <PayModal
           clientName={selectedClient?.name ?? ''}
           visitSelectedBalance={visitSelectedBalance}
-          parkedTotal={parkedTotal}
+          standaloneSelectedBalance={standaloneSelectedBalance}
           grandTotal={grandTotal}
-          payMethod={payMethod}
-          payAmount={payAmount}
-          payError={payError}
+          creditBalance={creditBalance}
           isPending={isPending}
-          onMethodChange={setPayMethod}
-          onAmountChange={setPayAmount}
           onConfirm={confirmPayment}
           onClose={() => setIsPayModalOpen(false)}
+        />
+      )}
+
+      {isDepositModalOpen && (
+        <DepositModal
+          clientName={selectedClient?.name ?? ''}
+          method={depositMethod}
+          amount={depositAmount}
+          note={depositNote}
+          error={depositError}
+          isPending={isPending}
+          onMethodChange={setDepositMethod}
+          onAmountChange={setDepositAmount}
+          onNoteChange={setDepositNote}
+          onConfirm={confirmDeposit}
+          onClose={() => setIsDepositModalOpen(false)}
+        />
+      )}
+
+      {voidDepositTarget && (
+        <VoidModal
+          target={{ ids: [voidDepositTarget.id], amount: voidDepositTarget.amount, method: voidDepositTarget.method }}
+          reason={voidDepositReason}
+          error={voidDepositError}
+          isPending={isPending}
+          onReasonChange={setVoidDepositReason}
+          onConfirm={confirmVoidDeposit}
+          onClose={() => setVoidDepositTarget(null)}
         />
       )}
     </div>

@@ -30,6 +30,8 @@ $$;
 
 DROP TRIGGER IF EXISTS guard_visit_deletion ON public.visits;
 
-CREATE TRIGGER guard_visit_deletion
-  BEFORE DELETE ON public.visits
-  FOR EACH ROW EXECUTE FUNCTION public.guard_visit_deletion();
+DO $$ BEGIN
+  CREATE TRIGGER guard_visit_deletion
+    BEFORE DELETE ON public.visits
+    FOR EACH ROW EXECUTE FUNCTION public.guard_visit_deletion();
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;

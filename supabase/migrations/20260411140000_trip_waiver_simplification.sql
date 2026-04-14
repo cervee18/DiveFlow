@@ -5,7 +5,9 @@
 -- is exhausted — no more pro-rating at tank-level boundaries.
 
 ALTER TABLE public.trip_types  DROP COLUMN IF EXISTS tanks_count;
-ALTER TABLE public.courses     RENAME COLUMN included_dives TO included_trips;
+DO $$ BEGIN
+  ALTER TABLE public.courses RENAME COLUMN included_dives TO included_trips;
+EXCEPTION WHEN undefined_column OR duplicate_column THEN NULL; END $$;
 
 -- ── RPC rewrite ────────────────────────────────────────────────────────────
 

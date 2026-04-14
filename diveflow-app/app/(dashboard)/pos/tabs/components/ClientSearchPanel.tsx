@@ -12,8 +12,6 @@ interface ClientSearchPanelProps {
   selectedClient: Client | null;
   tabData: any | null;
   visits: any[];
-  parkedCarts: any[];
-  parkedTotal: number;
   totalOutstanding: number;
   onSearchChange: (val: string) => void;
   onDropdownOpen: () => void;
@@ -29,8 +27,6 @@ export default function ClientSearchPanel({
   selectedClient,
   tabData,
   visits,
-  parkedCarts,
-  parkedTotal,
   totalOutstanding,
   onSearchChange,
   onDropdownOpen,
@@ -56,7 +52,6 @@ export default function ClientSearchPanel({
                 </Link>
                 <p className="text-xs text-slate-400 mt-0.5">
                   {visits.length} visit{visits.length !== 1 ? 's' : ''}
-                  {parkedCarts.length > 0 && ` · ${parkedCarts.length} parked`}
                 </p>
               </div>
               <button onClick={onClearClient} className="shrink-0 p-1 rounded text-slate-300 hover:text-rose-500 hover:bg-rose-50 transition-colors">
@@ -68,10 +63,7 @@ export default function ClientSearchPanel({
 
             {totalOutstanding > 0 ? (
               <div className="bg-rose-50 border border-rose-100 rounded-lg px-3 py-2 flex justify-between items-center">
-                <div>
-                  <p className="text-xs font-semibold text-rose-600">Total outstanding</p>
-                  {parkedTotal > 0 && <p className="text-[10px] text-rose-400 mt-0.5">incl. {fmtMoney(parkedTotal)} parked</p>}
-                </div>
+                <p className="text-xs font-semibold text-rose-600">Total outstanding</p>
                 <span className="text-base font-black font-mono text-rose-600">{fmtMoney(totalOutstanding)}</span>
               </div>
             ) : (

@@ -9,15 +9,19 @@ CREATE TABLE IF NOT EXISTS public.pos_parked_carts (
   created_at timestamptz DEFAULT now() NOT NULL
 );
 
-CREATE INDEX idx_pos_parked_carts_org ON public.pos_parked_carts(organization_id);
+CREATE INDEX IF NOT EXISTS idx_pos_parked_carts_org ON public.pos_parked_carts(organization_id);
 
 ALTER TABLE public.pos_parked_carts ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "org members can view pos_parked_carts" ON public.pos_parked_carts FOR SELECT
-  USING (organization_id = public.my_org_id());
+DO $$ BEGIN
+  CREATE POLICY "org members can view pos_parked_carts" ON public.pos_parked_carts FOR SELECT
+    USING (organization_id = public.my_org_id());
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
-CREATE POLICY "org members can manage pos_parked_carts" ON public.pos_parked_carts FOR ALL
-  USING (organization_id = public.my_org_id());
+DO $$ BEGIN
+  CREATE POLICY "org members can manage pos_parked_carts" ON public.pos_parked_carts FOR ALL
+    USING (organization_id = public.my_org_id());
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
 -- pos_parked_cart_items: line items inside each parked cart
 CREATE TABLE IF NOT EXISTS public.pos_parked_cart_items (
@@ -29,9 +33,11 @@ CREATE TABLE IF NOT EXISTS public.pos_parked_cart_items (
   created_at timestamptz DEFAULT now() NOT NULL
 );
 
-CREATE INDEX idx_pos_parked_cart_items_cart ON public.pos_parked_cart_items(cart_id);
+CREATE INDEX IF NOT EXISTS idx_pos_parked_cart_items_cart ON public.pos_parked_cart_items(cart_id);
 
 ALTER TABLE public.pos_parked_cart_items ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "org members can manage pos_parked_cart_items" ON public.pos_parked_cart_items FOR ALL
-  USING (cart_id IN (SELECT id FROM public.pos_parked_carts WHERE organization_id = public.my_org_id()));
+DO $$ BEGIN
+  CREATE POLICY "org members can manage pos_parked_cart_items" ON public.pos_parked_cart_items FOR ALL
+    USING (cart_id IN (SELECT id FROM public.pos_parked_carts WHERE organization_id = public.my_org_id()));
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;

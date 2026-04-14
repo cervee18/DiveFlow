@@ -3,7 +3,7 @@
 -- identity/operational data and gives POS billing settings room to grow.
 
 -- ── 1. Create the new table ───────────────────────────────────────────────────
-CREATE TABLE public.org_pos_config (
+CREATE TABLE IF NOT EXISTS public.org_pos_config (
   organization_id               uuid        PRIMARY KEY
                                             REFERENCES public.organizations(id)
                                             ON DELETE CASCADE,
@@ -26,14 +26,16 @@ ALTER TABLE public.organizations
 -- ── 4. RLS: org members can read/write their own POS config ───────────────────
 ALTER TABLE public.org_pos_config ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "org members can manage pos config"
-  ON public.org_pos_config
-  FOR ALL
-  USING (
-    organization_id IN (
-      SELECT organization_id FROM public.profiles WHERE id = auth.uid()
-    )
-  );
+DO $$ BEGIN
+  CREATE POLICY "org members can manage pos config"
+    ON public.org_pos_config
+    FOR ALL
+    USING (
+      organization_id IN (
+        SELECT organization_id FROM public.profiles WHERE id = auth.uid()
+      )
+    );
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
 -- ── 5. Replace calculate_visit_invoice_payload to read from org_pos_config ────
 CREATE OR REPLACE FUNCTION public.calculate_visit_invoice_payload(p_visit_id uuid)

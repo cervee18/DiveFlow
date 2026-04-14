@@ -28,9 +28,11 @@ END;
 $$;
 
 DROP TRIGGER IF EXISTS cascade_trips_on_visit_delete ON public.visits;
-CREATE TRIGGER cascade_trips_on_visit_delete
-  BEFORE DELETE ON public.visits
-  FOR EACH ROW EXECUTE FUNCTION public.cascade_trips_on_visit_delete();
+DO $$ BEGIN
+  CREATE TRIGGER cascade_trips_on_visit_delete
+    BEFORE DELETE ON public.visits
+    FOR EACH ROW EXECUTE FUNCTION public.cascade_trips_on_visit_delete();
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
 -- ── 2. Keep / fix the AFTER DELETE trigger on visit_clients ─────────────────
 -- This fires when a SINGLE client is manually removed from a visit (visit still

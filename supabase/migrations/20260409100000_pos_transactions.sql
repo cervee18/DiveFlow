@@ -6,21 +6,25 @@ CREATE TABLE IF NOT EXISTS public.pos_transactions (
   created_at timestamptz DEFAULT now() NOT NULL
 );
 
-CREATE INDEX idx_pos_transactions_invoice ON public.pos_transactions(invoice_id);
+CREATE INDEX IF NOT EXISTS idx_pos_transactions_invoice ON public.pos_transactions(invoice_id);
 
 ALTER TABLE public.pos_transactions ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "org members can view pos_transactions" ON public.pos_transactions FOR SELECT
-  USING (invoice_id IN (SELECT id FROM public.pos_invoices WHERE organization_id = public.my_org_id()));
+DO $$ BEGIN
+  CREATE POLICY "org members can view pos_transactions" ON public.pos_transactions FOR SELECT
+    USING (invoice_id IN (SELECT id FROM public.pos_invoices WHERE organization_id = public.my_org_id()));
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
-CREATE POLICY "org admins manage pos_transactions" ON public.pos_transactions FOR ALL
-  USING (
-    EXISTS (
-      SELECT 1 FROM public.pos_invoices
-      WHERE id = pos_transactions.invoice_id
-      AND organization_id IN (SELECT organization_id FROM public.profiles WHERE id = auth.uid() AND role = 'admin')
-    )
-  );
+DO $$ BEGIN
+  CREATE POLICY "org admins manage pos_transactions" ON public.pos_transactions FOR ALL
+    USING (
+      EXISTS (
+        SELECT 1 FROM public.pos_invoices
+        WHERE id = pos_transactions.invoice_id
+        AND organization_id IN (SELECT organization_id FROM public.profiles WHERE id = auth.uid() AND role = 'admin')
+      )
+    );
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
 -- 2. Add transaction_id to pos_invoice_items
 ALTER TABLE public.pos_invoice_items
