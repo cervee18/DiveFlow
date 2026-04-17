@@ -1,8 +1,10 @@
 import type { NextConfig } from "next";
 
-// Supabase project hostname (used in CSP connect-src and img-src)
-const SUPABASE_HOST = "jsqjbnamfnwiesqkcmdp.supabase.co";
-const IS_LOCAL = process.env.NEXT_PUBLIC_SUPABASE_URL?.includes("127.0.0.1");
+const SUPABASE_URL  = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
+const IS_LOCAL      = SUPABASE_URL.includes("127.0.0.1");
+const SUPABASE_HOST = IS_LOCAL
+  ? "127.0.0.1:54321"
+  : (SUPABASE_URL ? new URL(SUPABASE_URL).hostname : "jsqjbnamfnwiesqkcmdp.supabase.co");
 
 const securityHeaders = [
   // ── Clickjacking ──────────────────────────────────────────────────────────
