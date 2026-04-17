@@ -1,43 +1,8 @@
--- Move POS-specific config columns off the organizations table into a dedicated
--- org_pos_config sidecar (one row per org).  This keeps organizations clean for
--- identity/operational data and gives POS billing settings room to grow.
+-- Fix course trip waiver: the client_included_trips CTE was using the old
+-- join direction (courses.pos_product_id) instead of the new one
+-- (pos_products.course_id introduced in 20260411190000_product_course_link.sql).
+-- This caused zero trips to be waived for any course-linked product.
 
--- ── 1. Create the new table ───────────────────────────────────────────────────
-CREATE TABLE IF NOT EXISTS public.org_pos_config (
-  organization_id               uuid        PRIMARY KEY
-                                            REFERENCES public.organizations(id)
-                                            ON DELETE CASCADE,
-  private_instruction_product_id uuid       REFERENCES public.pos_products(id)
-                                            ON DELETE SET NULL,
-  rental_daily_cap              numeric(10,2)
-);
-
--- ── 2. Back-fill from existing organizations rows ─────────────────────────────
-INSERT INTO public.org_pos_config (organization_id, private_instruction_product_id, rental_daily_cap)
-SELECT id, private_instruction_product_id, rental_daily_cap
-FROM   public.organizations
-ON CONFLICT (organization_id) DO NOTHING;
-
--- ── 3. Drop the now-migrated columns from organizations ───────────────────────
-ALTER TABLE public.organizations
-  DROP COLUMN IF EXISTS private_instruction_product_id,
-  DROP COLUMN IF EXISTS rental_daily_cap;
-
--- ── 4. RLS: org members can read/write their own POS config ───────────────────
-ALTER TABLE public.org_pos_config ENABLE ROW LEVEL SECURITY;
-
-DO $$ BEGIN
-  CREATE POLICY "org members can manage pos config"
-    ON public.org_pos_config
-    FOR ALL
-    USING (
-      organization_id IN (
-        SELECT organization_id FROM public.profiles WHERE id = auth.uid()
-      )
-    );
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
--- ── 5. Replace calculate_visit_invoice_payload to read from org_pos_config ────
 CREATE OR REPLACE FUNCTION public.calculate_visit_invoice_payload(p_visit_id uuid)
 RETURNS json
 LANGUAGE plpgsql

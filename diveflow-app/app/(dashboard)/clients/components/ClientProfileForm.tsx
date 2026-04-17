@@ -8,6 +8,7 @@ interface ClientProfileFormProps {
   certOrgs: any[];
   onClose: () => void;
   onUpdate: (updatedClient: any) => void;
+  onDelete: (clientId: string) => void;
 }
 
 export default function ClientProfileForm({
@@ -16,9 +17,13 @@ export default function ClientProfileForm({
   certOrgs,
   onClose,
   onUpdate,
+  onDelete,
 }: ClientProfileFormProps) {
   const supabase = createClient();
   const [isSaving, setIsSaving] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleteBlocked, setDeleteBlocked] = useState(false);
   const [requiresVisit, setRequiresVisit] = useState<boolean>(selectedClient.requires_visit ?? true);
   const [globalProfile, setGlobalProfile] = useState<any | null>(null);
   const [isLoadingProfile, setIsLoadingProfile] = useState(false);
@@ -76,7 +81,7 @@ export default function ClientProfileForm({
       last_name: formData.get("last_name"),
       email: formData.get("email") || null,
       notes: formData.get("notes"),
-      requires_visit: formData.get("requires_visit") === "true",
+      requires_visit: requiresVisit,
     };
 
     let errorOccurred = false;
@@ -116,6 +121,32 @@ export default function ClientProfileForm({
       onUpdate({ ...selectedClient, ...finalClientUpdates });
     } else {
       alert("Could not save all changes. Check your permissions and connection.");
+    }
+  };
+
+  const handleRequestDelete = async () => {
+    const { count } = await supabase
+      .from("pos_payments")
+      .select("id", { count: "exact", head: true })
+      .eq("client_id", selectedClient.id);
+
+    if (count && count > 0) {
+      setDeleteBlocked(true);
+    } else {
+      setConfirmDelete(true);
+    }
+  };
+
+  const handleDelete = async () => {
+    setIsDeleting(true);
+    const { error } = await supabase.from("clients").delete().eq("id", selectedClient.id);
+    if (error) {
+      console.error("Delete error:", error);
+      alert("Could not delete client. Check your permissions.");
+      setIsDeleting(false);
+      setConfirmDelete(false);
+    } else {
+      onDelete(selectedClient.id);
     }
   };
 
@@ -166,6 +197,45 @@ export default function ClientProfileForm({
             </svg>
             View Tab
           </Link>
+
+          {deleteBlocked ? (
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs text-red-500 font-medium">Has payment history — cannot delete</span>
+              <button
+                onClick={() => setDeleteBlocked(false)}
+                className="px-2 py-1 rounded text-xs text-slate-500 hover:text-slate-700 transition-colors"
+              >
+                ✕
+              </button>
+            </div>
+          ) : confirmDelete ? (
+            <div className="flex items-center gap-1.5">
+              <button
+                onClick={handleDelete}
+                disabled={isDeleting}
+                className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-red-600 text-white hover:bg-red-700 transition-colors disabled:opacity-70"
+              >
+                {isDeleting ? "Deleting..." : "Confirm Delete"}
+              </button>
+              <button
+                onClick={() => setConfirmDelete(false)}
+                className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-100 text-slate-600 hover:bg-slate-200 transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={handleRequestDelete}
+              className="text-slate-300 hover:text-red-500 transition-colors p-1"
+              title="Delete client"
+            >
+              <svg className="w-4.5 h-4.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+              </svg>
+            </button>
+          )}
+
           <button onClick={onClose} className="text-slate-400 hover:text-slate-700 transition-colors p-1">
             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
@@ -305,9 +375,6 @@ export default function ClientProfileForm({
                 <span className="text-[9px] text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded uppercase tracking-wider">Private to your Shop</span>
               </h3>
               
-              {/* Hidden field carries the toggle value into FormData */}
-              <input type="hidden" name="requires_visit" value={String(requiresVisit)} />
-
               {/* Visit requirement toggle */}
               <div className={`mb-4 p-3 rounded-xl border transition-colors ${requiresVisit ? 'bg-blue-50 border-blue-100' : 'bg-amber-50 border-amber-100'}`}>
                 <div className="flex items-start justify-between gap-4">

@@ -47,7 +47,7 @@ export default function BulkAddPanel({
 
   // --- Save state ---
   const [isSaving, setIsSaving]         = useState(false);
-  const [saveResults, setSaveResults]   = useState<{ tripId: string; success: boolean; alreadyExists: boolean }[] | null>(null);
+  const [saveResults, setSaveResults]   = useState<{ tripId: string; success: boolean; alreadyExists: boolean; requiresVisit?: boolean }[] | null>(null);
 
   // Close search dropdown on outside click
   useEffect(() => {
@@ -161,24 +161,24 @@ export default function BulkAddPanel({
 
     const results = await Promise.all(
       selectedTripIds.map(async (tripId) => {
-        const trip    = trips.find(t => t.id === tripId);
+        const trip     = trips.find(t => t.id === tripId);
         const tripDate = trip ? localDateStr(trip.start_time) : getTodayStr();
+
         const { error } = await supabase.rpc('add_clients_to_trip', {
           p_trip_id:    tripId,
           p_client_ids: allClientIds,
           p_trip_date:  tripDate,
         });
-        return { tripId, success: !error, alreadyExists: error?.code === '23505' };
+        return { tripId, success: !error, alreadyExists: error?.code === '23505', requiresVisit: error?.code === '23001' };
       })
     );
 
     setSaveResults(results);
     setIsSaving(false);
 
-    if (results.every(r => r.success || r.alreadyExists)) {
-      onSuccess();
-      onClearTrips();
-    }
+    const anyAdded = results.some(r => r.success);
+    if (anyAdded) onSuccess();
+    if (!results.some(r => r.requiresVisit)) onClearTrips();
   };
 
   const canConfirm = allClientIds.length > 0 && selectedTripIds.length > 0 && !isSaving;
@@ -316,18 +316,24 @@ export default function BulkAddPanel({
 
         {/* ── 4. Save results ── */}
         {saveResults && (
-          <div className="p-4">
-            {saveResults.every(r => r.success || r.alreadyExists) ? (
+          <div className="p-4 space-y-2">
+            {saveResults.some(r => r.success) && (
               <div className="bg-green-50 border border-green-200 rounded-lg p-3">
                 <p className="text-xs font-semibold text-green-700">
                   ✓ Added to {saveResults.filter(r => r.success).length} trip{saveResults.filter(r => r.success).length !== 1 ? 's' : ''}
                   {saveResults.some(r => r.alreadyExists) ? ` · ${saveResults.filter(r => r.alreadyExists).length} already on trip` : ''}
                 </p>
               </div>
-            ) : (
+            )}
+            {saveResults.some(r => r.requiresVisit) && (
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+                <p className="text-xs font-semibold text-amber-700">Client has no active visit for this date. Create a visit first or mark them as a local resident.</p>
+              </div>
+            )}
+            {saveResults.some(r => !r.success && !r.alreadyExists && !r.requiresVisit) && (
               <div className="bg-red-50 border border-red-200 rounded-lg p-3">
                 <p className="text-xs font-semibold text-red-700">
-                  {saveResults.filter(r => !r.success).length} trip{saveResults.filter(r => !r.success).length !== 1 ? 's' : ''} failed to update.
+                  {saveResults.filter(r => !r.success && !r.requiresVisit).length} trip{saveResults.filter(r => !r.success && !r.requiresVisit).length !== 1 ? 's' : ''} failed to update.
                 </p>
               </div>
             )}

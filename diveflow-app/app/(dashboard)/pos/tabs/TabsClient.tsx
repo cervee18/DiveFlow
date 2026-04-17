@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useTransition, useMemo, useRef, useEffect } from 'react';
-import { searchClients, getClientTabData, payClientFullTab, voidPayment, recordDeposit, voidDeposit } from './actions';
+import { searchClients, getClientTabData, payClientFullTab, voidPayment, recordDeposit, voidDeposit, toggleItemWaiver, deleteInvoiceItem } from './actions';
 import { addManualItem } from '../sell/actions';
 import { SectionLabel, EmptyState, fmtMoney } from './components/helpers';
 import { type Client, type VisitSelection } from './components/types';
@@ -240,6 +240,16 @@ export default function TabsClient({ initialClient, products }: { initialClient?
     await refreshTab(true);
   };
 
+  const handleWaiveItem = async (visitId: string, clientId: string, itemKey: string, waived: boolean) => {
+    await toggleItemWaiver(visitId, clientId, itemKey, waived);
+    await refreshTab(true);
+  };
+
+  const handleDeleteItem = async (invoiceItemId: string) => {
+    await deleteInvoiceItem(invoiceItemId);
+    await refreshTab(true);
+  };
+
   return (
     <div className="flex gap-6 h-full overflow-hidden">
 
@@ -328,6 +338,8 @@ export default function TabsClient({ initialClient, products }: { initialClient?
                         products={products}
                         onSelectionChange={sel => setVisitsSelection(prev => ({ ...prev, [sel.visitId]: sel }))}
                         onAddItem={handleAddItem}
+                        onWaiveItem={handleWaiveItem}
+                        onDeleteItem={handleDeleteItem}
                       />
                     ))}
                   </div>

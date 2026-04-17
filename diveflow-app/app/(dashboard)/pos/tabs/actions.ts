@@ -540,6 +540,45 @@ export async function recordDeposit(
   return { success: true };
 }
 
+export async function toggleItemWaiver(visitId: string, clientId: string, itemKey: string, waived: boolean) {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { error: 'Unauthorized' };
+
+  if (waived) {
+    const { error } = await supabase
+      .from('pos_auto_item_waivers')
+      .upsert({ visit_id: visitId, client_id: clientId, item_key: itemKey });
+    if (error) return { error: error.message };
+  } else {
+    const { error } = await supabase
+      .from('pos_auto_item_waivers')
+      .delete()
+      .eq('visit_id', visitId)
+      .eq('client_id', clientId)
+      .eq('item_key', itemKey);
+    if (error) return { error: error.message };
+  }
+
+  revalidatePath('/pos/tabs');
+  return { success: true };
+}
+
+export async function deleteInvoiceItem(invoiceItemId: string) {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { error: 'Unauthorized' };
+
+  const { error } = await supabase
+    .from('pos_invoice_items')
+    .delete()
+    .eq('id', invoiceItemId);
+
+  if (error) return { error: error.message };
+  revalidatePath('/pos/tabs');
+  return { success: true };
+}
+
 export async function voidDeposit(depositId: string, reason: string) {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();

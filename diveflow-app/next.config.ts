@@ -2,6 +2,7 @@ import type { NextConfig } from "next";
 
 // Supabase project hostname (used in CSP connect-src and img-src)
 const SUPABASE_HOST = "jsqjbnamfnwiesqkcmdp.supabase.co";
+const IS_LOCAL = process.env.NEXT_PUBLIC_SUPABASE_URL?.includes("127.0.0.1");
 
 const securityHeaders = [
   // ── Clickjacking ──────────────────────────────────────────────────────────
@@ -62,9 +63,13 @@ const securityHeaders = [
       `default-src 'self'`,
       `script-src 'self' 'unsafe-inline' 'unsafe-eval'`,   // unsafe-eval needed by Next.js dev & some prod builds
       `style-src 'self' 'unsafe-inline'`,                  // Tailwind inline styles
-      `img-src 'self' data: blob: https://${SUPABASE_HOST}`,
+      IS_LOCAL
+        ? `img-src 'self' data: blob: http://127.0.0.1:54321 https://${SUPABASE_HOST}`
+        : `img-src 'self' data: blob: https://${SUPABASE_HOST}`,
       `font-src 'self'`,
-      `connect-src 'self' https://${SUPABASE_HOST} wss://${SUPABASE_HOST}`,
+      IS_LOCAL
+        ? `connect-src 'self' http://127.0.0.1:54321 ws://127.0.0.1:54321 https://${SUPABASE_HOST} wss://${SUPABASE_HOST}`
+        : `connect-src 'self' https://${SUPABASE_HOST} wss://${SUPABASE_HOST}`,
       `frame-ancestors 'none'`,                             // stronger than X-Frame-Options
       `base-uri 'self'`,                                    // prevents base-tag hijacking
       `form-action 'self'`,                                 // forms only submit to same origin

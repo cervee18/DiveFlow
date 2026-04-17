@@ -7,30 +7,34 @@ interface Vessel {
   id: string;
   name: string;
   abbreviation: string | null;
-  capacity: number;
+  capacity_dive: number;
+  capacity_snorkel: number;
   need_captain: boolean | null;
 }
 
 interface FormState {
   name: string;
   abbreviation: string;
-  capacity: string;
+  capacity_dive: string;
+  capacity_snorkel: string;
   need_captain: boolean;
 }
 
 const emptyForm = (): FormState => ({
   name: '',
   abbreviation: '',
-  capacity: '',
+  capacity_dive: '',
+  capacity_snorkel: '',
   need_captain: false,
 });
 
 function vesselToForm(v: Vessel): FormState {
   return {
-    name:         v.name,
-    abbreviation: v.abbreviation ?? '',
-    capacity:     String(v.capacity),
-    need_captain: v.need_captain ?? false,
+    name:             v.name,
+    abbreviation:     v.abbreviation ?? '',
+    capacity_dive:    String(v.capacity_dive),
+    capacity_snorkel: String(v.capacity_snorkel),
+    need_captain:     v.need_captain ?? false,
   };
 }
 
@@ -57,7 +61,7 @@ function VesselFormRow({
     onChange({ ...form, [key]: val });
 
   return (
-    <div className={`flex items-center gap-3 px-6 py-3 ${isNew ? 'bg-teal-50' : 'bg-slate-50'}`}>
+    <div className={`flex items-center gap-3 px-6 py-3 flex-wrap ${isNew ? 'bg-teal-50' : 'bg-slate-50'}`}>
       {/* Name */}
       <input
         ref={nameRef}
@@ -65,7 +69,7 @@ function VesselFormRow({
         onChange={e => set('name', e.target.value)}
         onKeyDown={e => { if (e.key === 'Enter') onSave(); if (e.key === 'Escape') onCancel(); }}
         placeholder="Boat name"
-        className="flex-1 min-w-0 text-sm px-2.5 py-1.5 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-400 bg-white"
+        className="flex-1 min-w-[140px] text-sm px-2.5 py-1.5 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-400 bg-white"
       />
 
       {/* Abbreviation */}
@@ -78,14 +82,28 @@ function VesselFormRow({
         className="w-20 text-sm px-2.5 py-1.5 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-400 bg-white"
       />
 
-      {/* Capacity */}
+      {/* Dive capacity */}
       <div className="flex items-center gap-1.5">
-        <label className="text-xs text-slate-400 whitespace-nowrap">Cap.</label>
+        <label className="text-xs text-slate-400 whitespace-nowrap">Dive cap.</label>
         <input
           type="number"
           min={1}
-          value={form.capacity}
-          onChange={e => set('capacity', e.target.value)}
+          value={form.capacity_dive}
+          onChange={e => set('capacity_dive', e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') onSave(); if (e.key === 'Escape') onCancel(); }}
+          placeholder="0"
+          className="w-16 text-sm px-2.5 py-1.5 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-400 bg-white"
+        />
+      </div>
+
+      {/* Snorkel capacity */}
+      <div className="flex items-center gap-1.5">
+        <label className="text-xs text-slate-400 whitespace-nowrap">Snorkel cap.</label>
+        <input
+          type="number"
+          min={1}
+          value={form.capacity_snorkel}
+          onChange={e => set('capacity_snorkel', e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter') onSave(); if (e.key === 'Escape') onCancel(); }}
           placeholder="0"
           className="w-16 text-sm px-2.5 py-1.5 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-400 bg-white"
@@ -107,7 +125,7 @@ function VesselFormRow({
       <div className="flex items-center gap-1.5 ml-auto shrink-0">
         <button
           onClick={onSave}
-          disabled={isSaving || !form.name.trim() || !form.capacity}
+          disabled={isSaving || !form.name.trim() || !form.capacity_dive || !form.capacity_snorkel}
           className="px-3 py-1.5 text-xs font-semibold bg-teal-500 text-white rounded-lg hover:bg-teal-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
         >
           {isSaving ? 'Saving…' : 'Save'}
@@ -145,9 +163,11 @@ function VesselRow({
         )}
       </div>
 
-      {/* Capacity */}
+      {/* Capacities */}
       <span className="text-sm text-slate-500 shrink-0">
-        Cap. <span className="font-semibold text-slate-700">{vessel.capacity}</span>
+        <span title="Dive capacity">🤿 <span className="font-semibold text-slate-700">{vessel.capacity_dive}</span></span>
+        <span className="text-slate-300 mx-1.5">/</span>
+        <span title="Snorkel capacity">🐠 <span className="font-semibold text-slate-700">{vessel.capacity_snorkel}</span></span>
       </span>
 
       {/* Captain badge */}
@@ -156,27 +176,19 @@ function VesselRow({
           Captain req.
         </span>
       ) : (
-        <span className="shrink-0 w-[88px]" /> // spacer to keep alignment
+        <span className="shrink-0 w-[88px]" />
       )}
 
-      {/* Action buttons — visible on hover */}
+      {/* Actions */}
       <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
-        <button
-          onClick={onEdit}
-          title="Edit"
-          className="p-1.5 rounded-lg text-slate-400 hover:text-teal-600 hover:bg-teal-50 transition-colors"
-        >
+        <button onClick={onEdit} title="Edit"
+          className="p-1.5 rounded-lg text-slate-400 hover:text-teal-600 hover:bg-teal-50 transition-colors">
           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931z" />
-            <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 7.125L18 5.25" />
           </svg>
         </button>
-        <button
-          onClick={onDelete}
-          disabled={isDeleting}
-          title="Delete"
-          className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors disabled:opacity-40"
-        >
+        <button onClick={onDelete} disabled={isDeleting} title="Delete"
+          className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors disabled:opacity-40">
           {isDeleting ? (
             <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
               <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth={4} />
@@ -209,7 +221,7 @@ export default function VesselsConfig({ orgId }: { orgId: string }) {
   useEffect(() => {
     supabase
       .from('vessels')
-      .select('id, name, abbreviation, capacity, need_captain')
+      .select('id, name, abbreviation, capacity_dive, capacity_snorkel, need_captain')
       .eq('organization_id', orgId)
       .order('name')
       .then(({ data, error }) => {
@@ -232,22 +244,16 @@ export default function VesselsConfig({ orgId }: { orgId: string }) {
     if (!editingId) return;
     setIsSaving(true);
     setError(null);
-    const { error } = await supabase
-      .from('vessels')
-      .update({
-        name:         editForm.name.trim(),
-        abbreviation: editForm.abbreviation.trim() || null,
-        capacity:     parseInt(editForm.capacity, 10),
-        need_captain: editForm.need_captain,
-      })
-      .eq('id', editingId);
+    const patch = {
+      name:             editForm.name.trim(),
+      abbreviation:     editForm.abbreviation.trim() || null,
+      capacity_dive:    parseInt(editForm.capacity_dive, 10),
+      capacity_snorkel: parseInt(editForm.capacity_snorkel, 10),
+      need_captain:     editForm.need_captain,
+    };
+    const { error } = await supabase.from('vessels').update(patch).eq('id', editingId);
     if (error) { setError(error.message); setIsSaving(false); return; }
-    setVessels(prev => prev.map(v =>
-      v.id === editingId
-        ? { ...v, name: editForm.name.trim(), abbreviation: editForm.abbreviation.trim() || null,
-            capacity: parseInt(editForm.capacity, 10), need_captain: editForm.need_captain }
-        : v
-    ));
+    setVessels(prev => prev.map(v => v.id === editingId ? { ...v, ...patch } : v));
     setEditingId(null);
     setIsSaving(false);
   };
@@ -259,13 +265,14 @@ export default function VesselsConfig({ orgId }: { orgId: string }) {
     const { data, error } = await supabase
       .from('vessels')
       .insert({
-        organization_id: orgId,
-        name:            addForm.name.trim(),
-        abbreviation:    addForm.abbreviation.trim() || null,
-        capacity:        parseInt(addForm.capacity, 10),
-        need_captain:    addForm.need_captain,
+        organization_id:  orgId,
+        name:             addForm.name.trim(),
+        abbreviation:     addForm.abbreviation.trim() || null,
+        capacity_dive:    parseInt(addForm.capacity_dive, 10),
+        capacity_snorkel: parseInt(addForm.capacity_snorkel, 10),
+        need_captain:     addForm.need_captain,
       })
-      .select('id, name, abbreviation, capacity, need_captain')
+      .select('id, name, abbreviation, capacity_dive, capacity_snorkel, need_captain')
       .single();
     if (error) { setError(error.message); setIsSaving(false); return; }
     if (data) setVessels(prev => [...prev, data].sort((a, b) => a.name.localeCompare(b.name)));
@@ -284,7 +291,6 @@ export default function VesselsConfig({ orgId }: { orgId: string }) {
 
   return (
     <section className="bg-white rounded-xl border border-slate-200 overflow-hidden">
-      {/* Block header */}
       <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
         <div>
           <h2 className="text-sm font-semibold text-slate-800">Boats</h2>
@@ -303,55 +309,21 @@ export default function VesselsConfig({ orgId }: { orgId: string }) {
         )}
       </div>
 
-      {/* Error banner */}
       {error && (
-        <div className="px-6 py-2 bg-rose-50 border-b border-rose-100 text-xs text-rose-600">
-          {error}
-        </div>
+        <div className="px-6 py-2 bg-rose-50 border-b border-rose-100 text-xs text-rose-600">{error}</div>
       )}
 
-      {/* Loading skeleton */}
       {isLoading ? (
         <div className="divide-y divide-slate-100">
           {[1, 2, 3].map(i => (
             <div key={i} className="flex items-center gap-4 px-6 py-3">
               <div className="flex-1 h-4 bg-slate-100 animate-pulse rounded" />
-              <div className="w-16 h-4 bg-slate-100 animate-pulse rounded" />
+              <div className="w-20 h-4 bg-slate-100 animate-pulse rounded" />
             </div>
           ))}
         </div>
       ) : (
         <div className="divide-y divide-slate-100">
-          {/* Vessel rows */}
-          {vessels.length === 0 && !addForm && (
-            <div className="px-6 py-8 text-center text-sm text-slate-400">
-              No boats yet — add your first one above.
-            </div>
-          )}
-
-          {vessels.map(vessel =>
-            editingId === vessel.id ? (
-              <VesselFormRow
-                key={vessel.id}
-                form={editForm}
-                onChange={setEditForm}
-                onSave={handleSaveEdit}
-                onCancel={cancelEdit}
-                isSaving={isSaving}
-                isNew={false}
-              />
-            ) : (
-              <VesselRow
-                key={vessel.id}
-                vessel={vessel}
-                onEdit={() => startEdit(vessel)}
-                onDelete={() => handleDelete(vessel.id)}
-                isDeleting={deletingId === vessel.id}
-              />
-            )
-          )}
-
-          {/* Add new row */}
           {addForm && (
             <VesselFormRow
               form={addForm}
@@ -361,6 +333,32 @@ export default function VesselsConfig({ orgId }: { orgId: string }) {
               isSaving={isSaving}
               isNew
             />
+          )}
+          {vessels.length === 0 && !addForm && (
+            <div className="px-6 py-8 text-center text-sm text-slate-400">
+              No boats yet — add your first one above.
+            </div>
+          )}
+          {vessels.map(v =>
+            editingId === v.id ? (
+              <VesselFormRow
+                key={v.id}
+                form={editForm}
+                onChange={setEditForm}
+                onSave={handleSaveEdit}
+                onCancel={cancelEdit}
+                isSaving={isSaving}
+                isNew={false}
+              />
+            ) : (
+              <VesselRow
+                key={v.id}
+                vessel={v}
+                onEdit={() => startEdit(v)}
+                onDelete={() => handleDelete(v.id)}
+                isDeleting={deletingId === v.id}
+              />
+            )
           )}
         </div>
       )}

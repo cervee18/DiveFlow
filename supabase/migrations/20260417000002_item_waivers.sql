@@ -1,43 +1,27 @@
--- Move POS-specific config columns off the organizations table into a dedicated
--- org_pos_config sidecar (one row per org).  This keeps organizations clean for
--- identity/operational data and gives POS billing settings room to grow.
+-- Unified manual item waiver system.
+-- Replaces trip_clients.waived with a general pos_auto_item_waivers table so staff
+-- can waive any automated charge (trips, rentals, private guide fees) from the POS tabs UI.
 
--- ── 1. Create the new table ───────────────────────────────────────────────────
-CREATE TABLE IF NOT EXISTS public.org_pos_config (
-  organization_id               uuid        PRIMARY KEY
-                                            REFERENCES public.organizations(id)
-                                            ON DELETE CASCADE,
-  private_instruction_product_id uuid       REFERENCES public.pos_products(id)
-                                            ON DELETE SET NULL,
-  rental_daily_cap              numeric(10,2)
+ALTER TABLE public.trip_clients DROP COLUMN IF EXISTS waived;
+
+CREATE TABLE IF NOT EXISTS public.pos_auto_item_waivers (
+  visit_id  uuid NOT NULL REFERENCES public.visits(id)   ON DELETE CASCADE,
+  client_id uuid NOT NULL REFERENCES public.clients(id)  ON DELETE CASCADE,
+  item_key  text NOT NULL,
+  PRIMARY KEY (visit_id, client_id, item_key)
 );
 
--- ── 2. Back-fill from existing organizations rows ─────────────────────────────
-INSERT INTO public.org_pos_config (organization_id, private_instruction_product_id, rental_daily_cap)
-SELECT id, private_instruction_product_id, rental_daily_cap
-FROM   public.organizations
-ON CONFLICT (organization_id) DO NOTHING;
-
--- ── 3. Drop the now-migrated columns from organizations ───────────────────────
-ALTER TABLE public.organizations
-  DROP COLUMN IF EXISTS private_instruction_product_id,
-  DROP COLUMN IF EXISTS rental_daily_cap;
-
--- ── 4. RLS: org members can read/write their own POS config ───────────────────
-ALTER TABLE public.org_pos_config ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.pos_auto_item_waivers ENABLE ROW LEVEL SECURITY;
 
 DO $$ BEGIN
-  CREATE POLICY "org members can manage pos config"
-    ON public.org_pos_config
+  CREATE POLICY "org members can manage item waivers"
+    ON public.pos_auto_item_waivers
     FOR ALL
-    USING (
-      organization_id IN (
-        SELECT organization_id FROM public.profiles WHERE id = auth.uid()
-      )
-    );
+    USING  (EXISTS (SELECT 1 FROM public.visits v WHERE v.id = visit_id AND v.organization_id = public.my_org_id()))
+    WITH CHECK (EXISTS (SELECT 1 FROM public.visits v WHERE v.id = visit_id AND v.organization_id = public.my_org_id()));
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
--- ── 5. Replace calculate_visit_invoice_payload to read from org_pos_config ────
+-- Rewrite RPC: each automated item gets an item_key + waived flag; manual items get item_id.
 CREATE OR REPLACE FUNCTION public.calculate_visit_invoice_payload(p_visit_id uuid)
 RETURNS json
 LANGUAGE plpgsql
@@ -65,7 +49,6 @@ BEGIN
   SELECT id, status INTO v_invoice_id, v_invoice_status
   FROM   public.pos_invoices WHERE visit_id = p_visit_id LIMIT 1;
 
-  -- Read rental cap from the new sidecar table
   SELECT rental_daily_cap INTO v_rental_daily_cap
   FROM   public.org_pos_config WHERE organization_id = v_org_id;
 
@@ -77,19 +60,13 @@ BEGIN
     WHERE  vc.visit_id = p_visit_id
   ),
 
-  -- ── Trips included by courses added to the tab ────────────────────────────
-  -- Waiver only activates once the course product is on the invoice.
-  client_included_trips AS (
-    SELECT pii.client_id,
-           COALESCE(SUM(c.included_trips), 0) AS total_included_trips
-    FROM   public.pos_invoice_items pii
-    JOIN   public.pos_products      pp ON pp.id  = pii.pos_product_id
-    JOIN   public.courses           c  ON c.id   = pp.course_id
-    WHERE  pii.invoice_id = v_invoice_id
-    GROUP  BY pii.client_id
+  -- Pre-load all waivers for this visit so each CTE can check them
+  visit_waivers AS (
+    SELECT client_id, item_key
+    FROM   public.pos_auto_item_waivers
+    WHERE  visit_id = p_visit_id
   ),
 
-  -- ── Trip count per (client, trip_type) for retroactive tier lookup ────────
   client_trip_type_counts AS (
     SELECT tc.client_id,
            t.trip_type_id,
@@ -104,7 +81,6 @@ BEGIN
     GROUP  BY tc.client_id, t.trip_type_id
   ),
 
-  -- ── Resolve tier price per (client, trip_type) ────────────────────────────
   client_tier_prices AS (
     SELECT ctc.client_id,
            ctc.trip_type_id,
@@ -119,17 +95,14 @@ BEGIN
     FROM   client_trip_type_counts ctc
   ),
 
-  -- ── All chargeable trips ordered chronologically ──────────────────────────
-  client_trips_windowed AS (
+  client_trips_list AS (
     SELECT tc.client_id,
-           t.id          AS trip_id,
+           tc.id                             AS trip_client_id,
+           'trip:' || tc.id::text            AS item_key,
+           t.id                              AS trip_id,
            t.start_time,
-           pp.name       AS product_name,
-           COALESCE(ctp.tier_price, pp.price) AS effective_price,
-           ROW_NUMBER() OVER (
-             PARTITION BY tc.client_id
-             ORDER BY t.start_time
-           ) AS trip_number
+           pp.name                           AS product_name,
+           COALESCE(ctp.tier_price, pp.price) AS effective_price
     FROM   public.trip_clients   tc
     JOIN   public.trips          t   ON t.id   = tc.trip_id
     JOIN   public.trip_types     tt  ON tt.id  = t.trip_type_id
@@ -143,7 +116,6 @@ BEGIN
       AND  tt.pos_product_id IS NOT NULL
   ),
 
-  -- ── Per-day rental: one row per (client, day, gear_type) ─────────────────
   daily_rental_items AS (
     SELECT tc.client_id,
            t.start_time::date AS trip_date,
@@ -179,69 +151,87 @@ BEGIN
 
   automated_items AS (
 
-    -- ① Trip charges: waive the first N trips once the course is on the tab
-    SELECT ctw.client_id,
+    -- ① Trips
+    SELECT ctl.client_id,
            jsonb_build_object(
-             'name',      ctw.product_name,
-             'price',     ctw.effective_price,
-             'type',      'trip',
-             'trip_id',   ctw.trip_id,
-             'trip_date', ctw.start_time
+             'item_key',   ctl.item_key,
+             'name',       ctl.product_name,
+             'price',      CASE WHEN vw.item_key IS NOT NULL THEN 0 ELSE ctl.effective_price END,
+             'type',       'trip',
+             'trip_id',    ctl.trip_id,
+             'trip_date',  ctl.start_time,
+             'waived',     (vw.item_key IS NOT NULL)
            ) AS item,
-           ctw.effective_price AS price_num
-    FROM   client_trips_windowed ctw
-    LEFT   JOIN client_included_trips cit ON cit.client_id = ctw.client_id
-    WHERE  ctw.trip_number > COALESCE(cit.total_included_trips, 0)
+           CASE WHEN vw.item_key IS NOT NULL THEN 0 ELSE ctl.effective_price END AS price_num
+    FROM   client_trips_list ctl
+    LEFT   JOIN visit_waivers vw
+           ON  vw.client_id = ctl.client_id
+           AND vw.item_key  = ctl.item_key
 
     UNION ALL
 
-    -- ② Private guide fee — read product via org_pos_config
+    -- ② Private guide fee
     SELECT tc.client_id,
            jsonb_build_object(
+             'item_key',  'guide:' || t.id::text,
              'name',      pp.name,
-             'price',     pp.price,
+             'price',     CASE WHEN vw.item_key IS NOT NULL THEN 0 ELSE pp.price END,
              'type',      'private_guide',
              'trip_id',   t.id,
-             'trip_date', t.start_time
+             'trip_date', t.start_time,
+             'waived',    (vw.item_key IS NOT NULL)
            ) AS item,
-           pp.price AS price_num
+           CASE WHEN vw.item_key IS NOT NULL THEN 0 ELSE pp.price END AS price_num
     FROM   public.trip_clients  tc
     JOIN   public.trips         t   ON t.id  = tc.trip_id
     JOIN   public.org_pos_config opc ON opc.organization_id = v_org_id
     JOIN   public.pos_products  pp  ON pp.id = opc.private_instruction_product_id
+    LEFT   JOIN visit_waivers   vw
+           ON  vw.client_id = tc.client_id
+           AND vw.item_key  = 'guide:' || t.id::text
     WHERE  tc.client_id IN (SELECT client_id FROM visit_clients_list)
       AND  t.start_time::date BETWEEN v_visit_start AND v_visit_end
       AND  tc.private = true
 
     UNION ALL
 
-    -- ③ Rental (uncapped): one line per gear piece, e.g. "Mask Rental"
+    -- ③ Rental uncapped
     SELECT dri.client_id,
            jsonb_build_object(
+             'item_key',  'rental:' || dri.trip_date::text,
              'name',      dri.name || ' Rental',
-             'price',     dri.price,
+             'price',     CASE WHEN vw.item_key IS NOT NULL THEN 0 ELSE dri.price END,
              'type',      'rental',
-             'trip_date', dri.trip_date::timestamptz
+             'trip_date', dri.trip_date::timestamptz,
+             'waived',    (vw.item_key IS NOT NULL)
            ) AS item,
-           dri.price AS price_num
+           CASE WHEN vw.item_key IS NOT NULL THEN 0 ELSE dri.price END AS price_num
     FROM   daily_rental_items dri
     JOIN   daily_rental_totals drt
            ON  drt.client_id = dri.client_id
            AND drt.trip_date = dri.trip_date
+    LEFT   JOIN visit_waivers vw
+           ON  vw.client_id = dri.client_id
+           AND vw.item_key  = 'rental:' || dri.trip_date::text
     WHERE  drt.raw_total <= drt.charged_amount
 
     UNION ALL
 
-    -- ④ Rental (capped): single collapsed line at cap price
+    -- ④ Rental capped
     SELECT drt.client_id,
            jsonb_build_object(
+             'item_key',  'rental:' || drt.trip_date::text,
              'name',      'Full Rental Gear',
-             'price',     drt.charged_amount,
+             'price',     CASE WHEN vw.item_key IS NOT NULL THEN 0 ELSE drt.charged_amount END,
              'type',      'rental',
-             'trip_date', drt.trip_date::timestamptz
+             'trip_date', drt.trip_date::timestamptz,
+             'waived',    (vw.item_key IS NOT NULL)
            ) AS item,
-           drt.charged_amount AS price_num
+           CASE WHEN vw.item_key IS NOT NULL THEN 0 ELSE drt.charged_amount END AS price_num
     FROM   daily_rental_totals drt
+    LEFT   JOIN visit_waivers vw
+           ON  vw.client_id = drt.client_id
+           AND vw.item_key  = 'rental:' || drt.trip_date::text
     WHERE  drt.raw_total > drt.charged_amount
   ),
 
@@ -257,7 +247,11 @@ BEGIN
              0
            ) AS auto_subtotal,
            COALESCE(
-             (SELECT jsonb_agg(jsonb_build_object('name', pp.name, 'price', pii.unit_price, 'qty', pii.quantity))
+             (SELECT jsonb_agg(jsonb_build_object(
+                       'item_id', pii.id,
+                       'name',    pp.name,
+                       'price',   pii.unit_price,
+                       'qty',     pii.quantity))
               FROM   public.pos_invoice_items pii
               JOIN   public.pos_products pp ON pp.id = pii.pos_product_id
               WHERE  pii.invoice_id = v_invoice_id AND pii.client_id = vcl.client_id),

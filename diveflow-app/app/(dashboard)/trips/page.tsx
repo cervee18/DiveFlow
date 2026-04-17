@@ -104,8 +104,8 @@ export default function TripsPage() {
         .select(`
           *,
           trip_clients ( id ),
-          vessels ( name, capacity ),
-          trip_types ( id, name, default_start_time, number_of_dives, category ),
+          vessels ( name, capacity_dive, capacity_snorkel ),
+          trip_types ( id, name, default_start_time_am, default_start_time_pm, number_of_dives, category ),
           trip_staff ( roles ( name ), staff ( id, first_name, last_name, initials ) )
         `)
         .eq('organization_id', userOrgId)

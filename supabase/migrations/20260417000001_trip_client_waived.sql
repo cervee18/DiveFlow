@@ -1,43 +1,11 @@
--- Move POS-specific config columns off the organizations table into a dedicated
--- org_pos_config sidecar (one row per org).  This keeps organizations clean for
--- identity/operational data and gives POS billing settings room to grow.
+-- Add manual trip waiver flag to trip_clients.
+-- Automatic course-based waiving is removed; staff waive trips explicitly from the POS tabs UI.
 
--- ── 1. Create the new table ───────────────────────────────────────────────────
-CREATE TABLE IF NOT EXISTS public.org_pos_config (
-  organization_id               uuid        PRIMARY KEY
-                                            REFERENCES public.organizations(id)
-                                            ON DELETE CASCADE,
-  private_instruction_product_id uuid       REFERENCES public.pos_products(id)
-                                            ON DELETE SET NULL,
-  rental_daily_cap              numeric(10,2)
-);
+ALTER TABLE public.trip_clients
+  ADD COLUMN IF NOT EXISTS waived boolean NOT NULL DEFAULT false;
 
--- ── 2. Back-fill from existing organizations rows ─────────────────────────────
-INSERT INTO public.org_pos_config (organization_id, private_instruction_product_id, rental_daily_cap)
-SELECT id, private_instruction_product_id, rental_daily_cap
-FROM   public.organizations
-ON CONFLICT (organization_id) DO NOTHING;
-
--- ── 3. Drop the now-migrated columns from organizations ───────────────────────
-ALTER TABLE public.organizations
-  DROP COLUMN IF EXISTS private_instruction_product_id,
-  DROP COLUMN IF EXISTS rental_daily_cap;
-
--- ── 4. RLS: org members can read/write their own POS config ───────────────────
-ALTER TABLE public.org_pos_config ENABLE ROW LEVEL SECURITY;
-
-DO $$ BEGIN
-  CREATE POLICY "org members can manage pos config"
-    ON public.org_pos_config
-    FOR ALL
-    USING (
-      organization_id IN (
-        SELECT organization_id FROM public.profiles WHERE id = auth.uid()
-      )
-    );
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
--- ── 5. Replace calculate_visit_invoice_payload to read from org_pos_config ────
+-- Rewrite RPC: remove client_included_trips CTE, expose waived + trip_client_id per trip item,
+-- and expose item_id on manual_items so the UI can delete them.
 CREATE OR REPLACE FUNCTION public.calculate_visit_invoice_payload(p_visit_id uuid)
 RETURNS json
 LANGUAGE plpgsql
@@ -65,7 +33,6 @@ BEGIN
   SELECT id, status INTO v_invoice_id, v_invoice_status
   FROM   public.pos_invoices WHERE visit_id = p_visit_id LIMIT 1;
 
-  -- Read rental cap from the new sidecar table
   SELECT rental_daily_cap INTO v_rental_daily_cap
   FROM   public.org_pos_config WHERE organization_id = v_org_id;
 
@@ -75,18 +42,6 @@ BEGIN
     FROM   public.visit_clients vc
     JOIN   public.clients c ON c.id = vc.client_id
     WHERE  vc.visit_id = p_visit_id
-  ),
-
-  -- ── Trips included by courses added to the tab ────────────────────────────
-  -- Waiver only activates once the course product is on the invoice.
-  client_included_trips AS (
-    SELECT pii.client_id,
-           COALESCE(SUM(c.included_trips), 0) AS total_included_trips
-    FROM   public.pos_invoice_items pii
-    JOIN   public.pos_products      pp ON pp.id  = pii.pos_product_id
-    JOIN   public.courses           c  ON c.id   = pp.course_id
-    WHERE  pii.invoice_id = v_invoice_id
-    GROUP  BY pii.client_id
   ),
 
   -- ── Trip count per (client, trip_type) for retroactive tier lookup ────────
@@ -119,17 +74,15 @@ BEGIN
     FROM   client_trip_type_counts ctc
   ),
 
-  -- ── All chargeable trips ordered chronologically ──────────────────────────
-  client_trips_windowed AS (
+  -- ── All chargeable trips ──────────────────────────────────────────────────
+  client_trips_list AS (
     SELECT tc.client_id,
-           t.id          AS trip_id,
+           tc.id           AS trip_client_id,
+           tc.waived,
+           t.id            AS trip_id,
            t.start_time,
-           pp.name       AS product_name,
-           COALESCE(ctp.tier_price, pp.price) AS effective_price,
-           ROW_NUMBER() OVER (
-             PARTITION BY tc.client_id
-             ORDER BY t.start_time
-           ) AS trip_number
+           pp.name         AS product_name,
+           COALESCE(ctp.tier_price, pp.price) AS effective_price
     FROM   public.trip_clients   tc
     JOIN   public.trips          t   ON t.id   = tc.trip_id
     JOIN   public.trip_types     tt  ON tt.id  = t.trip_type_id
@@ -179,19 +132,19 @@ BEGIN
 
   automated_items AS (
 
-    -- ① Trip charges: waive the first N trips once the course is on the tab
-    SELECT ctw.client_id,
+    -- ① Trip charges: waived trips appear at $0 so the UI can show/toggle them
+    SELECT ctl.client_id,
            jsonb_build_object(
-             'name',      ctw.product_name,
-             'price',     ctw.effective_price,
-             'type',      'trip',
-             'trip_id',   ctw.trip_id,
-             'trip_date', ctw.start_time
+             'name',            ctl.product_name,
+             'price',           CASE WHEN ctl.waived THEN 0 ELSE ctl.effective_price END,
+             'type',            'trip',
+             'trip_id',         ctl.trip_id,
+             'trip_client_id',  ctl.trip_client_id,
+             'trip_date',       ctl.start_time,
+             'waived',          ctl.waived
            ) AS item,
-           ctw.effective_price AS price_num
-    FROM   client_trips_windowed ctw
-    LEFT   JOIN client_included_trips cit ON cit.client_id = ctw.client_id
-    WHERE  ctw.trip_number > COALESCE(cit.total_included_trips, 0)
+           CASE WHEN ctl.waived THEN 0 ELSE ctl.effective_price END AS price_num
+    FROM   client_trips_list ctl
 
     UNION ALL
 
@@ -215,7 +168,7 @@ BEGIN
 
     UNION ALL
 
-    -- ③ Rental (uncapped): one line per gear piece, e.g. "Mask Rental"
+    -- ③ Rental (uncapped): one line per gear piece
     SELECT dri.client_id,
            jsonb_build_object(
              'name',      dri.name || ' Rental',
@@ -257,7 +210,11 @@ BEGIN
              0
            ) AS auto_subtotal,
            COALESCE(
-             (SELECT jsonb_agg(jsonb_build_object('name', pp.name, 'price', pii.unit_price, 'qty', pii.quantity))
+             (SELECT jsonb_agg(jsonb_build_object(
+                       'item_id', pii.id,
+                       'name',    pp.name,
+                       'price',   pii.unit_price,
+                       'qty',     pii.quantity))
               FROM   public.pos_invoice_items pii
               JOIN   public.pos_products pp ON pp.id = pii.pos_product_id
               WHERE  pii.invoice_id = v_invoice_id AND pii.client_id = vcl.client_id),

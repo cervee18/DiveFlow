@@ -37,26 +37,38 @@ function TankChip({ value, onChange }: { value: string | null | undefined; onCha
 // ─── renderNextChip ───────────────────────────────────────────────────────────
 
 function renderNextChip(label: string) {
-  const [status, nextAbbr] = label.split('|');
-  const nextChip = nextAbbr
-    ? nextAbbr === 'LD'
-      ? <span className="inline-block px-1.5 py-0.5 rounded-full text-[10px] font-black bg-rose-100 text-rose-700 border border-rose-200">LD</span>
-      : <span className="inline-block px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-600 border border-slate-200">{nextAbbr}</span>
-    : null;
+  const parts  = label.split('|');
+  const status = parts[0];
+
+  // Builds a chip for the next trip. abbr may be 'LD' or a trip-type code.
+  // day is e.g. 'MON' or '' (same/next day). ampm is 'AM'|'PM'|''.
+  function nextChip(abbr: string, day: string, ampm: string) {
+    if (abbr === 'LD') return (
+      <span className="inline-block px-1.5 py-0.5 rounded-full text-[10px] font-black bg-rose-100 text-rose-700 border border-rose-200">LD</span>
+    );
+    const timing = [day, ampm].filter(Boolean).join(' ');
+    const display = timing ? `${timing} ${abbr}` : abbr;
+    return (
+      <span className="inline-block px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-600 border border-slate-200">{display}</span>
+    );
+  }
+
   if (status === '#ARR') return (
     <span className="inline-flex items-center gap-0.5">
       <span className="inline-block px-1.5 py-0.5 rounded-full text-[10px] font-black bg-violet-100 text-violet-700 border border-violet-200">#ARR</span>
-      {nextChip}
+      {parts[1] ? nextChip(parts[1], parts[2] ?? '', parts[3] ?? '') : null}
     </span>
   );
   if (status === 'ARR') return (
     <span className="inline-flex items-center gap-0.5">
       <span className="inline-block px-1.5 py-0.5 rounded-full text-[10px] font-black bg-sky-100 text-sky-700 border border-sky-200">ARR</span>
-      {nextChip}
+      {parts[1] ? nextChip(parts[1], parts[2] ?? '', parts[3] ?? '') : null}
     </span>
   );
-  if (label === 'LD')  return <span className="inline-block px-2 py-0.5 rounded-full text-[10px] font-black bg-rose-100 text-rose-700 border border-rose-200">LD</span>;
-  if (label === '-')   return <span className="text-[10px] text-slate-300">-</span>;
+  if (status === 'NEXT') return nextChip(parts[1] ?? '?', parts[2] ?? '', parts[3] ?? '');
+  if (label === 'LD')   return <span className="inline-block px-2 py-0.5 rounded-full text-[10px] font-black bg-rose-100 text-rose-700 border border-rose-200">LD</span>;
+  if (label === '-')    return <span className="text-[10px] text-slate-300">-</span>;
+  // Fallback for any legacy plain-abbr value
   return <span className="inline-block px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-600 border border-slate-200">{label}</span>;
 }
 

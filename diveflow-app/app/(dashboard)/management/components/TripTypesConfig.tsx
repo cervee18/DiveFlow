@@ -8,7 +8,8 @@ interface TripType {
   name: string;
   abbreviation: string | null;
   category: string | null;
-  default_start_time: string;
+  default_start_time_am: string;
+  default_start_time_pm: string;
   number_of_dives: number;
   color: string | null;
 }
@@ -17,7 +18,8 @@ interface FormState {
   name: string;
   abbreviation: string;
   category: string;
-  default_start_time: string;
+  default_start_time_am: string;
+  default_start_time_pm: string;
   number_of_dives: string;
   color: string;
 }
@@ -42,17 +44,18 @@ const COLORS: { value: string; bg: string; ring: string }[] = [
 const COLOR_DOT: Record<string, string> = Object.fromEntries(COLORS.map(c => [c.value, c.bg]));
 
 function emptyForm(category = 'Dive'): FormState {
-  return { name: '', abbreviation: '', category, default_start_time: '08:00', number_of_dives: '2', color: 'blue' };
+  return { name: '', abbreviation: '', category, default_start_time_am: '08:00', default_start_time_pm: '13:00', number_of_dives: '2', color: 'blue' };
 }
 
 function typeToForm(t: TripType): FormState {
   return {
-    name:               t.name,
-    abbreviation:       t.abbreviation ?? '',
-    category:           t.category ?? 'Dive',
-    default_start_time: t.default_start_time.slice(0, 5), // HH:MM
-    number_of_dives:    String(t.number_of_dives),
-    color:              t.color ?? 'blue',
+    name:                  t.name,
+    abbreviation:          t.abbreviation ?? '',
+    category:              t.category ?? 'Dive',
+    default_start_time_am: t.default_start_time_am.slice(0, 5),
+    default_start_time_pm: t.default_start_time_pm.slice(0, 5),
+    number_of_dives:       String(t.number_of_dives),
+    color:                 t.color ?? 'blue',
   };
 }
 
@@ -150,11 +153,21 @@ function TripTypeFormRow({
       {/* Row 2: start time, dives, actions */}
       <div className="flex items-center gap-4 flex-wrap">
         <div className="flex items-center gap-1.5">
-          <label className="text-xs text-slate-400 whitespace-nowrap">Default start</label>
+          <label className="text-xs text-slate-400 whitespace-nowrap">AM start</label>
           <input
             type="time"
-            value={form.default_start_time}
-            onChange={e => set('default_start_time', e.target.value)}
+            value={form.default_start_time_am}
+            onChange={e => set('default_start_time_am', e.target.value)}
+            className="text-sm px-2.5 py-1.5 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-400 bg-white"
+          />
+        </div>
+
+        <div className="flex items-center gap-1.5">
+          <label className="text-xs text-slate-400 whitespace-nowrap">PM start</label>
+          <input
+            type="time"
+            value={form.default_start_time_pm}
+            onChange={e => set('default_start_time_pm', e.target.value)}
             className="text-sm px-2.5 py-1.5 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-400 bg-white"
           />
         </div>
@@ -175,7 +188,7 @@ function TripTypeFormRow({
         <div className="flex items-center gap-1.5 ml-auto">
           <button
             onClick={onSave}
-            disabled={isSaving || !form.name.trim() || !form.default_start_time}
+            disabled={isSaving || !form.name.trim() || !form.default_start_time_am || !form.default_start_time_pm}
             className="px-3 py-1.5 text-xs font-semibold bg-teal-500 text-white rounded-lg hover:bg-teal-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
           >
             {isSaving ? 'Saving…' : 'Save'}
@@ -225,9 +238,11 @@ function TripTypeRow({
         {type.category ?? '—'}
       </span>
 
-      {/* Default time */}
-      <span className="text-xs text-slate-400 shrink-0 w-16 text-right">
-        {formatTime(type.default_start_time)}
+      {/* Default times */}
+      <span className="text-xs text-slate-400 shrink-0 text-right">
+        {formatTime(type.default_start_time_am)}
+        <span className="text-slate-300 mx-1">/</span>
+        {formatTime(type.default_start_time_pm)}
       </span>
 
       {/* Dives */}
@@ -295,7 +310,7 @@ export default function TripTypesConfig({ orgId }: { orgId: string }) {
   useEffect(() => {
     supabase
       .from('trip_types')
-      .select('id, name, abbreviation, category, default_start_time, number_of_dives, color')
+      .select('id, name, abbreviation, category, default_start_time_am, default_start_time_pm, number_of_dives, color')
       .eq('organization_id', orgId)
       .order('name')
       .then(({ data, error }) => {
@@ -320,7 +335,8 @@ export default function TripTypesConfig({ orgId }: { orgId: string }) {
       name:               editForm.name.trim(),
       abbreviation:       editForm.abbreviation.trim() || null,
       category:           editForm.category,
-      default_start_time: editForm.default_start_time,
+      default_start_time_am: editForm.default_start_time_am,
+      default_start_time_pm: editForm.default_start_time_pm,
       number_of_dives:    parseInt(editForm.number_of_dives, 10),
       color:              editForm.color,
     };
@@ -342,11 +358,12 @@ export default function TripTypesConfig({ orgId }: { orgId: string }) {
         name:               addForm.name.trim(),
         abbreviation:       addForm.abbreviation.trim() || null,
         category:           addForm.category,
-        default_start_time: addForm.default_start_time,
+        default_start_time_am: addForm.default_start_time_am,
+        default_start_time_pm: addForm.default_start_time_pm,
         number_of_dives:    parseInt(addForm.number_of_dives, 10),
         color:              addForm.color,
       })
-      .select('id, name, abbreviation, category, default_start_time, number_of_dives, color')
+      .select('id, name, abbreviation, category, default_start_time_am, default_start_time_pm, number_of_dives, color')
       .single();
     if (error) { setError(error.message); setIsSaving(false); return; }
     if (data) setTypes(prev => [...prev, data].sort((a, b) => a.name.localeCompare(b.name)));
