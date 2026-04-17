@@ -6,11 +6,15 @@ import { createClient } from '@/utils/supabase/client';
 interface TripFormModalProps {
   isOpen: boolean;
   mode: 'add' | 'edit';
-  selectedDate?: string;   // pre-fills the date field in add mode
-  selectedTime?: string;   // pre-fills the start time (HH:MM) in add mode
-  tripData?: any;          // full trip row for edit mode
+  selectedDate?: string;          // pre-fills the date field in add mode
+  selectedTime?: string;          // explicit time override (blueprint confirm flow); takes priority over timeSection
+  timeSection?: 'am' | 'pm' | 'night'; // hint from which section + was clicked; derives time from trip type
+  preselectedVesselId?: string;   // pre-fills vessel selector in add mode (blueprint confirm flow)
+  preselectedTripTypeId?: string; // pre-fills trip type in add mode (blueprint confirm flow)
+  preselectedCapacity?: number;   // pre-fills capacity in add mode (blueprint confirm flow)
+  tripData?: any;                 // full trip row for edit mode
   onClose: () => void;
-  onSuccess: () => void;   // called after a successful save
+  onSuccess: () => void;          // called after a successful save
 }
 
 // ── Date helpers ─────────────────────────────────────────────────────────────
@@ -113,6 +117,23 @@ function RepeatDayPicker({
   );
 }
 
+// ── Vessel capacity helper ────────────────────────────────────────────────────
+// Returns the appropriate capacity for a vessel based on the trip category.
+function vesselCapacity(vessel: any, category?: string): number {
+  if (!vessel) return 14;
+  if (category === 'Snorkel') return vessel.capacity_snorkel ?? vessel.capacity_dive ?? 14;
+  return vessel.capacity_dive ?? vessel.capacity_snorkel ?? 14;
+}
+
+// ── Time helper ───────────────────────────────────────────────────────────────
+// Returns the trip type's preferred start time for the given section hint.
+function timeFromType(type: any | undefined, section?: 'am' | 'pm' | 'night'): string {
+  if (!type) return '08:00';
+  if (section === 'pm') return (type.default_start_time_pm ?? '13:00').substring(0, 5);
+  // 'am', 'night', or no hint → fall back to AM default
+  return (type.default_start_time_am ?? '08:00').substring(0, 5);
+}
+
 // ── TripFormModal ─────────────────────────────────────────────────────────────
 
 export default function TripFormModal({
@@ -120,6 +141,10 @@ export default function TripFormModal({
   mode,
   selectedDate,
   selectedTime,
+  timeSection,
+  preselectedVesselId,
+  preselectedTripTypeId,
+  preselectedCapacity,
   tripData,
   onClose,
   onSuccess,
@@ -187,10 +212,10 @@ export default function TripFormModal({
       setOrgId(profile.organization_id);
 
       const [{ data: vData }, { data: tData }] = await Promise.all([
-        supabase.from('vessels').select('id, name, capacity')
+        supabase.from('vessels').select('id, name, capacity_dive, capacity_snorkel')
           .eq('organization_id', profile.organization_id).order('name'),
         supabase.from('trip_types')
-          .select('id, name, abbreviation, category, default_start_time, number_of_dives')
+          .select('id, name, abbreviation, category, default_start_time_am, default_start_time_pm, number_of_dives')
           .eq('organization_id', profile.organization_id).order('name'),
       ]);
 
@@ -222,22 +247,35 @@ export default function TripFormModal({
     } else if (mode === 'add') {
       const date = selectedDate ?? '';
       setFormDate(date);
-      // Default to first type in first available category
-      const firstCat = CATEGORY_ORDER.find(c => tripTypes.some(t => t.category === c)) ?? '';
-      const firstType = tripTypes.find(t => t.category === firstCat);
-      setSelectedCategory(firstCat);
-      setFormTripTypeId(firstType?.id ?? '');
-      if (selectedTime) {
-        setFormTime(selectedTime);
-        if (firstType) setFormDuration(firstType.number_of_dives * 120);
-      } else if (firstType) {
-        setFormTime(firstType.default_start_time.substring(0, 5));
-        setFormDuration(firstType.number_of_dives * 120);
+
+      // If blueprint preselections are provided, use them directly
+      if (preselectedTripTypeId) {
+        const preType = tripTypes.find(t => t.id === preselectedTripTypeId);
+        setFormTripTypeId(preselectedTripTypeId);
+        setSelectedCategory(preType?.category ?? '');
+        setFormTime(selectedTime ?? timeFromType(preType, timeSection) ?? '08:00');
+        setFormDuration((preType?.number_of_dives ?? 2) * 120);
+        setFormCapacity(preselectedCapacity ?? 14);
+        setFormVesselId(preselectedVesselId ?? '');
+      } else {
+        // Default to first type in first available category
+        const firstCat = CATEGORY_ORDER.find(c => tripTypes.some(t => t.category === c)) ?? '';
+        const firstType = tripTypes.find(t => t.category === firstCat);
+        setSelectedCategory(firstCat);
+        setFormTripTypeId(firstType?.id ?? '');
+        // selectedTime (explicit blueprint override) > timeSection-derived > trip type default AM
+        if (selectedTime) {
+          setFormTime(selectedTime);
+          if (firstType) setFormDuration(firstType.number_of_dives * 120);
+        } else if (firstType) {
+          setFormTime(timeFromType(firstType, timeSection));
+          setFormDuration(firstType.number_of_dives * 120);
+        }
+        setFormCapacity(14);
+        setFormVesselId('');
       }
-      setFormCapacity(14);
-      setFormVesselId('');
     }
-  }, [isOpen, mode, tripData, tripTypes, selectedDate, selectedTime]);
+  }, [isOpen, mode, tripData, tripTypes, selectedDate, selectedTime, timeSection, preselectedTripTypeId, preselectedVesselId, preselectedCapacity]);
 
   // ── Toggle repeat mode ────────────────────────────────────────────────────
   const handleToggleRepeat = (on: boolean) => {
@@ -342,7 +380,8 @@ export default function TripFormModal({
     setFormTripTypeId(id);
     const t = tripTypes.find(t => t.id === id);
     if (t) {
-      setFormTime(t.default_start_time.substring(0, 5));
+      // Only auto-update the time if no explicit override was provided (blueprint flow)
+      if (!selectedTime) setFormTime(timeFromType(t, timeSection));
       setFormDuration(t.number_of_dives * 120);
     }
   };
@@ -350,7 +389,7 @@ export default function TripFormModal({
   const handleVesselChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const v = vessels.find(v => v.id === e.target.value);
     setFormVesselId(e.target.value);
-    if (v) setFormCapacity(v.capacity);
+    if (v) setFormCapacity(vesselCapacity(v, selectedCategory));
   };
 
   // ── Submit ────────────────────────────────────────────────────────────────
@@ -652,7 +691,9 @@ export default function TripFormModal({
             >
               <option value="">No Vessel (Shore Dive)</option>
               {vessels.map(v => (
-                <option key={v.id} value={v.id}>{v.name} (Cap: {v.capacity})</option>
+                <option key={v.id} value={v.id}>
+                  {v.name} — {selectedCategory === 'Snorkel' ? `🐠 ${v.capacity_snorkel}` : `🤿 ${v.capacity_dive}`}
+                </option>
               ))}
             </select>
 

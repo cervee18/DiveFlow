@@ -133,7 +133,6 @@ export function useTripManifest({
           cert_level,
           certification_levels!cert_level ( abbreviation )
         ),
-        courses ( name ),
         activities ( name )
       `)
       .eq('trip_id', tripId)
@@ -196,6 +195,20 @@ export function useTripManifest({
         .select('client_id, trip_id, trips!inner(start_time, trip_types(abbreviation))')
         .in('client_id', clientIds);
 
+      // Returns "MON"|"TUE"|... if the next trip is >1 day away, else "".
+      // Returns "AM" or "PM" based on the next trip's local start hour.
+      const DAY_NAMES = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
+      function nextTiming(nextStartTime: string): { day: string; ampm: string } {
+        const nextDate = nextStartTime.substring(0, 10);
+        // Use noon to avoid DST edge cases when computing day difference
+        const currentMs = new Date(tripDateOnly + 'T12:00:00').getTime();
+        const nextMs    = new Date(nextDate    + 'T12:00:00').getTime();
+        const diffDays  = Math.round((nextMs - currentMs) / 86_400_000);
+        const day  = diffDays > 1 ? DAY_NAMES[new Date(nextDate + 'T12:00:00').getDay()] : '';
+        const ampm = new Date(nextStartTime).getHours() < 12 ? 'AM' : 'PM';
+        return { day, ampm };
+      }
+
       const nextMap: Record<string, string> = {};
       for (const diver of manifestData) {
         const clientId = diver.client_id;
@@ -215,8 +228,10 @@ export function useTripManifest({
             });
             const arrIdx = visitTripsForArr.findIndex((t: any) => t.trip_id === tripId);
             if (arrIdx !== -1 && arrIdx < visitTripsForArr.length - 1) {
-              const nextAbbr = (visitTripsForArr[arrIdx + 1] as any).trips.trip_types?.abbreviation || '?';
-              nextMap[clientId] = `#ARR|${nextAbbr}`;
+              const nextTrip = visitTripsForArr[arrIdx + 1] as any;
+              const nextAbbr = nextTrip.trips.trip_types?.abbreviation || '?';
+              const { day, ampm } = nextTiming(nextTrip.trips.start_time);
+              nextMap[clientId] = `#ARR|${nextAbbr}|${day}|${ampm}`;
               continue;
             }
             nextMap[clientId] = '#ARR|LD';
@@ -240,13 +255,18 @@ export function useTripManifest({
           nextMap[clientId] = '-';
         } else if (currentIdx === 0) {
           if (visitTrips.length > 1) {
-            const nextAbbr = (visitTrips[1] as any).trips.trip_types?.abbreviation || '?';
-            nextMap[clientId] = `ARR|${nextAbbr}`;
+            const nextTrip = visitTrips[1] as any;
+            const nextAbbr = nextTrip.trips.trip_types?.abbreviation || '?';
+            const { day, ampm } = nextTiming(nextTrip.trips.start_time);
+            nextMap[clientId] = `ARR|${nextAbbr}|${day}|${ampm}`;
           } else {
             nextMap[clientId] = 'ARR|LD';
           }
         } else if (currentIdx < visitTrips.length - 1) {
-          nextMap[clientId] = (visitTrips[currentIdx + 1] as any).trips.trip_types?.abbreviation || '?';
+          const nextTrip = visitTrips[currentIdx + 1] as any;
+          const nextAbbr = nextTrip.trips.trip_types?.abbreviation || '?';
+          const { day, ampm } = nextTiming(nextTrip.trips.start_time);
+          nextMap[clientId] = `NEXT|${nextAbbr}|${day}|${ampm}`;
         } else {
           nextMap[clientId] = 'LD';
         }
@@ -298,7 +318,7 @@ export function useTripManifest({
       return;
     }
 
-    const TRIP_ONLY_FIELDS = new Set(['waiver', 'deposit', 'notes', 'activity_id']);
+    const TRIP_ONLY_FIELDS = new Set(['waiver', 'deposit', 'notes', 'activity_id', 'private']);
     const propagatableEntries = Object.entries(pendingChanges).filter(([, changes]) =>
       Object.keys(changes).some(k => !TRIP_ONLY_FIELDS.has(k))
     );
@@ -321,7 +341,8 @@ export function useTripManifest({
           const diver = manifest.find(d => d.id === id);
           if (!diver) return Promise.resolve({ error: null });
 
-          const { pick_up, waiver, deposit, notes, activity_id, ...equipmentChanges } = changes;
+          // eslint-disable-next-line @typescript-eslint/no-unused-vars
+          const { pick_up, waiver, deposit, notes, activity_id, private: _private, ...equipmentChanges } = changes;
           const hasPickUp = 'pick_up' in changes;
 
           return supabase.rpc('propagate_trip_client_changes', {

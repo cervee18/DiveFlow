@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { createClient } from "@/utils/supabase/client";
 import { useRouter } from "next/navigation";
 
@@ -32,6 +33,31 @@ export default function ClientVisitHistory({
   const supabase = createClient();
   const router = useRouter();
 
+  const [isFetchingSummary, setIsFetchingSummary] = useState(false);
+  const [summaryError, setSummaryError] = useState<string[] | null>(null);
+
+  const handlePrintSummary = async () => {
+    setSummaryError(null);
+    setIsFetchingSummary(true);
+    try {
+      const resp = await fetch(`/api/client-summary?clientId=${selectedClient.id}`);
+      if (resp.status === 422) {
+        const body = await resp.json();
+        setSummaryError(body.trips ?? ["Unknown error"]);
+        return;
+      }
+      if (!resp.ok) {
+        setSummaryError(["Could not generate summary. Please try again."]);
+        return;
+      }
+      const html = await resp.text();
+      const win = window.open("", "_blank");
+      if (win) { win.document.write(html); win.document.close(); }
+    } finally {
+      setIsFetchingSummary(false);
+    }
+  };
+
   const handleDeleteVisit = async (visitLink: any) => {
     const visit = visitLink.visits;
     const companions = visit.visit_clients?.filter((vc: any) => vc.client_id !== selectedClient.id) || [];
@@ -40,19 +66,38 @@ export default function ClientVisitHistory({
       const deleteJustMe = window.confirm(`Remove ${selectedClient.first_name} from this visit?`);
       if (!deleteJustMe) return;
 
-      const deleteForAll = window.confirm(`This trip includes ${companions.length} companion(s). Do you want to delete the entire trip for EVERYONE?\n\n(Click 'Cancel' to ONLY remove ${selectedClient.first_name} and leave the companions' trip intact).`);
-      
+      const deleteForAll = window.confirm(
+        `This trip includes ${companions.length} companion(s). Do you want to delete the entire visit for EVERYONE?\n\n` +
+        `(Click 'Cancel' to ONLY remove ${selectedClient.first_name} and leave the companions' visit intact).`
+      );
+
       if (deleteForAll) {
-        await supabase.from("visits").delete().eq("id", visit.id);
+        const { error } = await supabase.from("visits").delete().eq("id", visit.id);
+        if (error) {
+          alert(`Cannot delete this visit:\n\n${error.message}`);
+          return;
+        }
       } else {
-        await supabase.from("visit_clients").delete().eq("id", visitLink.id);
+        const { error } = await supabase.from("visit_clients").delete().eq("id", visitLink.id);
+        if (error) {
+          alert(`Could not remove client from visit:\n\n${error.message}`);
+          return;
+        }
       }
     } else {
-      const confirmDelete = window.confirm("Are you sure you want to delete this visit entirely?");
+      const confirmDelete = window.confirm(
+        "Are you sure you want to delete this visit entirely?\n\n" +
+        "Note: visits with recorded payments cannot be deleted."
+      );
       if (!confirmDelete) return;
-      await supabase.from("visits").delete().eq("id", visit.id);
+
+      const { error } = await supabase.from("visits").delete().eq("id", visit.id);
+      if (error) {
+        alert(`Cannot delete this visit:\n\n${error.message}`);
+        return;
+      }
     }
-    
+
     onRefreshVisits();
   };
 
@@ -78,14 +123,56 @@ export default function ClientVisitHistory({
     <div className="w-full lg:w-6/12 bg-white rounded-xl shadow-sm border border-slate-200 h-[600px] lg:h-full overflow-hidden flex flex-col">
       <div className="p-5 border-b border-slate-100 flex justify-between items-center bg-slate-50/50 shrink-0">
         <h2 className="text-lg font-semibold text-slate-800">Visit History</h2>
-        <button 
-          onClick={onAddVisit}
-          className="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1.5 rounded-md text-sm font-medium shadow-sm transition-colors"
-        >
-          + Add Visit
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handlePrintSummary}
+            disabled={isFetchingSummary}
+            className="flex items-center gap-1.5 bg-white border border-slate-300 hover:bg-slate-50 text-slate-600 px-3 py-1.5 rounded-md text-sm font-medium shadow-sm transition-colors disabled:opacity-60"
+            title="Generate printable dive summary"
+          >
+            {isFetchingSummary ? (
+              <svg className="animate-spin w-3.5 h-3.5" viewBox="0 0 24 24" fill="none">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+              </svg>
+            ) : (
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
+              </svg>
+            )}
+            {isFetchingSummary ? "Building..." : "Summary"}
+          </button>
+          <button
+            onClick={onAddVisit}
+            className="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-3 py-1.5 rounded-md text-sm font-medium shadow-sm transition-colors"
+          >
+            + Add Visit
+          </button>
+        </div>
       </div>
-      
+
+      {summaryError && (
+        <div className="mx-4 mt-4 p-3 bg-amber-50 border border-amber-200 rounded-lg shrink-0">
+          <div className="flex justify-between items-start gap-2">
+            <div>
+              <p className="text-xs font-semibold text-amber-800 mb-1">Missing dive log data — cannot generate summary</p>
+              <ul className="text-xs text-amber-700 space-y-0.5">
+                {summaryError.map((t, i) => (
+                  <li key={i} className="flex items-center gap-1">
+                    <span className="text-amber-400">›</span> {t}
+                  </li>
+                ))}
+              </ul>
+            </div>
+            <button onClick={() => setSummaryError(null)} className="text-amber-400 hover:text-amber-600 shrink-0 mt-0.5">
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+        </div>
+      )}
+
       <div className="p-6 overflow-y-auto">
         {clientVisits.length === 0 ? (
           <div className="text-center py-10 text-slate-500 text-sm">

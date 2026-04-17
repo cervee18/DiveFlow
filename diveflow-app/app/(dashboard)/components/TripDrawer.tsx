@@ -73,7 +73,7 @@ export default function TripDrawer({
         .select(`
           id, label, start_time, duration_minutes, max_divers, vessel_id, trip_type_id,
           vessels ( name, abbreviation ),
-          trip_types ( id, name, default_start_time, number_of_dives, category ),
+          trip_types ( id, name, default_start_time_am, default_start_time_pm, number_of_dives, category ),
           trip_staff ( roles ( name ), staff ( id, first_name, last_name, initials ) )
         `)
         .eq('id', id)

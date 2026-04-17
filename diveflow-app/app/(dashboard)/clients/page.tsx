@@ -23,6 +23,7 @@ function ClientsContent() {
   
   // Auth & Org State
   const [userOrgId, setUserOrgId] = useState<string | null>(null);
+  const [requireVisitDefault, setRequireVisitDefault] = useState(false);
 
   // Search State
   const [searchQuery, setSearchQuery] = useState("");
@@ -54,7 +55,15 @@ function ClientsContent() {
       const { data: { user } } = await supabase.auth.getUser();
       if (user) {
         const { data: profile } = await supabase.from("profiles").select("organization_id").eq("id", user.id).single();
-        if (profile) setUserOrgId(profile.organization_id);
+        if (profile) {
+          setUserOrgId(profile.organization_id);
+          const { data: org } = await supabase
+            .from("organizations")
+            .select("require_visit_for_trips")
+            .eq("id", profile.organization_id)
+            .single();
+          if (org) setRequireVisitDefault(org.require_visit_for_trips ?? false);
+        }
       }
       const { data: levels } = await supabase.from("certification_levels").select("*").order("id", { ascending: true });
       if (levels) setCertLevels(levels);
@@ -170,6 +179,12 @@ function ClientsContent() {
     setRecentClients(recentClients.map(c => c.id === updatedClient.id ? updatedClient : c));
   };
 
+  const handleDeleteClient = (clientId: string) => {
+    setSelectedClient(null);
+    setRecentClients(recentClients.filter(c => c.id !== clientId));
+    router.push(pathname, { scroll: false });
+  };
+
   const handleCreateClientSuccess = (newClient: any) => {
     setRecentClients([newClient, ...recentClients].slice(0, 6)); 
     handleSelectClient(newClient); // Select immediately and push URL
@@ -197,7 +212,7 @@ function ClientsContent() {
         />
       ) : (
         <div className="flex flex-col lg:flex-row gap-6 items-start lg:flex-1 lg:min-h-0">
-          <ClientProfileForm 
+          <ClientProfileForm
             selectedClient={selectedClient}
             certLevels={certLevels}
             certOrgs={certOrgs}
@@ -206,6 +221,7 @@ function ClientsContent() {
               router.push(pathname, { scroll: false }); // Clears the URL
             }}
             onUpdate={handleUpdateClientState}
+            onDelete={handleDeleteClient}
           />
 
           <ClientVisitHistory
@@ -226,8 +242,9 @@ function ClientsContent() {
 
       {/* Modals */}
       {isModalOpen && (
-        <ClientFormModal 
+        <ClientFormModal
           userOrgId={userOrgId}
+          requireVisitDefault={requireVisitDefault}
           onClose={() => setIsModalOpen(false)}
           onSuccess={handleCreateClientSuccess}
         />

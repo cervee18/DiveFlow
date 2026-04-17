@@ -46,7 +46,7 @@ export default function TripSidebar({
         ) : (
           trips.map((trip: any) => {
             const isSelected = selectedTripId === trip.id;
-            const currentMaxCapacity = trip.vessels?.capacity || trip.max_divers;
+            const currentMaxCapacity = trip.vessels?.capacity_dive || trip.max_divers;
             const spacesLeft = currentMaxCapacity - trip.booked_divers;
             const isFull = spacesLeft <= 0;
 

@@ -11,7 +11,7 @@ import type { TimeRange } from './StaffStats';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type Vessel = { id: string; name: string; capacity: number };
+type Vessel = { id: string; name: string; capacity_dive: number };
 
 type RawTrip = {
   id: string;
@@ -51,7 +51,7 @@ async function fetchVessels([, orgId]: [string, string]) {
   const supabase = createClient();
   const { data } = await supabase
     .from('vessels')
-    .select('id, name, capacity')
+    .select('id, name, capacity_dive')
     .eq('organization_id', orgId)
     .order('name', { ascending: true });
   return (data ?? []) as Vessel[];

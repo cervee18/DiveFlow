@@ -31,4 +31,5 @@ DROP INDEX IF EXISTS idx_courses_agency;
 ALTER TABLE courses DROP COLUMN IF EXISTS agency;
 
 -- 4. Add unique constraint on name to prevent future duplicates
+ALTER TABLE courses DROP CONSTRAINT IF EXISTS courses_name_key;
 ALTER TABLE courses ADD CONSTRAINT courses_name_key UNIQUE (name);
