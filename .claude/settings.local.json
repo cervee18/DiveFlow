@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(xargs grep:*)",
+      "Bash(grep -l \"capacity\" \"C:\\\\Users\\\\orgul\\\\Escritorio\\\\DiveFlow\\\\supabase\\\\migrations\"/*.sql)",
+      "Bash(docker exec:*)",
+      "Bash(npx tsc:*)",
+      "Bash(grep -h \"^CREATE TABLE\" C:/Users/orgul/Escritorio/DiveFlow/supabase/migrations/*.sql)",
+      "Bash(grep -h \"REFERENCES.*clients\" C:/Users/orgul/Escritorio/DiveFlow/supabase/migrations/*.sql)",
+      "Bash(grep -rn \"SUPABASE_SERVICE_ROLE\" C:/Users/orgul/Escritorio/DiveFlow/diveflow-app/.env*)",
+      "Bash(ls C:/Users/orgul/Escritorio/DiveFlow/diveflow-app/.env*)",
+      "Bash(ls C:/Users/orgul/Escritorio/DiveFlow/.env*)",
+      "Bash(xargs -I {} grep -l \"calculate_visit_invoice_payload\" {})",
+      "Bash(supabase db *)",
+      "Bash(supabase migration *)",
+      "Bash(psql \"postgresql://postgres:postgres@127.0.0.1:54322/postgres\" -f supabase/migrations/20260417000002_item_waivers.sql)"
+    ]
+  }
+}

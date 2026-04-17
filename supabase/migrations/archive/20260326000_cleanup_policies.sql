@@ -39,14 +39,17 @@ DROP POLICY IF EXISTS "org members can view alert_resolutions"   ON public.alert
 DROP POLICY IF EXISTS "org members can insert alert_resolutions" ON public.alert_resolutions;
 DROP POLICY IF EXISTS "org members can delete alert_resolutions" ON public.alert_resolutions;
 
+DROP POLICY IF EXISTS "alert_resolutions: select" ON public.alert_resolutions;
 CREATE POLICY "alert_resolutions: select"
   ON public.alert_resolutions FOR SELECT
   USING (org_id = public.my_org_id());
 
+DROP POLICY IF EXISTS "alert_resolutions: insert" ON public.alert_resolutions;
 CREATE POLICY "alert_resolutions: insert"
   ON public.alert_resolutions FOR INSERT
   WITH CHECK (org_id = public.my_org_id());
 
+DROP POLICY IF EXISTS "alert_resolutions: delete" ON public.alert_resolutions;
 CREATE POLICY "alert_resolutions: delete"
   ON public.alert_resolutions FOR DELETE
   USING (org_id = public.my_org_id());

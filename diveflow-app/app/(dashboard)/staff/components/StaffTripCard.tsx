@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { SelectedBubble, MoveDestination, bubbleKey } from './staffTypes';
 
 function formatTime(timestamp: string): string {
   return new Date(timestamp).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
@@ -20,10 +21,7 @@ function FillBar({ booked, capacity, startTime }: { booked: number; capacity: nu
         <span className={textColor}>{available === 0 ? 'Full' : `${available} left`}</span>
       </div>
       <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
-        <div
-          className={`h-full rounded-full transition-all duration-300 ${barColor}`}
-          style={{ width: `${pct}%` }}
-        />
+        <div className={`h-full rounded-full transition-all duration-300 ${barColor}`} style={{ width: `${pct}%` }} />
       </div>
     </div>
   );
@@ -33,30 +31,32 @@ interface StaffTripCardProps {
   trip: any;
   selectedDate: string;
   assignMode?: boolean;
-  /** The card body (generic assignment) is queued as a target */
+  bubbleMode?: boolean;
   isSelectedAsTarget?: boolean;
-  /** Activity IDs within this trip that are queued as targets */
   selectedActivityIds?: Set<string>;
   selectedStaffIds?: string[];
+  selectedBubbles?: SelectedBubble[];
   captainStaffIds?: Set<string>;
   conflictedStaffIds?: Set<string>;
-  /** Toggle this card as a generic assignment target */
   onToggle?: () => void;
   onRemoveStaff?: (staffId: string) => void;
-  /** Toggle an activity as an assignment target */
   onToggleActivity?: (activityId: string) => void;
   onRemoveActivityStaff?: (tripStaffId: string, tripId: string, staffId: string) => void;
   onAssignCaptain?: (staffId: string) => void;
   onOpenTrip?: (tripId: string) => void;
+  onToggleBubble?: (bubble: SelectedBubble) => void;
+  onMoveBubbles?: (dest: MoveDestination) => void;
 }
 
 export default function StaffTripCard({
   trip,
   selectedDate,
   assignMode = false,
+  bubbleMode = false,
   isSelectedAsTarget = false,
   selectedActivityIds = new Set(),
   selectedStaffIds = [],
+  selectedBubbles = [],
   captainStaffIds = new Set(),
   conflictedStaffIds = new Set(),
   onToggle,
@@ -65,6 +65,8 @@ export default function StaffTripCard({
   onRemoveActivityStaff,
   onAssignCaptain,
   onOpenTrip,
+  onToggleBubble,
+  onMoveBubbles,
 }: StaffTripCardProps) {
   const router = useRouter();
   const [captainMode, setCaptainMode] = useState(false);
@@ -102,27 +104,33 @@ export default function StaffTripCard({
     activityStaffMap[ts.activity_id].push({ tripStaffId: ts.id, staffId: ts.staff.id ?? ts.staff_id, initials });
   }
 
-  // Only show add/remove preview when this specific card is a selected target
-  const willAddToTrip      = isSelectedAsTarget ? selectedStaffIds.filter(id => !genericIds.has(id)) : [];
-  const willRemoveFromTrip = isSelectedAsTarget ? selectedStaffIds.filter(id =>  genericIds.has(id)) : [];
+  // Assign-mode preview (only when this card is a selected target)
+  const willAddToTrip = isSelectedAsTarget ? selectedStaffIds.filter(id => !genericIds.has(id)) : [];
 
   const hasStaff = allTripStaff.length > 0;
 
   const handleClick = () => {
     if (captainMode) { setCaptainMode(false); return; }
-    if (assignMode) onToggle?.();
-    else if (onOpenTrip) onOpenTrip(trip.id);
-    else router.push(`/trips?date=${selectedDate}&tripId=${trip.id}`);
+    if (bubbleMode) {
+      onMoveBubbles?.({ kind: 'trip', tripId: trip.id });
+    } else if (assignMode) {
+      onToggle?.();
+    } else if (onOpenTrip) {
+      onOpenTrip(trip.id);
+    } else {
+      router.push(`/trips?date=${selectedDate}&tripId=${trip.id}`);
+    }
   };
 
-  const handleStaffChipClick = (e: React.MouseEvent, staffId: string, captainLicense: boolean) => {
+  const handleGenericChipClick = (e: React.MouseEvent, staffId: string, captainLicense: boolean) => {
     e.stopPropagation();
     if (captainMode) {
       if (!captainLicense) return;
       onAssignCaptain?.(staffId);
       setCaptainMode(false);
     } else {
-      onRemoveStaff?.(staffId);
+      // Bubble select mode — always toggle bubble
+      onToggleBubble?.({ staffId, source: { kind: 'trip', tripId: trip.id } });
     }
   };
 
@@ -131,10 +139,12 @@ export default function StaffTripCard({
       role="button"
       tabIndex={0}
       onClick={handleClick}
-      onKeyDown={e => { if (!assignMode && (e.key === 'Enter' || e.key === ' ')) handleClick(); }}
+      onKeyDown={e => { if (!assignMode && !bubbleMode && (e.key === 'Enter' || e.key === ' ')) handleClick(); }}
       className={`w-full text-left rounded-xl p-3 shadow-sm border transition-all cursor-pointer ${
         captainMode
           ? 'bg-white border-blue-400 ring-2 ring-blue-100'
+          : bubbleMode
+          ? 'bg-white border-slate-200 hover:border-violet-400 hover:ring-2 hover:ring-violet-100 hover:shadow-md'
           : isSelectedAsTarget
           ? 'bg-white border-teal-400 ring-2 ring-teal-100 shadow-md'
           : assignMode
@@ -142,13 +152,11 @@ export default function StaffTripCard({
           : 'bg-white border-slate-200 hover:shadow-md hover:border-teal-300'
       }`}
     >
-      {/* Type · Vessel · Label  +  generic staff chips on the right */}
+      {/* Type · Vessel · Label  +  generic staff chips */}
       <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-1.5 mb-1.5">
         <div className="flex items-center gap-1.5 flex-wrap min-w-0">
           {trip.trip_types?.name && (
-            <span className="text-base font-bold text-slate-800 leading-none">
-              {trip.trip_types.name}
-            </span>
+            <span className="text-base font-bold text-slate-800 leading-none">{trip.trip_types.name}</span>
           )}
           {trip.trip_types?.name && (trip.vessels?.abbreviation || trip.vessels?.name) && (
             <span className="text-slate-300 text-base leading-none">·</span>
@@ -161,42 +169,44 @@ export default function StaffTripCard({
           {trip.label && (
             <>
               <span className="text-slate-300 text-base leading-none">·</span>
-              <span className="text-xs font-semibold text-slate-500 leading-none">
-                {trip.label}
-              </span>
+              <span className="text-xs font-semibold text-slate-500 leading-none">{trip.label}</span>
             </>
           )}
         </div>
 
         {/* Staff chips + Captain button */}
         <div className="flex flex-col items-start lg:items-end gap-1 shrink-0">
-          {/* Staff chips */}
           <div className="flex flex-wrap justify-start lg:justify-end gap-1">
             {allTripStaff.length === 0 && willAddToTrip.length === 0 && (
               <span className="text-[11px] text-slate-300 italic leading-none mt-0.5">—</span>
             )}
-            {allTripStaff.map(s => {
-              const isCaptain    = captainStaffIds.has(s.staffId);
-              const isWillRemove = !captainMode && willRemoveFromTrip.includes(s.staffId);
-              const isDisabled   = captainMode && !s.captainLicense;
 
+            {allTripStaff.map(s => {
+              const isCaptain  = captainStaffIds.has(s.staffId);
+              const isDisabled = captainMode && !s.captainLicense;
               const isConflicted = conflictedStaffIds.has(s.staffId);
 
+              const thisBubble: SelectedBubble = {
+                staffId: s.staffId,
+                source: { kind: 'trip', tripId: trip.id },
+              };
+              const isBubbleSelected = selectedBubbles.some(b => bubbleKey(b) === bubbleKey(thisBubble));
+
               let chipClass = '';
-              if (isWillRemove) {
-                chipClass = 'bg-red-100 text-red-500 ring-1 ring-red-300';
-              } else if (isDisabled) {
+              if (isDisabled) {
                 chipClass = 'bg-slate-100 text-slate-300 cursor-not-allowed opacity-50';
+              } else if (isBubbleSelected) {
+                chipClass = 'bg-violet-500 text-white ring-2 ring-violet-300';
               } else if (isCaptain) {
                 chipClass = captainMode
                   ? 'bg-blue-700 text-white ring-2 ring-blue-400 hover:bg-blue-800'
-                  : 'bg-blue-700 text-white hover:bg-blue-800';
+                  : 'bg-blue-700 text-white hover:bg-violet-100 hover:text-violet-700';
               } else if (captainMode) {
                 chipClass = 'bg-teal-100 text-teal-700 ring-1 ring-blue-300 hover:bg-blue-600 hover:text-white hover:ring-blue-500';
               } else if (isConflicted) {
                 chipClass = 'bg-rose-500 text-white shadow-sm ring-2 ring-rose-300';
               } else {
-                chipClass = 'bg-teal-100 text-teal-700 hover:bg-red-100 hover:text-red-500';
+                chipClass = 'bg-teal-100 text-teal-700 hover:bg-violet-100 hover:text-violet-600';
               }
 
               return (
@@ -204,28 +214,20 @@ export default function StaffTripCard({
                   key={s.staffId}
                   disabled={isDisabled}
                   title={
-                    isDisabled
-                      ? `${s.initials} has no captain license`
-                      : captainMode
-                      ? `Set ${s.initials} as Captain`
-                      : isWillRemove
-                      ? `Remove ${s.initials}`
-                      : `Click to remove ${s.initials}`
+                    isDisabled        ? `${s.initials} has no captain license`
+                    : captainMode     ? `Set ${s.initials} as Captain`
+                    : isBubbleSelected ? `Deselect ${s.initials}`
+                    : `Select ${s.initials}`
                   }
-                  onClick={e => handleStaffChipClick(e, s.staffId, s.captainLicense)}
-                  className={`group inline-flex items-center justify-center w-6 h-6 rounded-full text-[10px] font-bold leading-none transition-colors ${chipClass}`}
+                  onClick={e => handleGenericChipClick(e, s.staffId, s.captainLicense)}
+                  className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-[10px] font-bold leading-none transition-colors ${chipClass}`}
                 >
-                  {captainMode ? (
-                    <span>{s.initials}</span>
-                  ) : (
-                    <>
-                      <span className={isWillRemove ? 'hidden' : 'group-hover:hidden'}>{s.initials}</span>
-                      <span className={isWillRemove ? '' : 'hidden group-hover:inline'}>×</span>
-                    </>
-                  )}
+                  {s.initials}
                 </button>
               );
             })}
+
+            {/* Assign-mode preview */}
             {willAddToTrip.length > 0 && (
               <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-teal-500 text-white text-[10px] font-bold leading-none ring-1 ring-teal-400">
                 +{willAddToTrip.length}
@@ -233,8 +235,8 @@ export default function StaffTripCard({
             )}
           </div>
 
-          {/* Captain button — only when there's staff and not in assign mode, and not Pool/Class */}
-          {hasStaff && !assignMode && !['Pool', 'Class'].includes(trip.trip_types?.name) && (
+          {/* Captain button */}
+          {hasStaff && !assignMode && !bubbleMode && !['Pool', 'Class'].includes(trip.trip_types?.name) && (
             <button
               onClick={e => { e.stopPropagation(); setCaptainMode(prev => !prev); }}
               className={`text-[9px] font-bold px-1.5 py-0.5 rounded transition-colors leading-none ${
@@ -249,19 +251,20 @@ export default function StaffTripCard({
         </div>
       </div>
 
-      {/* Activity chips — non-default activities with their own staff chips */}
+      {/* Activity rows */}
       {trip.activities?.length > 0 && (
         <div className="flex flex-col gap-1 mt-1.5">
           {trip.activities.map((activity: { id: string; name: string }) => {
-            const assigned   = activityStaffMap[activity.id] ?? [];
-            const assignedIds = new Set(assigned.map(s => s.staffId));
+            const assigned       = activityStaffMap[activity.id] ?? [];
+            const assignedIds    = new Set(assigned.map(s => s.staffId));
             const isActivityTarget = selectedActivityIds.has(activity.id);
-            const willAddToActivity    = isActivityTarget ? selectedStaffIds.filter(id => !assignedIds.has(id)) : [];
-            const willRemoveFromActivity = isActivityTarget ? assigned.filter(s => selectedStaffIds.includes(s.staffId)) : [];
+            const willAddToActivity = isActivityTarget
+              ? selectedStaffIds.filter(id => !assignedIds.has(id))
+              : [];
 
             return (
               <div key={activity.id} className="flex items-center flex-wrap gap-1">
-                {/* Activity name chip — clickable in assign mode */}
+                {/* Activity name chip */}
                 <span
                   onClick={assignMode ? e => { e.stopPropagation(); onToggleActivity?.(activity.id); } : undefined}
                   className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold leading-none transition-colors ${
@@ -275,30 +278,34 @@ export default function StaffTripCard({
                   {activity.name}
                 </span>
 
-                {/* Staff already assigned to this activity */}
+                {/* Activity staff chips */}
                 {assigned.map(s => {
-                  const isWillRemove = willRemoveFromActivity.some(r => r.staffId === s.staffId);
                   const isConflicted = conflictedStaffIds.has(s.staffId);
+                  const thisBubble: SelectedBubble = {
+                    staffId: s.staffId,
+                    source: { kind: 'trip-activity', tripId: trip.id, activityId: activity.id, tripStaffId: s.tripStaffId },
+                  };
+                  const isBubbleSelected = selectedBubbles.some(b => bubbleKey(b) === bubbleKey(thisBubble));
+
                   return (
                     <button
                       key={s.tripStaffId}
-                      title={isWillRemove ? `Remove ${s.initials}` : `Click to remove ${s.initials}`}
-                      onClick={e => { e.stopPropagation(); onRemoveActivityStaff?.(s.tripStaffId, trip.id, s.staffId); }}
-                      className={`group inline-flex items-center justify-center w-5 h-5 rounded-full text-[9px] font-bold leading-none transition-colors ${
-                        isWillRemove
-                          ? 'bg-red-100 text-red-500 ring-1 ring-red-300'
+                      title={isBubbleSelected ? `Deselect ${s.initials}` : `Select ${s.initials}`}
+                      onClick={e => { e.stopPropagation(); onToggleBubble?.(thisBubble); }}
+                      className={`inline-flex items-center justify-center w-5 h-5 rounded-full text-[9px] font-bold leading-none transition-colors ${
+                        isBubbleSelected
+                          ? 'bg-violet-500 text-white ring-2 ring-violet-300'
                           : isConflicted
                           ? 'bg-rose-500 text-white ring-2 ring-rose-300 shadow-sm'
-                          : 'bg-indigo-200 text-indigo-700 hover:bg-red-100 hover:text-red-500'
+                          : 'bg-indigo-200 text-indigo-700 hover:bg-violet-100 hover:text-violet-600'
                       }`}
                     >
-                      <span className={isWillRemove ? 'hidden' : 'group-hover:hidden'}>{s.initials}</span>
-                      <span className={isWillRemove ? '' : 'hidden group-hover:inline'}>×</span>
+                      {s.initials}
                     </button>
                   );
                 })}
 
-                {/* Preview: will be added to this activity */}
+                {/* Assign-mode preview */}
                 {willAddToActivity.length > 0 && (
                   <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-indigo-500 text-white text-[9px] font-bold leading-none">
                     +{willAddToActivity.length}

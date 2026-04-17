@@ -21,6 +21,21 @@ DECLARE
 BEGIN
   FOREACH v_client_id IN ARRAY p_client_ids LOOP
 
+    -- 0. Reject if client requires a visit and none covers this trip date (ERRCODE 23001)
+    IF (SELECT requires_visit FROM clients WHERE id = v_client_id) THEN
+      IF NOT EXISTS (
+        SELECT 1
+        FROM visit_clients vc
+        JOIN visits v ON v.id = vc.visit_id
+        WHERE vc.client_id = v_client_id
+          AND v.start_date <= p_trip_date
+          AND v.end_date   >= p_trip_date
+      ) THEN
+        RAISE EXCEPTION 'Client requires an active visit covering % to be added to a trip. Create a visit first, or mark the client as a local resident.', p_trip_date
+          USING ERRCODE = '23001';
+      END IF;
+    END IF;
+
     -- 1. Insert (unique constraint will raise 23505 if already on trip)
     INSERT INTO trip_clients (trip_id, client_id)
     VALUES (p_trip_id, v_client_id)

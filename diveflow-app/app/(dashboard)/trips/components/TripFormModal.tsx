@@ -24,7 +24,7 @@ export default function TripFormModal({
         setFormDuration(tripData.duration_minutes);
         setFormCapacity(tripData.max_divers || 14);
       } else if (mode === 'add' && tripTypes.length > 0) {
-        setFormTime(tripTypes[0].default_start_time.substring(0, 5));
+        setFormTime(tripTypes[0].default_start_time_am.substring(0, 5));
         setFormDuration(tripTypes[0].number_of_dives * 120);
         setFormCapacity(14);
       }
@@ -33,7 +33,7 @@ export default function TripFormModal({
 
   const handleVesselChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const selectedVessel = vessels.find((v: any) => v.id === e.target.value);
-    if (selectedVessel) setFormCapacity(selectedVessel.capacity);
+    if (selectedVessel) setFormCapacity(selectedVessel.capacity_dive ?? selectedVessel.capacity_snorkel ?? 14);
   };
 
   if (!isOpen) return null;
@@ -42,7 +42,7 @@ export default function TripFormModal({
     const selectedId = e.target.value;
     const selectedType = tripTypes.find((t: any) => t.id === selectedId);
     if (selectedType) {
-      setFormTime(selectedType.default_start_time.substring(0, 5));
+      setFormTime(selectedType.default_start_time_am.substring(0, 5));
       setFormDuration(selectedType.number_of_dives * 120); 
     }
   };
@@ -164,7 +164,7 @@ export default function TripFormModal({
             >
               <option value="">No Vessel (Shore Dive)</option>
               {vessels.map((v: any) => (
-                <option key={v.id} value={v.id}>{v.name} (Cap: {v.capacity})</option>
+                <option key={v.id} value={v.id}>{v.name} (🤿 {v.capacity_dive} / 🐠 {v.capacity_snorkel})</option>
               ))}
             </select>
           </div>

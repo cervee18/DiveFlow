@@ -74,9 +74,22 @@ export function printTripManifest({
     const fins = row.fins   ?? diver.fins   ?? '';
     const mask = row.mask   ?? diver.mask   ?? '';
     const ld = diver.clients?.last_dive_date ? formatLastDive(diver.clients.last_dive_date) : 'New';
-    const nextRaw = nextTripMap[diver.client_id] ?? '';
-    const [nextStatus, nextFollowing] = nextRaw.split('|');
-    const nextDisplay = nextFollowing ? `${nextStatus} ${nextFollowing}` : nextStatus;
+    const nextRaw    = nextTripMap[diver.client_id] ?? '';
+    const parts      = nextRaw.split('|');
+    const nextStatus = parts[0];
+    let nextDisplay: string;
+    if (nextStatus === 'NEXT') {
+      const abbr   = parts[1] ?? '';
+      const timing = [parts[2], parts[3]].filter(Boolean).join(' ');
+      nextDisplay  = timing ? `${timing} ${abbr}` : abbr;
+    } else if ((nextStatus === '#ARR' || nextStatus === 'ARR') && parts[1]) {
+      const abbr    = parts[1];
+      const timing  = [parts[2], parts[3]].filter(Boolean).join(' ');
+      const nextPart = timing ? `${timing} ${abbr}` : abbr;
+      nextDisplay   = `${nextStatus} ${nextPart}`;
+    } else {
+      nextDisplay = nextRaw;
+    }
     const eanxBold = (v: string) => v.toLowerCase().includes('eanx') ? ' eanx' : '';
 
     const diveCols = Array.from({ length: nd }, () =>
