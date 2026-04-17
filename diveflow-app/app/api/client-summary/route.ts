@@ -136,7 +136,7 @@ export async function GET(request: NextRequest) {
     `)
     .eq("client_id", clientId);
 
-  const allTripClients = (tripClients ?? []).filter((tc: any) => tc.trips);
+  const allTripClients: any[] = (tripClients ?? []).filter((tc: any) => tc.trips);
 
   // 4. Dive logs for all trip_clients
   const tripClientIds = allTripClients.map((tc: any) => tc.id);
