@@ -195,6 +195,514 @@ $$;
 ALTER FUNCTION "public"."add_clients_to_trip"("p_trip_id" "uuid", "p_client_ids" "uuid"[], "p_trip_date" "date") OWNER TO "postgres";
 
 
+CREATE OR REPLACE FUNCTION "public"."add_items_to_client_tab"("p_org_id" "uuid", "p_client_id" "uuid", "p_visit_id" "uuid", "p_items" "jsonb") RETURNS "jsonb"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    AS $$
+DECLARE
+  v_invoice_id uuid;
+  v_item       jsonb;
+BEGIN
+  -- ── Step 1: resolve invoice ─────────────────────────────────────────────────
+  IF p_visit_id IS NOT NULL THEN
+    -- One invoice per visit (UNIQUE constraint)
+    INSERT INTO public.pos_invoices (organization_id, visit_id, client_id)
+    VALUES (p_org_id, p_visit_id, p_client_id)
+    ON CONFLICT (visit_id) DO NOTHING;
+
+    SELECT id INTO v_invoice_id
+    FROM   public.pos_invoices
+    WHERE  visit_id = p_visit_id;
+
+  ELSE
+    -- Client-only: find most recent open invoice or create one
+    SELECT id INTO v_invoice_id
+    FROM   public.pos_invoices
+    WHERE  client_id = p_client_id
+      AND  visit_id  IS NULL
+      AND  status    = 'open'
+    ORDER  BY created_at DESC
+    LIMIT  1;
+
+    IF NOT FOUND THEN
+      INSERT INTO public.pos_invoices (organization_id, visit_id, client_id)
+      VALUES (p_org_id, NULL, p_client_id)
+      RETURNING id INTO v_invoice_id;
+    END IF;
+  END IF;
+
+  -- ── Step 2: insert items ────────────────────────────────────────────────────
+  FOR v_item IN SELECT * FROM jsonb_array_elements(p_items)
+  LOOP
+    INSERT INTO public.pos_invoice_items
+      (invoice_id, pos_product_id, client_id, unit_price, quantity)
+    VALUES (
+      v_invoice_id,
+      (v_item->>'product_id')::uuid,
+      p_client_id,
+      (v_item->>'price')::numeric,
+      (v_item->>'qty')::integer
+    );
+  END LOOP;
+
+  RETURN jsonb_build_object('invoice_id', v_invoice_id);
+END;
+$$;
+
+
+ALTER FUNCTION "public"."add_items_to_client_tab"("p_org_id" "uuid", "p_client_id" "uuid", "p_visit_id" "uuid", "p_items" "jsonb") OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."add_items_to_client_tab"("p_org_id" "uuid", "p_client_id" "uuid", "p_visit_id" "uuid", "p_items" "jsonb", "p_recorded_by" "uuid" DEFAULT NULL::"uuid", "p_recorded_by_email" "text" DEFAULT NULL::"text") RETURNS "jsonb"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    AS $$
+DECLARE
+  v_invoice_id uuid;
+  v_txn_id     uuid;
+  v_item       jsonb;
+BEGIN
+  -- ── Step 1: resolve invoice ─────────────────────────────────────────────────
+  IF p_visit_id IS NOT NULL THEN
+    INSERT INTO public.pos_invoices (organization_id, visit_id, client_id)
+    VALUES (p_org_id, p_visit_id, p_client_id)
+    ON CONFLICT (visit_id) DO NOTHING;
+
+    SELECT id INTO v_invoice_id
+    FROM   public.pos_invoices
+    WHERE  visit_id = p_visit_id;
+
+  ELSE
+    SELECT id INTO v_invoice_id
+    FROM   public.pos_invoices
+    WHERE  client_id = p_client_id
+      AND  visit_id  IS NULL
+      AND  status    = 'open'
+    ORDER  BY created_at DESC
+    LIMIT  1;
+
+    IF NOT FOUND THEN
+      INSERT INTO public.pos_invoices (organization_id, visit_id, client_id)
+      VALUES (p_org_id, NULL, p_client_id)
+      RETURNING id INTO v_invoice_id;
+    END IF;
+  END IF;
+
+  -- ── Step 2: create transaction record (captures who added this batch) ───────
+  INSERT INTO public.pos_transactions (invoice_id, recorded_by_email)
+  VALUES (v_invoice_id, p_recorded_by_email)
+  RETURNING id INTO v_txn_id;
+
+  -- ── Step 3: insert items linked to the transaction ──────────────────────────
+  FOR v_item IN SELECT * FROM jsonb_array_elements(p_items)
+  LOOP
+    INSERT INTO public.pos_invoice_items
+      (invoice_id, transaction_id, pos_product_id, client_id, unit_price, quantity)
+    VALUES (
+      v_invoice_id,
+      v_txn_id,
+      (v_item->>'product_id')::uuid,
+      p_client_id,
+      (v_item->>'price')::numeric,
+      (v_item->>'qty')::integer
+    );
+  END LOOP;
+
+  RETURN jsonb_build_object(
+    'invoice_id',     v_invoice_id,
+    'transaction_id', v_txn_id
+  );
+END;
+$$;
+
+
+ALTER FUNCTION "public"."add_items_to_client_tab"("p_org_id" "uuid", "p_client_id" "uuid", "p_visit_id" "uuid", "p_items" "jsonb", "p_recorded_by" "uuid", "p_recorded_by_email" "text") OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."calculate_visit_invoice_payload"("p_visit_id" "uuid") RETURNS json
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    AS $$
+DECLARE
+  v_invoice_status      text    := 'open';
+  v_invoice_id          uuid    := null;
+  v_visit_start         date;
+  v_visit_end           date;
+  v_org_id              uuid;
+  v_rental_daily_cap    numeric(10,2);
+  v_clients             jsonb;
+  v_shared_group_items  jsonb;
+  v_unassigned_payments jsonb;
+  v_master_subtotal     numeric := 0;
+  v_master_paid         numeric := 0;
+  v_master_balance      numeric := 0;
+  v_result              json;
+BEGIN
+  SELECT v.start_date, v.end_date, v.organization_id
+  INTO   v_visit_start, v_visit_end, v_org_id
+  FROM   public.visits v WHERE v.id = p_visit_id;
+
+  SELECT id, status INTO v_invoice_id, v_invoice_status
+  FROM   public.pos_invoices WHERE visit_id = p_visit_id LIMIT 1;
+
+  SELECT rental_daily_cap INTO v_rental_daily_cap
+  FROM   public.org_pos_config WHERE organization_id = v_org_id;
+
+  WITH visit_clients_list AS (
+    SELECT c.id AS client_id,
+           c.first_name || ' ' || c.last_name AS client_name
+    FROM   public.visit_clients vc
+    JOIN   public.clients c ON c.id = vc.client_id
+    WHERE  vc.visit_id = p_visit_id
+  ),
+
+  -- Pre-load all waivers for this visit so each CTE can check them
+  visit_waivers AS (
+    SELECT client_id, item_key
+    FROM   public.pos_auto_item_waivers
+    WHERE  visit_id = p_visit_id
+  ),
+
+  client_trip_type_counts AS (
+    SELECT tc.client_id,
+           t.trip_type_id,
+           COUNT(*) AS trip_count
+    FROM   public.trip_clients tc
+    JOIN   public.trips      t  ON t.id  = tc.trip_id
+    JOIN   public.trip_types tt ON tt.id = t.trip_type_id
+    WHERE  tc.client_id IN (SELECT client_id FROM visit_clients_list)
+      AND  t.start_time::date BETWEEN v_visit_start AND v_visit_end
+      AND  tt.billing_via_activity = false
+      AND  tt.pos_product_id IS NOT NULL
+    GROUP  BY tc.client_id, t.trip_type_id
+  ),
+
+  client_tier_prices AS (
+    SELECT ctc.client_id,
+           ctc.trip_type_id,
+           (
+             SELECT tpt.unit_price
+             FROM   public.trip_pricing_tiers tpt
+             WHERE  tpt.trip_type_id = ctc.trip_type_id
+               AND  tpt.min_qty      <= ctc.trip_count
+             ORDER  BY tpt.min_qty DESC
+             LIMIT  1
+           ) AS tier_price
+    FROM   client_trip_type_counts ctc
+  ),
+
+  client_trips_list AS (
+    SELECT tc.client_id,
+           tc.id                             AS trip_client_id,
+           'trip:' || tc.id::text            AS item_key,
+           t.id                              AS trip_id,
+           t.start_time,
+           pp.name                           AS product_name,
+           COALESCE(ctp.tier_price, pp.price) AS effective_price
+    FROM   public.trip_clients   tc
+    JOIN   public.trips          t   ON t.id   = tc.trip_id
+    JOIN   public.trip_types     tt  ON tt.id  = t.trip_type_id
+    JOIN   public.pos_products   pp  ON pp.id  = tt.pos_product_id
+    LEFT   JOIN client_tier_prices ctp
+            ON  ctp.client_id    = tc.client_id
+            AND ctp.trip_type_id = tt.id
+    WHERE  tc.client_id IN (SELECT client_id FROM visit_clients_list)
+      AND  t.start_time::date BETWEEN v_visit_start AND v_visit_end
+      AND  tt.billing_via_activity = false
+      AND  tt.pos_product_id IS NOT NULL
+  ),
+
+  daily_rental_items AS (
+    SELECT tc.client_id,
+           t.start_time::date AS trip_date,
+           frm.rental_field,
+           pp.name,
+           MAX(pp.price) AS price
+    FROM   public.trip_clients        tc
+    JOIN   public.trips               t   ON t.id  = tc.trip_id
+    JOIN   public.pos_rental_mappings frm ON frm.organization_id = t.organization_id
+    JOIN   public.pos_products        pp  ON pp.id = frm.pos_product_id
+    WHERE  tc.client_id IN (SELECT client_id FROM visit_clients_list)
+      AND  t.start_time::date BETWEEN v_visit_start AND v_visit_end
+      AND  (
+             (frm.rental_field = 'mask'      AND tc.mask IS NOT NULL AND tc.mask != '') OR
+             (frm.rental_field = 'fins'      AND tc.fins IS NOT NULL AND tc.fins != '') OR
+             (frm.rental_field = 'bcd'       AND tc.bcd  IS NOT NULL AND tc.bcd  != '') OR
+             (frm.rental_field = 'regulator' AND tc.regulator = true)                  OR
+             (frm.rental_field = 'wetsuit'   AND tc.wetsuit IS NOT NULL AND tc.wetsuit != '') OR
+             (frm.rental_field = 'computer'  AND tc.computer = true)                   OR
+             (frm.rental_field = 'nitrox'    AND tc.nitrox1  = true)
+           )
+    GROUP  BY tc.client_id, t.start_time::date, frm.rental_field, pp.name
+  ),
+
+  daily_rental_totals AS (
+    SELECT client_id,
+           trip_date,
+           SUM(price) AS raw_total,
+           LEAST(SUM(price), COALESCE(v_rental_daily_cap, SUM(price))) AS charged_amount
+    FROM   daily_rental_items
+    GROUP  BY client_id, trip_date
+  ),
+
+  automated_items AS (
+
+    -- ① Trips
+    SELECT ctl.client_id,
+           jsonb_build_object(
+             'item_key',   ctl.item_key,
+             'name',       ctl.product_name,
+             'price',      CASE WHEN vw.item_key IS NOT NULL THEN 0 ELSE ctl.effective_price END,
+             'type',       'trip',
+             'trip_id',    ctl.trip_id,
+             'trip_date',  ctl.start_time,
+             'waived',     (vw.item_key IS NOT NULL)
+           ) AS item,
+           CASE WHEN vw.item_key IS NOT NULL THEN 0 ELSE ctl.effective_price END AS price_num
+    FROM   client_trips_list ctl
+    LEFT   JOIN visit_waivers vw
+           ON  vw.client_id = ctl.client_id
+           AND vw.item_key  = ctl.item_key
+
+    UNION ALL
+
+    -- ② Private guide fee
+    SELECT tc.client_id,
+           jsonb_build_object(
+             'item_key',  'guide:' || t.id::text,
+             'name',      pp.name,
+             'price',     CASE WHEN vw.item_key IS NOT NULL THEN 0 ELSE pp.price END,
+             'type',      'private_guide',
+             'trip_id',   t.id,
+             'trip_date', t.start_time,
+             'waived',    (vw.item_key IS NOT NULL)
+           ) AS item,
+           CASE WHEN vw.item_key IS NOT NULL THEN 0 ELSE pp.price END AS price_num
+    FROM   public.trip_clients  tc
+    JOIN   public.trips         t   ON t.id  = tc.trip_id
+    JOIN   public.org_pos_config opc ON opc.organization_id = v_org_id
+    JOIN   public.pos_products  pp  ON pp.id = opc.private_instruction_product_id
+    LEFT   JOIN visit_waivers   vw
+           ON  vw.client_id = tc.client_id
+           AND vw.item_key  = 'guide:' || t.id::text
+    WHERE  tc.client_id IN (SELECT client_id FROM visit_clients_list)
+      AND  t.start_time::date BETWEEN v_visit_start AND v_visit_end
+      AND  tc.private = true
+
+    UNION ALL
+
+    -- ③ Rental uncapped
+    SELECT dri.client_id,
+           jsonb_build_object(
+             'item_key',  'rental:' || dri.trip_date::text,
+             'name',      dri.name || ' Rental',
+             'price',     CASE WHEN vw.item_key IS NOT NULL THEN 0 ELSE dri.price END,
+             'type',      'rental',
+             'trip_date', dri.trip_date::timestamptz,
+             'waived',    (vw.item_key IS NOT NULL)
+           ) AS item,
+           CASE WHEN vw.item_key IS NOT NULL THEN 0 ELSE dri.price END AS price_num
+    FROM   daily_rental_items dri
+    JOIN   daily_rental_totals drt
+           ON  drt.client_id = dri.client_id
+           AND drt.trip_date = dri.trip_date
+    LEFT   JOIN visit_waivers vw
+           ON  vw.client_id = dri.client_id
+           AND vw.item_key  = 'rental:' || dri.trip_date::text
+    WHERE  drt.raw_total <= drt.charged_amount
+
+    UNION ALL
+
+    -- ④ Rental capped
+    SELECT drt.client_id,
+           jsonb_build_object(
+             'item_key',  'rental:' || drt.trip_date::text,
+             'name',      'Full Rental Gear',
+             'price',     CASE WHEN vw.item_key IS NOT NULL THEN 0 ELSE drt.charged_amount END,
+             'type',      'rental',
+             'trip_date', drt.trip_date::timestamptz,
+             'waived',    (vw.item_key IS NOT NULL)
+           ) AS item,
+           CASE WHEN vw.item_key IS NOT NULL THEN 0 ELSE drt.charged_amount END AS price_num
+    FROM   daily_rental_totals drt
+    LEFT   JOIN visit_waivers vw
+           ON  vw.client_id = drt.client_id
+           AND vw.item_key  = 'rental:' || drt.trip_date::text
+    WHERE  drt.raw_total > drt.charged_amount
+  ),
+
+  client_aggs AS (
+    SELECT vcl.client_id,
+           vcl.client_name,
+           COALESCE(
+             (SELECT jsonb_agg(item) FROM automated_items ai WHERE ai.client_id = vcl.client_id),
+             '[]'::jsonb
+           ) AS automated_items,
+           COALESCE(
+             (SELECT SUM(price_num) FROM automated_items ai WHERE ai.client_id = vcl.client_id),
+             0
+           ) AS auto_subtotal,
+           COALESCE(
+             (SELECT jsonb_agg(jsonb_build_object(
+                       'item_id', pii.id,
+                       'name',    pp.name,
+                       'price',   pii.unit_price,
+                       'qty',     pii.quantity))
+              FROM   public.pos_invoice_items pii
+              JOIN   public.pos_products pp ON pp.id = pii.pos_product_id
+              WHERE  pii.invoice_id = v_invoice_id AND pii.client_id = vcl.client_id),
+             '[]'::jsonb
+           ) AS manual_items,
+           COALESCE(
+             (SELECT SUM(pii.unit_price * pii.quantity)
+              FROM   public.pos_invoice_items pii
+              WHERE  pii.invoice_id = v_invoice_id AND pii.client_id = vcl.client_id),
+             0
+           ) AS manual_subtotal,
+           COALESCE(
+             (SELECT jsonb_agg(jsonb_build_object('date', ppay.created_at, 'amount', ppay.amount, 'method', ppay.payment_method))
+              FROM   public.pos_payments ppay
+              WHERE  ppay.invoice_id = v_invoice_id AND ppay.client_id = vcl.client_id AND ppay.voided_at IS NULL),
+             '[]'::jsonb
+           ) AS payments,
+           COALESCE(
+             (SELECT SUM(ppay.amount)
+              FROM   public.pos_payments ppay
+              WHERE  ppay.invoice_id = v_invoice_id AND ppay.client_id = vcl.client_id AND ppay.voided_at IS NULL),
+             0
+           ) AS paid_total
+    FROM   visit_clients_list vcl
+  )
+  SELECT jsonb_object_agg(
+    client_id,
+    jsonb_build_object(
+      'client_name',     client_name,
+      'automated_items', automated_items,
+      'manual_items',    manual_items,
+      'payments',        payments,
+      'totals', jsonb_build_object(
+        'subtotal',    auto_subtotal + manual_subtotal,
+        'paid',        paid_total,
+        'balance_due', (auto_subtotal + manual_subtotal) - paid_total
+      )
+    )
+  ) INTO v_clients
+  FROM client_aggs;
+
+  IF v_clients IS NULL THEN v_clients := '{}'::jsonb; END IF;
+
+  SELECT COALESCE(
+    jsonb_agg(jsonb_build_object('name', pp.name, 'price', pii.unit_price, 'qty', pii.quantity)),
+    '[]'::jsonb
+  ) INTO v_shared_group_items
+  FROM   public.pos_invoice_items pii
+  JOIN   public.pos_products pp ON pp.id = pii.pos_product_id
+  WHERE  pii.invoice_id = v_invoice_id AND pii.client_id IS NULL;
+
+  SELECT COALESCE(
+    jsonb_agg(jsonb_build_object('date', ppay.created_at, 'amount', ppay.amount, 'method', ppay.payment_method)),
+    '[]'::jsonb
+  ) INTO v_unassigned_payments
+  FROM   public.pos_payments ppay
+  WHERE  ppay.invoice_id = v_invoice_id AND ppay.client_id IS NULL AND ppay.voided_at IS NULL;
+
+  SELECT
+    COALESCE(SUM((val->'totals'->>'subtotal')::numeric), 0),
+    COALESCE(SUM((val->'totals'->>'paid')::numeric),     0)
+  INTO v_master_subtotal, v_master_paid
+  FROM jsonb_each(v_clients) AS t(key, val);
+
+  v_master_subtotal := v_master_subtotal + COALESCE(
+    (SELECT SUM(unit_price * quantity) FROM public.pos_invoice_items
+     WHERE invoice_id = v_invoice_id AND client_id IS NULL), 0);
+  v_master_paid := v_master_paid + COALESCE(
+    (SELECT SUM(amount) FROM public.pos_payments
+     WHERE invoice_id = v_invoice_id AND client_id IS NULL AND voided_at IS NULL), 0);
+  v_master_balance := v_master_subtotal - v_master_paid;
+
+  v_result := jsonb_build_object(
+    'visit_id',            p_visit_id,
+    'invoice_id',          v_invoice_id,
+    'status',              COALESCE(v_invoice_status, 'open'),
+    'clients',             v_clients,
+    'shared_group_items',  COALESCE(v_shared_group_items,  '[]'::jsonb),
+    'unassigned_payments', COALESCE(v_unassigned_payments, '[]'::jsonb),
+    'grand_totals', jsonb_build_object(
+      'master_subtotal', v_master_subtotal,
+      'master_paid',     v_master_paid,
+      'master_balance',  v_master_balance
+    )
+  );
+
+  RETURN v_result;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."calculate_visit_invoice_payload"("p_visit_id" "uuid") OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."cascade_trip_removal_on_visit_client_delete"() RETURNS "trigger"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO 'public'
+    AS $$
+DECLARE
+  v_requires_visit boolean;
+  v_start_date     date;
+  v_end_date       date;
+BEGIN
+  SELECT requires_visit INTO v_requires_visit
+  FROM public.clients WHERE id = OLD.client_id;
+
+  IF NOT COALESCE(v_requires_visit, true) THEN
+    RETURN OLD;
+  END IF;
+
+  -- If visit no longer exists (whole-visit delete — handled by cascade_trips_on_visit_delete)
+  SELECT start_date, end_date INTO v_start_date, v_end_date
+  FROM public.visits WHERE id = OLD.visit_id;
+
+  IF v_start_date IS NULL THEN
+    RETURN OLD;
+  END IF;
+
+  DELETE FROM public.trip_clients tc
+  USING public.trips t
+  WHERE tc.trip_id   = t.id
+    AND tc.client_id = OLD.client_id
+    AND t.start_time::date >= v_start_date
+    AND t.start_time::date <= v_end_date;
+
+  RETURN OLD;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."cascade_trip_removal_on_visit_client_delete"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."cascade_trips_on_visit_delete"() RETURNS "trigger"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO 'public'
+    AS $$
+BEGIN
+  DELETE FROM public.trip_clients tc
+  USING public.trips t,
+        public.visit_clients vc,
+        public.clients c
+  WHERE tc.trip_id   = t.id
+    AND tc.client_id = vc.client_id
+    AND vc.visit_id  = OLD.id
+    AND c.id         = vc.client_id
+    AND c.requires_visit = true
+    AND t.start_time::date >= OLD.start_date
+    AND t.start_time::date <= OLD.end_date;
+
+  RETURN OLD;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."cascade_trips_on_visit_delete"() OWNER TO "postgres";
+
+
 CREATE OR REPLACE FUNCTION "public"."check_trip_capacity"() RETURNS "trigger"
     LANGUAGE "plpgsql"
     AS $$
@@ -253,6 +761,84 @@ $$;
 
 
 ALTER FUNCTION "public"."check_vessel_overlap"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."checkout_session"("p_org_id" "uuid", "p_visit_id" "uuid", "p_invoice_id" "uuid", "p_client_id" "uuid", "p_items" "jsonb", "p_payment_amount" numeric, "p_payment_method" "text", "p_recorded_by" "uuid", "p_recorded_by_email" "text") RETURNS "jsonb"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    AS $$
+DECLARE
+  v_invoice_id   uuid;
+  v_txn_id       uuid;
+  v_item         jsonb;
+BEGIN
+  -- ── Step 1: resolve invoice ─────────────────────────────────────────────────
+  IF p_invoice_id IS NOT NULL THEN
+    -- Caller already knows the invoice
+    v_invoice_id := p_invoice_id;
+
+  ELSIF p_visit_id IS NOT NULL THEN
+    -- Visit-based: exactly one invoice per visit (UNIQUE constraint on visit_id).
+    -- ON CONFLICT DO NOTHING + subsequent SELECT is race-safe inside a transaction.
+    INSERT INTO public.pos_invoices (organization_id, visit_id, client_id)
+    VALUES (p_org_id, p_visit_id, p_client_id)
+    ON CONFLICT (visit_id) DO NOTHING;
+
+    SELECT id INTO v_invoice_id
+    FROM   public.pos_invoices
+    WHERE  visit_id = p_visit_id;
+
+  ELSE
+    -- Walk-in terminal sale: fresh invoice every time
+    INSERT INTO public.pos_invoices (organization_id, visit_id, client_id)
+    VALUES (p_org_id, NULL, p_client_id)
+    RETURNING id INTO v_invoice_id;
+  END IF;
+
+  -- ── Step 2: create transaction record ──────────────────────────────────────
+  INSERT INTO public.pos_transactions (invoice_id)
+  VALUES (v_invoice_id)
+  RETURNING id INTO v_txn_id;
+
+  -- ── Step 3: insert line items ───────────────────────────────────────────────
+  FOR v_item IN SELECT * FROM jsonb_array_elements(p_items)
+  LOOP
+    INSERT INTO public.pos_invoice_items
+      (invoice_id, transaction_id, pos_product_id, client_id, unit_price, quantity)
+    VALUES (
+      v_invoice_id,
+      v_txn_id,
+      (v_item->>'product_id')::uuid,
+      p_client_id,
+      (v_item->>'price')::numeric,
+      (v_item->>'qty')::integer
+    );
+  END LOOP;
+
+  -- ── Step 4: insert payment (optional) ──────────────────────────────────────
+  IF p_payment_amount IS NOT NULL AND p_payment_amount > 0 THEN
+    INSERT INTO public.pos_payments
+      (invoice_id, transaction_id, amount, payment_method, client_id,
+       recorded_by, recorded_by_email)
+    VALUES (
+      v_invoice_id,
+      v_txn_id,
+      p_payment_amount,
+      p_payment_method,
+      p_client_id,
+      p_recorded_by,
+      p_recorded_by_email
+    );
+  END IF;
+
+  RETURN jsonb_build_object(
+    'invoice_id',     v_invoice_id,
+    'transaction_id', v_txn_id
+  );
+END;
+$$;
+
+
+ALTER FUNCTION "public"."checkout_session"("p_org_id" "uuid", "p_visit_id" "uuid", "p_invoice_id" "uuid", "p_client_id" "uuid", "p_items" "jsonb", "p_payment_amount" numeric, "p_payment_method" "text", "p_recorded_by" "uuid", "p_recorded_by_email" "text") OWNER TO "postgres";
 
 
 CREATE OR REPLACE FUNCTION "public"."create_trip_series"("p_org_id" "uuid", "p_label" "text", "p_trip_type_id" "uuid", "p_entry_mode" "text", "p_duration_mins" integer, "p_max_divers" integer, "p_vessel_id" "uuid", "p_start_times" timestamp with time zone[]) RETURNS "uuid"[]
@@ -633,12 +1219,78 @@ $$;
 ALTER FUNCTION "public"."get_overview_trips"("p_org_id" "uuid", "p_start" timestamp with time zone, "p_end" timestamp with time zone) OWNER TO "postgres";
 
 
-CREATE OR REPLACE FUNCTION "public"."handle_new_user"() RETURNS "trigger"
+CREATE OR REPLACE FUNCTION "public"."guard_trip_client_visit"() RETURNS "trigger"
     LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO 'public'
+    AS $$
+DECLARE
+  v_requires_visit boolean;
+  v_trip_date      date;
+BEGIN
+  SELECT requires_visit INTO v_requires_visit
+  FROM public.clients WHERE id = NEW.client_id;
+
+  IF NOT COALESCE(v_requires_visit, true) THEN
+    RETURN NEW;
+  END IF;
+
+  SELECT start_time::date INTO v_trip_date
+  FROM public.trips WHERE id = NEW.trip_id;
+
+  IF NOT EXISTS (
+    SELECT 1
+    FROM public.visit_clients vc
+    JOIN public.visits v ON v.id = vc.visit_id
+    WHERE vc.client_id = NEW.client_id
+      AND v.start_date <= v_trip_date
+      AND v.end_date   >= v_trip_date
+  ) THEN
+    RAISE EXCEPTION
+      'Client requires an active visit covering % to be added to a trip. Create a visit first, or mark the client as a local resident.',
+      v_trip_date
+      USING ERRCODE = 'restrict_violation';
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."guard_trip_client_visit"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."guard_visit_deletion"() RETURNS "trigger"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO 'public'
     AS $$
 BEGIN
-  INSERT INTO public.profiles (id, role)
-  VALUES (NEW.id, 'client');
+  IF EXISTS (
+    SELECT 1
+    FROM public.pos_payments pp
+    JOIN public.pos_invoices pi ON pi.id = pp.invoice_id
+    WHERE pi.visit_id = OLD.id
+      AND pp.voided_at IS NULL
+  ) THEN
+    RAISE EXCEPTION
+      'Cannot delete this visit: it has recorded payments. Void all payments first.'
+      USING ERRCODE = 'restrict_violation';
+  END IF;
+  RETURN OLD;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."guard_visit_deletion"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."handle_new_user"() RETURNS "trigger"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO 'public'
+    AS $$
+BEGIN
+  INSERT INTO public.profiles (id)
+  VALUES (NEW.id)
+  ON CONFLICT (id) DO NOTHING;
   RETURN NEW;
 END;
 $$;
@@ -1046,7 +1698,8 @@ CREATE TABLE IF NOT EXISTS "public"."activities" (
     "accept_certified_divers" boolean,
     "abbreviation" "text",
     "category" "text",
-    "course" "uuid"
+    "course" "uuid",
+    "pos_product_id" "uuid"
 );
 
 
@@ -1142,6 +1795,25 @@ ALTER TABLE "public"."certification_organizations" ALTER COLUMN "id" ADD GENERAT
 
 
 
+CREATE TABLE IF NOT EXISTS "public"."client_deposits" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "organization_id" "uuid" NOT NULL,
+    "client_id" "uuid" NOT NULL,
+    "amount" numeric(10,2) NOT NULL,
+    "method" "text" NOT NULL,
+    "note" "text",
+    "recorded_by_email" "text",
+    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    "voided" boolean DEFAULT false NOT NULL,
+    "void_reason" "text",
+    "voided_at" timestamp with time zone,
+    CONSTRAINT "client_deposits_amount_check" CHECK (("amount" > (0)::numeric))
+);
+
+
+ALTER TABLE "public"."client_deposits" OWNER TO "postgres";
+
+
 CREATE TABLE IF NOT EXISTS "public"."client_dive_logs" (
     "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
     "trip_dive_id" "uuid" NOT NULL,
@@ -1175,7 +1847,8 @@ CREATE TABLE IF NOT EXISTS "public"."clients" (
     "updated_at" timestamp with time zone DEFAULT "now"(),
     "organization_id" "uuid" NOT NULL,
     "location_id" "uuid",
-    "client_number" bigint NOT NULL
+    "client_number" bigint NOT NULL,
+    "requires_visit" boolean DEFAULT true NOT NULL
 );
 
 
@@ -1203,11 +1876,26 @@ CREATE TABLE IF NOT EXISTS "public"."courses" (
     "notes" "text",
     "created_at" timestamp with time zone DEFAULT "now"(),
     "updated_at" timestamp with time zone DEFAULT "now"(),
-    "Ratio" integer
+    "Ratio" integer,
+    "pos_product_id" "uuid",
+    "included_trips" integer DEFAULT 0 NOT NULL
 );
 
 
 ALTER TABLE "public"."courses" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."deposit_applications" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "deposit_id" "uuid" NOT NULL,
+    "payment_id" "uuid" NOT NULL,
+    "amount_applied" numeric(10,2) NOT NULL,
+    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    CONSTRAINT "deposit_applications_amount_applied_check" CHECK (("amount_applied" > (0)::numeric))
+);
+
+
+ALTER TABLE "public"."deposit_applications" OWNER TO "postgres";
 
 
 CREATE TABLE IF NOT EXISTS "public"."divesites" (
@@ -1308,6 +1996,16 @@ CREATE TABLE IF NOT EXISTS "public"."locations" (
 ALTER TABLE "public"."locations" OWNER TO "postgres";
 
 
+CREATE TABLE IF NOT EXISTS "public"."org_pos_config" (
+    "organization_id" "uuid" NOT NULL,
+    "private_instruction_product_id" "uuid",
+    "rental_daily_cap" numeric(10,2)
+);
+
+
+ALTER TABLE "public"."org_pos_config" OWNER TO "postgres";
+
+
 CREATE TABLE IF NOT EXISTS "public"."organizations" (
     "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
     "name" "text" NOT NULL,
@@ -1323,11 +2021,153 @@ CREATE TABLE IF NOT EXISTS "public"."organizations" (
     "is_active" boolean DEFAULT true,
     "created_at" timestamp with time zone DEFAULT "now"(),
     "updated_at" timestamp with time zone DEFAULT "now"(),
+    "require_visit_for_trips" boolean DEFAULT false NOT NULL,
     CONSTRAINT "organizations_unit_system_check" CHECK (("unit_system" = ANY (ARRAY['metric'::"text", 'imperial'::"text"])))
 );
 
 
 ALTER TABLE "public"."organizations" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."pos_auto_item_waivers" (
+    "visit_id" "uuid" NOT NULL,
+    "client_id" "uuid" NOT NULL,
+    "item_key" "text" NOT NULL
+);
+
+
+ALTER TABLE "public"."pos_auto_item_waivers" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."pos_categories" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "organization_id" "uuid" NOT NULL,
+    "name" "text" NOT NULL,
+    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL
+);
+
+
+ALTER TABLE "public"."pos_categories" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."pos_invoice_items" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "invoice_id" "uuid" NOT NULL,
+    "pos_product_id" "uuid" NOT NULL,
+    "client_id" "uuid",
+    "quantity" integer DEFAULT 1 NOT NULL,
+    "unit_price" numeric DEFAULT 0 NOT NULL,
+    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    "transaction_id" "uuid",
+    CONSTRAINT "pos_invoice_items_quantity_check" CHECK (("quantity" > 0))
+);
+
+
+ALTER TABLE "public"."pos_invoice_items" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."pos_invoices" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "organization_id" "uuid" NOT NULL,
+    "visit_id" "uuid",
+    "status" "text" DEFAULT 'open'::"text" NOT NULL,
+    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    "client_id" "uuid",
+    CONSTRAINT "pos_invoices_status_check" CHECK (("status" = ANY (ARRAY['open'::"text", 'partially_paid'::"text", 'paid'::"text", 'void'::"text"])))
+);
+
+
+ALTER TABLE "public"."pos_invoices" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."pos_parked_cart_items" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "cart_id" "uuid" NOT NULL,
+    "pos_product_id" "uuid" NOT NULL,
+    "quantity" integer DEFAULT 1 NOT NULL,
+    "unit_price" numeric DEFAULT 0 NOT NULL,
+    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    CONSTRAINT "pos_parked_cart_items_quantity_check" CHECK (("quantity" > 0))
+);
+
+
+ALTER TABLE "public"."pos_parked_cart_items" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."pos_parked_carts" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "organization_id" "uuid" NOT NULL,
+    "label" "text" NOT NULL,
+    "client_id" "uuid",
+    "visit_id" "uuid",
+    "created_by" "uuid",
+    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL
+);
+
+
+ALTER TABLE "public"."pos_parked_carts" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."pos_payments" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "invoice_id" "uuid" NOT NULL,
+    "client_id" "uuid",
+    "amount" numeric NOT NULL,
+    "payment_method" "text" NOT NULL,
+    "notes" "text",
+    "recorded_by" "uuid",
+    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    "transaction_id" "uuid",
+    "recorded_by_email" "text",
+    "voided_at" timestamp with time zone,
+    "void_reason" "text",
+    "payment_group_id" "uuid",
+    CONSTRAINT "pos_payments_amount_check" CHECK (("amount" > (0)::numeric))
+);
+
+
+ALTER TABLE "public"."pos_payments" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."pos_products" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "organization_id" "uuid" NOT NULL,
+    "category_id" "uuid",
+    "name" "text" NOT NULL,
+    "description" "text",
+    "is_automated" boolean DEFAULT false NOT NULL,
+    "price" numeric(10,2) DEFAULT 0.00 NOT NULL,
+    "stock" integer,
+    "is_active" boolean DEFAULT true NOT NULL,
+    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    "course_id" "uuid"
+);
+
+
+ALTER TABLE "public"."pos_products" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."pos_rental_mappings" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "organization_id" "uuid" NOT NULL,
+    "rental_field" "text" NOT NULL,
+    "pos_product_id" "uuid" NOT NULL,
+    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL
+);
+
+
+ALTER TABLE "public"."pos_rental_mappings" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."pos_transactions" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "invoice_id" "uuid" NOT NULL,
+    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    "recorded_by_email" "text"
+);
+
+
+ALTER TABLE "public"."pos_transactions" OWNER TO "postgres";
 
 
 CREATE TABLE IF NOT EXISTS "public"."profiles" (
@@ -1395,6 +2235,20 @@ CREATE TABLE IF NOT EXISTS "public"."staff" (
 ALTER TABLE "public"."staff" OWNER TO "postgres";
 
 
+CREATE TABLE IF NOT EXISTS "public"."staff_custom_job_card" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "organization_id" "uuid" NOT NULL,
+    "job_date" "date" NOT NULL,
+    "am_pm" "text" NOT NULL,
+    "custom_label" "text" NOT NULL,
+    "job_type_id" "uuid" NOT NULL,
+    CONSTRAINT "staff_custom_job_card_am_pm_check" CHECK (("am_pm" = ANY (ARRAY['AM'::"text", 'PM'::"text"])))
+);
+
+
+ALTER TABLE "public"."staff_custom_job_card" OWNER TO "postgres";
+
+
 CREATE TABLE IF NOT EXISTS "public"."staff_daily_job" (
     "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
     "organization_id" "uuid" NOT NULL,
@@ -1404,7 +2258,8 @@ CREATE TABLE IF NOT EXISTS "public"."staff_daily_job" (
     "created_at" timestamp with time zone DEFAULT "now"(),
     "AM/PM" "text",
     "trip_id" "uuid",
-    "activity_id" "uuid"
+    "activity_id" "uuid",
+    "custom_label" "text"
 );
 
 
@@ -1477,6 +2332,20 @@ CREATE TABLE IF NOT EXISTS "public"."trip_dives" (
 ALTER TABLE "public"."trip_dives" OWNER TO "postgres";
 
 
+CREATE TABLE IF NOT EXISTS "public"."trip_pricing_tiers" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "organization_id" "uuid" NOT NULL,
+    "trip_type_id" "uuid" NOT NULL,
+    "min_qty" integer NOT NULL,
+    "unit_price" numeric(10,2) NOT NULL,
+    CONSTRAINT "trip_pricing_tiers_min_qty_check" CHECK (("min_qty" >= 1)),
+    CONSTRAINT "trip_pricing_tiers_unit_price_check" CHECK (("unit_price" >= (0)::numeric))
+);
+
+
+ALTER TABLE "public"."trip_pricing_tiers" OWNER TO "postgres";
+
+
 CREATE TABLE IF NOT EXISTS "public"."trip_staff" (
     "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
     "trip_id" "uuid" NOT NULL,
@@ -1493,13 +2362,16 @@ CREATE TABLE IF NOT EXISTS "public"."trip_types" (
     "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
     "organization_id" "uuid" NOT NULL,
     "name" "text" NOT NULL,
-    "default_start_time" time without time zone NOT NULL,
+    "default_start_time_am" time without time zone NOT NULL,
     "number_of_dives" integer DEFAULT 1 NOT NULL,
     "created_at" timestamp with time zone DEFAULT "now"(),
     "updated_at" timestamp with time zone DEFAULT "now"(),
     "abbreviation" "text",
     "color" "text" DEFAULT 'blue'::"text",
-    "category" "text"
+    "category" "text",
+    "pos_product_id" "uuid",
+    "billing_via_activity" boolean DEFAULT false NOT NULL,
+    "default_start_time_pm" time without time zone DEFAULT '13:00:00'::time without time zone NOT NULL
 );
 
 
@@ -1532,11 +2404,12 @@ CREATE TABLE IF NOT EXISTS "public"."vessels" (
     "organization_id" "uuid" NOT NULL,
     "location_id" "uuid",
     "name" "text" NOT NULL,
-    "capacity" integer NOT NULL,
     "created_at" timestamp with time zone DEFAULT "now"(),
     "updated_at" timestamp with time zone DEFAULT "now"(),
     "abbreviation" "text",
-    "need_captain" boolean
+    "need_captain" boolean,
+    "capacity_dive" integer DEFAULT 12 NOT NULL,
+    "capacity_snorkel" integer DEFAULT 12 NOT NULL
 );
 
 
@@ -1571,6 +2444,22 @@ CREATE TABLE IF NOT EXISTS "public"."visits" (
 
 
 ALTER TABLE "public"."visits" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."weekly_schedule_slots" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "organization_id" "uuid" NOT NULL,
+    "day_of_week" smallint NOT NULL,
+    "trip_type_id" "uuid" NOT NULL,
+    "vessel_id" "uuid" NOT NULL,
+    "start_time" time without time zone NOT NULL,
+    "valid_from" "date" DEFAULT CURRENT_DATE NOT NULL,
+    "created_at" timestamp with time zone DEFAULT "now"(),
+    CONSTRAINT "weekly_schedule_slots_day_of_week_check" CHECK ((("day_of_week" >= 0) AND ("day_of_week" <= 6)))
+);
+
+
+ALTER TABLE "public"."weekly_schedule_slots" OWNER TO "postgres";
 
 
 ALTER TABLE ONLY "public"."activities"
@@ -1628,6 +2517,11 @@ ALTER TABLE ONLY "public"."certification_organizations"
 
 
 
+ALTER TABLE ONLY "public"."client_deposits"
+    ADD CONSTRAINT "client_deposits_pkey" PRIMARY KEY ("id");
+
+
+
 ALTER TABLE ONLY "public"."client_dive_logs"
     ADD CONSTRAINT "client_dive_logs_pkey" PRIMARY KEY ("id");
 
@@ -1655,6 +2549,11 @@ ALTER TABLE ONLY "public"."courses"
 
 ALTER TABLE ONLY "public"."courses"
     ADD CONSTRAINT "courses_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."deposit_applications"
+    ADD CONSTRAINT "deposit_applications_pkey" PRIMARY KEY ("id");
 
 
 
@@ -1693,8 +2592,73 @@ ALTER TABLE ONLY "public"."locations"
 
 
 
+ALTER TABLE ONLY "public"."org_pos_config"
+    ADD CONSTRAINT "org_pos_config_pkey" PRIMARY KEY ("organization_id");
+
+
+
 ALTER TABLE ONLY "public"."organizations"
     ADD CONSTRAINT "organizations_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."pos_auto_item_waivers"
+    ADD CONSTRAINT "pos_auto_item_waivers_pkey" PRIMARY KEY ("visit_id", "client_id", "item_key");
+
+
+
+ALTER TABLE ONLY "public"."pos_categories"
+    ADD CONSTRAINT "pos_categories_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."pos_invoice_items"
+    ADD CONSTRAINT "pos_invoice_items_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."pos_invoices"
+    ADD CONSTRAINT "pos_invoices_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."pos_invoices"
+    ADD CONSTRAINT "pos_invoices_visit_id_key" UNIQUE ("visit_id");
+
+
+
+ALTER TABLE ONLY "public"."pos_parked_cart_items"
+    ADD CONSTRAINT "pos_parked_cart_items_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."pos_parked_carts"
+    ADD CONSTRAINT "pos_parked_carts_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."pos_payments"
+    ADD CONSTRAINT "pos_payments_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."pos_products"
+    ADD CONSTRAINT "pos_products_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."pos_rental_mappings"
+    ADD CONSTRAINT "pos_rental_mappings_organization_id_rental_field_key" UNIQUE ("organization_id", "rental_field");
+
+
+
+ALTER TABLE ONLY "public"."pos_rental_mappings"
+    ADD CONSTRAINT "pos_rental_mappings_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."pos_transactions"
+    ADD CONSTRAINT "pos_transactions_pkey" PRIMARY KEY ("id");
 
 
 
@@ -1720,6 +2684,16 @@ ALTER TABLE ONLY "public"."specialties"
 
 ALTER TABLE ONLY "public"."specialties"
     ADD CONSTRAINT "specialties_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."staff_custom_job_card"
+    ADD CONSTRAINT "staff_custom_job_card_organization_id_job_date_am_pm_custom_key" UNIQUE ("organization_id", "job_date", "am_pm", "custom_label");
+
+
+
+ALTER TABLE ONLY "public"."staff_custom_job_card"
+    ADD CONSTRAINT "staff_custom_job_card_pkey" PRIMARY KEY ("id");
 
 
 
@@ -1773,6 +2747,16 @@ ALTER TABLE ONLY "public"."trip_dives"
 
 
 
+ALTER TABLE ONLY "public"."trip_pricing_tiers"
+    ADD CONSTRAINT "trip_pricing_tiers_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."trip_pricing_tiers"
+    ADD CONSTRAINT "trip_pricing_tiers_trip_type_id_min_qty_key" UNIQUE ("trip_type_id", "min_qty");
+
+
+
 ALTER TABLE ONLY "public"."trip_staff"
     ADD CONSTRAINT "trip_staff_pkey" PRIMARY KEY ("id");
 
@@ -1808,6 +2792,16 @@ ALTER TABLE ONLY "public"."visits"
 
 
 
+ALTER TABLE ONLY "public"."weekly_schedule_slots"
+    ADD CONSTRAINT "weekly_schedule_slots_organization_id_day_of_week_vessel_id_key" UNIQUE ("organization_id", "day_of_week", "vessel_id", "start_time", "valid_from");
+
+
+
+ALTER TABLE ONLY "public"."weekly_schedule_slots"
+    ADD CONSTRAINT "weekly_schedule_slots_pkey" PRIMARY KEY ("id");
+
+
+
 CREATE INDEX "activity_logs_org_created" ON "public"."activity_logs" USING "btree" ("organization_id", "created_at" DESC);
 
 
@@ -1836,6 +2830,10 @@ CREATE INDEX "idx_bulk_inventory_org" ON "public"."bulk_inventory" USING "btree"
 
 
 
+CREATE INDEX "idx_client_deposits_org_client" ON "public"."client_deposits" USING "btree" ("organization_id", "client_id");
+
+
+
 CREATE INDEX "idx_clients_country" ON "public"."clients" USING "btree" ("address_country");
 
 
@@ -1853,6 +2851,14 @@ CREATE INDEX "idx_clients_org" ON "public"."clients" USING "btree" ("organizatio
 
 
 CREATE INDEX "idx_clients_user_id" ON "public"."clients" USING "btree" ("user_id");
+
+
+
+CREATE INDEX "idx_deposit_applications_deposit" ON "public"."deposit_applications" USING "btree" ("deposit_id");
+
+
+
+CREATE INDEX "idx_deposit_applications_payment" ON "public"."deposit_applications" USING "btree" ("payment_id");
 
 
 
@@ -1889,6 +2895,54 @@ CREATE INDEX "idx_job_types_org" ON "public"."job_types" USING "btree" ("organiz
 
 
 CREATE INDEX "idx_locations_organization" ON "public"."locations" USING "btree" ("organization_id");
+
+
+
+CREATE INDEX "idx_pos_categories_org" ON "public"."pos_categories" USING "btree" ("organization_id");
+
+
+
+CREATE INDEX "idx_pos_invoice_items_invoice" ON "public"."pos_invoice_items" USING "btree" ("invoice_id");
+
+
+
+CREATE INDEX "idx_pos_invoices_client" ON "public"."pos_invoices" USING "btree" ("client_id");
+
+
+
+CREATE INDEX "idx_pos_invoices_org" ON "public"."pos_invoices" USING "btree" ("organization_id");
+
+
+
+CREATE INDEX "idx_pos_invoices_visit" ON "public"."pos_invoices" USING "btree" ("visit_id");
+
+
+
+CREATE INDEX "idx_pos_parked_cart_items_cart" ON "public"."pos_parked_cart_items" USING "btree" ("cart_id");
+
+
+
+CREATE INDEX "idx_pos_parked_carts_org" ON "public"."pos_parked_carts" USING "btree" ("organization_id");
+
+
+
+CREATE INDEX "idx_pos_payments_invoice" ON "public"."pos_payments" USING "btree" ("invoice_id");
+
+
+
+CREATE INDEX "idx_pos_payments_voided" ON "public"."pos_payments" USING "btree" ("voided_at") WHERE ("voided_at" IS NULL);
+
+
+
+CREATE INDEX "idx_pos_products_org" ON "public"."pos_products" USING "btree" ("organization_id");
+
+
+
+CREATE INDEX "idx_pos_rental_mappings_org" ON "public"."pos_rental_mappings" USING "btree" ("organization_id");
+
+
+
+CREATE INDEX "idx_pos_transactions_invoice" ON "public"."pos_transactions" USING "btree" ("invoice_id");
 
 
 
@@ -2020,6 +3074,14 @@ CREATE UNIQUE INDEX "trip_staff_generic_unique" ON "public"."trip_staff" USING "
 
 
 
+CREATE OR REPLACE TRIGGER "cascade_trip_removal_on_visit_client_delete" AFTER DELETE ON "public"."visit_clients" FOR EACH ROW EXECUTE FUNCTION "public"."cascade_trip_removal_on_visit_client_delete"();
+
+
+
+CREATE OR REPLACE TRIGGER "cascade_trips_on_visit_delete" BEFORE DELETE ON "public"."visits" FOR EACH ROW EXECUTE FUNCTION "public"."cascade_trips_on_visit_delete"();
+
+
+
 CREATE OR REPLACE TRIGGER "clients_updated_at" BEFORE UPDATE ON "public"."clients" FOR EACH ROW EXECUTE FUNCTION "public"."update_updated_at"();
 
 
@@ -2029,6 +3091,14 @@ CREATE OR REPLACE TRIGGER "courses_updated_at" BEFORE UPDATE ON "public"."course
 
 
 CREATE OR REPLACE TRIGGER "dive_sites_updated_at" BEFORE UPDATE ON "public"."divesites" FOR EACH ROW EXECUTE FUNCTION "public"."update_updated_at"();
+
+
+
+CREATE OR REPLACE TRIGGER "guard_trip_client_visit" BEFORE INSERT ON "public"."trip_clients" FOR EACH ROW EXECUTE FUNCTION "public"."guard_trip_client_visit"();
+
+
+
+CREATE OR REPLACE TRIGGER "guard_visit_deletion" BEFORE DELETE ON "public"."visits" FOR EACH ROW EXECUTE FUNCTION "public"."guard_visit_deletion"();
 
 
 
@@ -2105,6 +3175,11 @@ ALTER TABLE ONLY "public"."activities"
 
 
 
+ALTER TABLE ONLY "public"."activities"
+    ADD CONSTRAINT "activities_pos_product_id_fkey" FOREIGN KEY ("pos_product_id") REFERENCES "public"."pos_products"("id") ON DELETE SET NULL;
+
+
+
 ALTER TABLE ONLY "public"."activity_logs"
     ADD CONSTRAINT "activity_logs_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "public"."organizations"("id") ON DELETE CASCADE;
 
@@ -2122,6 +3197,16 @@ ALTER TABLE ONLY "public"."bulk_inventory"
 
 ALTER TABLE ONLY "public"."bulk_inventory"
     ADD CONSTRAINT "bulk_inventory_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "public"."organizations"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."client_deposits"
+    ADD CONSTRAINT "client_deposits_client_id_fkey" FOREIGN KEY ("client_id") REFERENCES "public"."clients"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."client_deposits"
+    ADD CONSTRAINT "client_deposits_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "public"."organizations"("id") ON DELETE CASCADE;
 
 
 
@@ -2147,6 +3232,21 @@ ALTER TABLE ONLY "public"."clients"
 
 ALTER TABLE ONLY "public"."clients"
     ADD CONSTRAINT "clients_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "auth"."users"("id") ON DELETE SET NULL;
+
+
+
+ALTER TABLE ONLY "public"."courses"
+    ADD CONSTRAINT "courses_pos_product_id_fkey" FOREIGN KEY ("pos_product_id") REFERENCES "public"."pos_products"("id") ON DELETE SET NULL;
+
+
+
+ALTER TABLE ONLY "public"."deposit_applications"
+    ADD CONSTRAINT "deposit_applications_deposit_id_fkey" FOREIGN KEY ("deposit_id") REFERENCES "public"."client_deposits"("id");
+
+
+
+ALTER TABLE ONLY "public"."deposit_applications"
+    ADD CONSTRAINT "deposit_applications_payment_id_fkey" FOREIGN KEY ("payment_id") REFERENCES "public"."pos_payments"("id");
 
 
 
@@ -2192,6 +3292,146 @@ ALTER TABLE ONLY "public"."job_types"
 
 ALTER TABLE ONLY "public"."locations"
     ADD CONSTRAINT "locations_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "public"."organizations"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."org_pos_config"
+    ADD CONSTRAINT "org_pos_config_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "public"."organizations"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."org_pos_config"
+    ADD CONSTRAINT "org_pos_config_private_instruction_product_id_fkey" FOREIGN KEY ("private_instruction_product_id") REFERENCES "public"."pos_products"("id") ON DELETE SET NULL;
+
+
+
+ALTER TABLE ONLY "public"."pos_auto_item_waivers"
+    ADD CONSTRAINT "pos_auto_item_waivers_client_id_fkey" FOREIGN KEY ("client_id") REFERENCES "public"."clients"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."pos_auto_item_waivers"
+    ADD CONSTRAINT "pos_auto_item_waivers_visit_id_fkey" FOREIGN KEY ("visit_id") REFERENCES "public"."visits"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."pos_categories"
+    ADD CONSTRAINT "pos_categories_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "public"."organizations"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."pos_invoice_items"
+    ADD CONSTRAINT "pos_invoice_items_client_id_fkey" FOREIGN KEY ("client_id") REFERENCES "public"."clients"("id") ON DELETE SET NULL;
+
+
+
+ALTER TABLE ONLY "public"."pos_invoice_items"
+    ADD CONSTRAINT "pos_invoice_items_invoice_id_fkey" FOREIGN KEY ("invoice_id") REFERENCES "public"."pos_invoices"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."pos_invoice_items"
+    ADD CONSTRAINT "pos_invoice_items_pos_product_id_fkey" FOREIGN KEY ("pos_product_id") REFERENCES "public"."pos_products"("id") ON DELETE RESTRICT;
+
+
+
+ALTER TABLE ONLY "public"."pos_invoice_items"
+    ADD CONSTRAINT "pos_invoice_items_transaction_id_fkey" FOREIGN KEY ("transaction_id") REFERENCES "public"."pos_transactions"("id") ON DELETE SET NULL;
+
+
+
+ALTER TABLE ONLY "public"."pos_invoices"
+    ADD CONSTRAINT "pos_invoices_client_id_fkey" FOREIGN KEY ("client_id") REFERENCES "public"."clients"("id") ON DELETE SET NULL;
+
+
+
+ALTER TABLE ONLY "public"."pos_invoices"
+    ADD CONSTRAINT "pos_invoices_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "public"."organizations"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."pos_invoices"
+    ADD CONSTRAINT "pos_invoices_visit_id_fkey" FOREIGN KEY ("visit_id") REFERENCES "public"."visits"("id") ON DELETE SET NULL;
+
+
+
+ALTER TABLE ONLY "public"."pos_parked_cart_items"
+    ADD CONSTRAINT "pos_parked_cart_items_cart_id_fkey" FOREIGN KEY ("cart_id") REFERENCES "public"."pos_parked_carts"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."pos_parked_cart_items"
+    ADD CONSTRAINT "pos_parked_cart_items_pos_product_id_fkey" FOREIGN KEY ("pos_product_id") REFERENCES "public"."pos_products"("id") ON DELETE RESTRICT;
+
+
+
+ALTER TABLE ONLY "public"."pos_parked_carts"
+    ADD CONSTRAINT "pos_parked_carts_client_id_fkey" FOREIGN KEY ("client_id") REFERENCES "public"."clients"("id") ON DELETE SET NULL;
+
+
+
+ALTER TABLE ONLY "public"."pos_parked_carts"
+    ADD CONSTRAINT "pos_parked_carts_created_by_fkey" FOREIGN KEY ("created_by") REFERENCES "auth"."users"("id") ON DELETE SET NULL;
+
+
+
+ALTER TABLE ONLY "public"."pos_parked_carts"
+    ADD CONSTRAINT "pos_parked_carts_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "public"."organizations"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."pos_parked_carts"
+    ADD CONSTRAINT "pos_parked_carts_visit_id_fkey" FOREIGN KEY ("visit_id") REFERENCES "public"."visits"("id") ON DELETE SET NULL;
+
+
+
+ALTER TABLE ONLY "public"."pos_payments"
+    ADD CONSTRAINT "pos_payments_client_id_fkey" FOREIGN KEY ("client_id") REFERENCES "public"."clients"("id") ON DELETE SET NULL;
+
+
+
+ALTER TABLE ONLY "public"."pos_payments"
+    ADD CONSTRAINT "pos_payments_invoice_id_fkey" FOREIGN KEY ("invoice_id") REFERENCES "public"."pos_invoices"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."pos_payments"
+    ADD CONSTRAINT "pos_payments_recorded_by_fkey" FOREIGN KEY ("recorded_by") REFERENCES "auth"."users"("id") ON DELETE SET NULL;
+
+
+
+ALTER TABLE ONLY "public"."pos_payments"
+    ADD CONSTRAINT "pos_payments_transaction_id_fkey" FOREIGN KEY ("transaction_id") REFERENCES "public"."pos_transactions"("id") ON DELETE SET NULL;
+
+
+
+ALTER TABLE ONLY "public"."pos_products"
+    ADD CONSTRAINT "pos_products_category_id_fkey" FOREIGN KEY ("category_id") REFERENCES "public"."pos_categories"("id") ON DELETE SET NULL;
+
+
+
+ALTER TABLE ONLY "public"."pos_products"
+    ADD CONSTRAINT "pos_products_course_id_fkey" FOREIGN KEY ("course_id") REFERENCES "public"."courses"("id") ON DELETE SET NULL;
+
+
+
+ALTER TABLE ONLY "public"."pos_products"
+    ADD CONSTRAINT "pos_products_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "public"."organizations"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."pos_rental_mappings"
+    ADD CONSTRAINT "pos_rental_mappings_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "public"."organizations"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."pos_rental_mappings"
+    ADD CONSTRAINT "pos_rental_mappings_pos_product_id_fkey" FOREIGN KEY ("pos_product_id") REFERENCES "public"."pos_products"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."pos_transactions"
+    ADD CONSTRAINT "pos_transactions_invoice_id_fkey" FOREIGN KEY ("invoice_id") REFERENCES "public"."pos_invoices"("id") ON DELETE CASCADE;
 
 
 
@@ -2300,6 +3540,16 @@ ALTER TABLE ONLY "public"."trip_dives"
 
 
 
+ALTER TABLE ONLY "public"."trip_pricing_tiers"
+    ADD CONSTRAINT "trip_pricing_tiers_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "public"."organizations"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."trip_pricing_tiers"
+    ADD CONSTRAINT "trip_pricing_tiers_trip_type_id_fkey" FOREIGN KEY ("trip_type_id") REFERENCES "public"."trip_types"("id") ON DELETE CASCADE;
+
+
+
 ALTER TABLE ONLY "public"."trip_staff"
     ADD CONSTRAINT "trip_staff_activity_id_fkey" FOREIGN KEY ("activity_id") REFERENCES "public"."activities"("id") ON DELETE SET NULL;
 
@@ -2327,6 +3577,11 @@ ALTER TABLE ONLY "public"."trip_types"
 
 ALTER TABLE ONLY "public"."trip_types"
     ADD CONSTRAINT "trip_types_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "public"."organizations"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."trip_types"
+    ADD CONSTRAINT "trip_types_pos_product_id_fkey" FOREIGN KEY ("pos_product_id") REFERENCES "public"."pos_products"("id") ON DELETE SET NULL;
 
 
 
@@ -2385,6 +3640,21 @@ ALTER TABLE ONLY "public"."visits"
 
 
 
+ALTER TABLE ONLY "public"."weekly_schedule_slots"
+    ADD CONSTRAINT "weekly_schedule_slots_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "public"."organizations"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."weekly_schedule_slots"
+    ADD CONSTRAINT "weekly_schedule_slots_trip_type_id_fkey" FOREIGN KEY ("trip_type_id") REFERENCES "public"."trip_types"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."weekly_schedule_slots"
+    ADD CONSTRAINT "weekly_schedule_slots_vessel_id_fkey" FOREIGN KEY ("vessel_id") REFERENCES "public"."vessels"("id") ON DELETE CASCADE;
+
+
+
 CREATE POLICY "Enable read/write for users based on organization_id" ON "public"."bulk_inventory" USING (("organization_id" = "public"."my_org_id"())) WITH CHECK (("organization_id" = "public"."my_org_id"()));
 
 
@@ -2396,6 +3666,26 @@ ALTER TABLE "public"."activity_logs" ENABLE ROW LEVEL SECURITY;
 
 
 CREATE POLICY "activity_logs: select" ON "public"."activity_logs" FOR SELECT USING (("organization_id" = "public"."my_org_id"()));
+
+
+
+CREATE POLICY "admin_write_schedule_slots" ON "public"."weekly_schedule_slots" USING (("organization_id" IN ( SELECT "profiles"."organization_id"
+   FROM "public"."profiles"
+  WHERE (("profiles"."id" = "auth"."uid"()) AND ("profiles"."role" = 'admin'::"public"."user_role"))))) WITH CHECK (("organization_id" IN ( SELECT "profiles"."organization_id"
+   FROM "public"."profiles"
+  WHERE (("profiles"."id" = "auth"."uid"()) AND ("profiles"."role" = 'admin'::"public"."user_role")))));
+
+
+
+CREATE POLICY "admins can update activities" ON "public"."activities" FOR UPDATE USING ((EXISTS ( SELECT 1
+   FROM "public"."profiles"
+  WHERE (("profiles"."id" = "auth"."uid"()) AND ("profiles"."role" = 'admin'::"public"."user_role")))));
+
+
+
+CREATE POLICY "admins can update courses" ON "public"."courses" FOR UPDATE USING ((EXISTS ( SELECT 1
+   FROM "public"."profiles"
+  WHERE (("profiles"."id" = "auth"."uid"()) AND ("profiles"."role" = 'admin'::"public"."user_role")))));
 
 
 
@@ -2507,6 +3797,133 @@ CREATE POLICY "locations: org members" ON "public"."locations" USING (("organiza
 
 
 
+CREATE POLICY "org admins can manage pos_categories" ON "public"."pos_categories" USING (("organization_id" IN ( SELECT "profiles"."organization_id"
+   FROM "public"."profiles"
+  WHERE (("profiles"."id" = "auth"."uid"()) AND ("profiles"."role" = 'admin'::"public"."user_role")))));
+
+
+
+CREATE POLICY "org admins can manage pos_products" ON "public"."pos_products" USING (("organization_id" IN ( SELECT "profiles"."organization_id"
+   FROM "public"."profiles"
+  WHERE (("profiles"."id" = "auth"."uid"()) AND ("profiles"."role" = 'admin'::"public"."user_role")))));
+
+
+
+CREATE POLICY "org admins can manage pos_rental_mappings" ON "public"."pos_rental_mappings" USING (("organization_id" IN ( SELECT "profiles"."organization_id"
+   FROM "public"."profiles"
+  WHERE (("profiles"."id" = "auth"."uid"()) AND ("profiles"."role" = 'admin'::"public"."user_role")))));
+
+
+
+CREATE POLICY "org admins manage pos_invoice_items" ON "public"."pos_invoice_items" USING ((EXISTS ( SELECT 1
+   FROM "public"."pos_invoices"
+  WHERE (("pos_invoices"."id" = "pos_invoice_items"."invoice_id") AND ("pos_invoices"."organization_id" IN ( SELECT "profiles"."organization_id"
+           FROM "public"."profiles"
+          WHERE (("profiles"."id" = "auth"."uid"()) AND ("profiles"."role" = 'admin'::"public"."user_role"))))))));
+
+
+
+CREATE POLICY "org admins manage pos_invoices" ON "public"."pos_invoices" USING (("organization_id" IN ( SELECT "profiles"."organization_id"
+   FROM "public"."profiles"
+  WHERE (("profiles"."id" = "auth"."uid"()) AND ("profiles"."role" = 'admin'::"public"."user_role")))));
+
+
+
+CREATE POLICY "org admins manage pos_payments" ON "public"."pos_payments" USING ((EXISTS ( SELECT 1
+   FROM "public"."pos_invoices"
+  WHERE (("pos_invoices"."id" = "pos_payments"."invoice_id") AND ("pos_invoices"."organization_id" IN ( SELECT "profiles"."organization_id"
+           FROM "public"."profiles"
+          WHERE (("profiles"."id" = "auth"."uid"()) AND ("profiles"."role" = 'admin'::"public"."user_role"))))))));
+
+
+
+CREATE POLICY "org admins manage pos_transactions" ON "public"."pos_transactions" USING ((EXISTS ( SELECT 1
+   FROM "public"."pos_invoices"
+  WHERE (("pos_invoices"."id" = "pos_transactions"."invoice_id") AND ("pos_invoices"."organization_id" IN ( SELECT "profiles"."organization_id"
+           FROM "public"."profiles"
+          WHERE (("profiles"."id" = "auth"."uid"()) AND ("profiles"."role" = 'admin'::"public"."user_role"))))))));
+
+
+
+CREATE POLICY "org members can manage custom job cards" ON "public"."staff_custom_job_card" TO "authenticated" USING (("organization_id" IN ( SELECT "profiles"."organization_id"
+   FROM "public"."profiles"
+  WHERE ("profiles"."id" = "auth"."uid"())))) WITH CHECK (("organization_id" IN ( SELECT "profiles"."organization_id"
+   FROM "public"."profiles"
+  WHERE ("profiles"."id" = "auth"."uid"()))));
+
+
+
+CREATE POLICY "org members can manage item waivers" ON "public"."pos_auto_item_waivers" USING ((EXISTS ( SELECT 1
+   FROM "public"."visits" "v"
+  WHERE (("v"."id" = "pos_auto_item_waivers"."visit_id") AND ("v"."organization_id" = "public"."my_org_id"()))))) WITH CHECK ((EXISTS ( SELECT 1
+   FROM "public"."visits" "v"
+  WHERE (("v"."id" = "pos_auto_item_waivers"."visit_id") AND ("v"."organization_id" = "public"."my_org_id"())))));
+
+
+
+CREATE POLICY "org members can manage pos config" ON "public"."org_pos_config" USING (("organization_id" IN ( SELECT "profiles"."organization_id"
+   FROM "public"."profiles"
+  WHERE ("profiles"."id" = "auth"."uid"()))));
+
+
+
+CREATE POLICY "org members can manage pos_parked_cart_items" ON "public"."pos_parked_cart_items" USING (("cart_id" IN ( SELECT "pos_parked_carts"."id"
+   FROM "public"."pos_parked_carts"
+  WHERE ("pos_parked_carts"."organization_id" = "public"."my_org_id"()))));
+
+
+
+CREATE POLICY "org members can manage pos_parked_carts" ON "public"."pos_parked_carts" USING (("organization_id" = "public"."my_org_id"()));
+
+
+
+CREATE POLICY "org members can view pos_categories" ON "public"."pos_categories" FOR SELECT USING (("organization_id" IN ( SELECT "profiles"."organization_id"
+   FROM "public"."profiles"
+  WHERE ("profiles"."id" = "auth"."uid"()))));
+
+
+
+CREATE POLICY "org members can view pos_invoice_items" ON "public"."pos_invoice_items" FOR SELECT USING (("invoice_id" IN ( SELECT "pos_invoices"."id"
+   FROM "public"."pos_invoices"
+  WHERE ("pos_invoices"."organization_id" = "public"."my_org_id"()))));
+
+
+
+CREATE POLICY "org members can view pos_invoices" ON "public"."pos_invoices" FOR SELECT USING (("organization_id" = "public"."my_org_id"()));
+
+
+
+CREATE POLICY "org members can view pos_parked_carts" ON "public"."pos_parked_carts" FOR SELECT USING (("organization_id" = "public"."my_org_id"()));
+
+
+
+CREATE POLICY "org members can view pos_payments" ON "public"."pos_payments" FOR SELECT USING (("invoice_id" IN ( SELECT "pos_invoices"."id"
+   FROM "public"."pos_invoices"
+  WHERE ("pos_invoices"."organization_id" = "public"."my_org_id"()))));
+
+
+
+CREATE POLICY "org members can view pos_products" ON "public"."pos_products" FOR SELECT USING (("organization_id" IN ( SELECT "profiles"."organization_id"
+   FROM "public"."profiles"
+  WHERE ("profiles"."id" = "auth"."uid"()))));
+
+
+
+CREATE POLICY "org members can view pos_rental_mappings" ON "public"."pos_rental_mappings" FOR SELECT USING (("organization_id" IN ( SELECT "profiles"."organization_id"
+   FROM "public"."profiles"
+  WHERE ("profiles"."id" = "auth"."uid"()))));
+
+
+
+CREATE POLICY "org members can view pos_transactions" ON "public"."pos_transactions" FOR SELECT USING (("invoice_id" IN ( SELECT "pos_invoices"."id"
+   FROM "public"."pos_invoices"
+  WHERE ("pos_invoices"."organization_id" = "public"."my_org_id"()))));
+
+
+
+ALTER TABLE "public"."org_pos_config" ENABLE ROW LEVEL SECURITY;
+
+
 ALTER TABLE "public"."organizations" ENABLE ROW LEVEL SECURITY;
 
 
@@ -2516,6 +3933,36 @@ CREATE POLICY "organizations: read own" ON "public"."organizations" FOR SELECT U
 
 CREATE POLICY "organizations: update own" ON "public"."organizations" FOR UPDATE USING (("id" = "public"."my_org_id"())) WITH CHECK (("id" = "public"."my_org_id"()));
 
+
+
+ALTER TABLE "public"."pos_auto_item_waivers" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."pos_categories" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."pos_invoice_items" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."pos_invoices" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."pos_parked_cart_items" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."pos_parked_carts" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."pos_payments" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."pos_products" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."pos_rental_mappings" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."pos_transactions" ENABLE ROW LEVEL SECURITY;
 
 
 ALTER TABLE "public"."profiles" ENABLE ROW LEVEL SECURITY;
@@ -2574,6 +4021,9 @@ CREATE POLICY "staff: org members" ON "public"."staff" USING (("organization_id"
 
 
 
+ALTER TABLE "public"."staff_custom_job_card" ENABLE ROW LEVEL SECURITY;
+
+
 ALTER TABLE "public"."staff_daily_job" ENABLE ROW LEVEL SECURITY;
 
 
@@ -2591,6 +4041,12 @@ CREATE POLICY "staff_dive_logs: org members" ON "public"."staff_dive_logs" USING
    FROM ("public"."trip_dives" "td"
      JOIN "public"."trips" "t" ON (("t"."id" = "td"."trip_id")))
   WHERE (("td"."id" = "staff_dive_logs"."trip_dive_id") AND ("t"."organization_id" = "public"."my_org_id"())))));
+
+
+
+CREATE POLICY "staff_read_schedule_slots" ON "public"."weekly_schedule_slots" FOR SELECT USING (("organization_id" IN ( SELECT "profiles"."organization_id"
+   FROM "public"."profiles"
+  WHERE ("profiles"."id" = "auth"."uid"()))));
 
 
 
@@ -2717,6 +4173,9 @@ CREATE POLICY "visits: org members" ON "public"."visits" USING (("organization_i
 
 
 
+ALTER TABLE "public"."weekly_schedule_slots" ENABLE ROW LEVEL SECURITY;
+
+
 GRANT USAGE ON SCHEMA "public" TO "postgres";
 GRANT USAGE ON SCHEMA "public" TO "anon";
 GRANT USAGE ON SCHEMA "public" TO "authenticated";
@@ -2736,6 +4195,36 @@ GRANT ALL ON FUNCTION "public"."add_clients_to_trip"("p_trip_id" "uuid", "p_clie
 
 
 
+GRANT ALL ON FUNCTION "public"."add_items_to_client_tab"("p_org_id" "uuid", "p_client_id" "uuid", "p_visit_id" "uuid", "p_items" "jsonb") TO "anon";
+GRANT ALL ON FUNCTION "public"."add_items_to_client_tab"("p_org_id" "uuid", "p_client_id" "uuid", "p_visit_id" "uuid", "p_items" "jsonb") TO "authenticated";
+GRANT ALL ON FUNCTION "public"."add_items_to_client_tab"("p_org_id" "uuid", "p_client_id" "uuid", "p_visit_id" "uuid", "p_items" "jsonb") TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."add_items_to_client_tab"("p_org_id" "uuid", "p_client_id" "uuid", "p_visit_id" "uuid", "p_items" "jsonb", "p_recorded_by" "uuid", "p_recorded_by_email" "text") TO "anon";
+GRANT ALL ON FUNCTION "public"."add_items_to_client_tab"("p_org_id" "uuid", "p_client_id" "uuid", "p_visit_id" "uuid", "p_items" "jsonb", "p_recorded_by" "uuid", "p_recorded_by_email" "text") TO "authenticated";
+GRANT ALL ON FUNCTION "public"."add_items_to_client_tab"("p_org_id" "uuid", "p_client_id" "uuid", "p_visit_id" "uuid", "p_items" "jsonb", "p_recorded_by" "uuid", "p_recorded_by_email" "text") TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."calculate_visit_invoice_payload"("p_visit_id" "uuid") TO "anon";
+GRANT ALL ON FUNCTION "public"."calculate_visit_invoice_payload"("p_visit_id" "uuid") TO "authenticated";
+GRANT ALL ON FUNCTION "public"."calculate_visit_invoice_payload"("p_visit_id" "uuid") TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."cascade_trip_removal_on_visit_client_delete"() TO "anon";
+GRANT ALL ON FUNCTION "public"."cascade_trip_removal_on_visit_client_delete"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."cascade_trip_removal_on_visit_client_delete"() TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."cascade_trips_on_visit_delete"() TO "anon";
+GRANT ALL ON FUNCTION "public"."cascade_trips_on_visit_delete"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."cascade_trips_on_visit_delete"() TO "service_role";
+
+
+
 GRANT ALL ON FUNCTION "public"."check_trip_capacity"() TO "anon";
 GRANT ALL ON FUNCTION "public"."check_trip_capacity"() TO "authenticated";
 GRANT ALL ON FUNCTION "public"."check_trip_capacity"() TO "service_role";
@@ -2745,6 +4234,12 @@ GRANT ALL ON FUNCTION "public"."check_trip_capacity"() TO "service_role";
 GRANT ALL ON FUNCTION "public"."check_vessel_overlap"() TO "anon";
 GRANT ALL ON FUNCTION "public"."check_vessel_overlap"() TO "authenticated";
 GRANT ALL ON FUNCTION "public"."check_vessel_overlap"() TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."checkout_session"("p_org_id" "uuid", "p_visit_id" "uuid", "p_invoice_id" "uuid", "p_client_id" "uuid", "p_items" "jsonb", "p_payment_amount" numeric, "p_payment_method" "text", "p_recorded_by" "uuid", "p_recorded_by_email" "text") TO "anon";
+GRANT ALL ON FUNCTION "public"."checkout_session"("p_org_id" "uuid", "p_visit_id" "uuid", "p_invoice_id" "uuid", "p_client_id" "uuid", "p_items" "jsonb", "p_payment_amount" numeric, "p_payment_method" "text", "p_recorded_by" "uuid", "p_recorded_by_email" "text") TO "authenticated";
+GRANT ALL ON FUNCTION "public"."checkout_session"("p_org_id" "uuid", "p_visit_id" "uuid", "p_invoice_id" "uuid", "p_client_id" "uuid", "p_items" "jsonb", "p_payment_amount" numeric, "p_payment_method" "text", "p_recorded_by" "uuid", "p_recorded_by_email" "text") TO "service_role";
 
 
 
@@ -2781,6 +4276,18 @@ GRANT ALL ON FUNCTION "public"."get_global_passport"("p_user_id" "uuid") TO "ser
 GRANT ALL ON FUNCTION "public"."get_overview_trips"("p_org_id" "uuid", "p_start" timestamp with time zone, "p_end" timestamp with time zone) TO "anon";
 GRANT ALL ON FUNCTION "public"."get_overview_trips"("p_org_id" "uuid", "p_start" timestamp with time zone, "p_end" timestamp with time zone) TO "authenticated";
 GRANT ALL ON FUNCTION "public"."get_overview_trips"("p_org_id" "uuid", "p_start" timestamp with time zone, "p_end" timestamp with time zone) TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."guard_trip_client_visit"() TO "anon";
+GRANT ALL ON FUNCTION "public"."guard_trip_client_visit"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."guard_trip_client_visit"() TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."guard_visit_deletion"() TO "anon";
+GRANT ALL ON FUNCTION "public"."guard_visit_deletion"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."guard_visit_deletion"() TO "service_role";
 
 
 
@@ -2892,6 +4399,12 @@ GRANT ALL ON SEQUENCE "public"."certification_organizations_id_seq" TO "service_
 
 
 
+GRANT ALL ON TABLE "public"."client_deposits" TO "anon";
+GRANT ALL ON TABLE "public"."client_deposits" TO "authenticated";
+GRANT ALL ON TABLE "public"."client_deposits" TO "service_role";
+
+
+
 GRANT ALL ON TABLE "public"."client_dive_logs" TO "anon";
 GRANT ALL ON TABLE "public"."client_dive_logs" TO "authenticated";
 GRANT ALL ON TABLE "public"."client_dive_logs" TO "service_role";
@@ -2913,6 +4426,12 @@ GRANT ALL ON SEQUENCE "public"."clients_client_number_seq" TO "service_role";
 GRANT ALL ON TABLE "public"."courses" TO "anon";
 GRANT ALL ON TABLE "public"."courses" TO "authenticated";
 GRANT ALL ON TABLE "public"."courses" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."deposit_applications" TO "anon";
+GRANT ALL ON TABLE "public"."deposit_applications" TO "authenticated";
+GRANT ALL ON TABLE "public"."deposit_applications" TO "service_role";
 
 
 
@@ -2952,9 +4471,75 @@ GRANT ALL ON TABLE "public"."locations" TO "service_role";
 
 
 
+GRANT ALL ON TABLE "public"."org_pos_config" TO "anon";
+GRANT ALL ON TABLE "public"."org_pos_config" TO "authenticated";
+GRANT ALL ON TABLE "public"."org_pos_config" TO "service_role";
+
+
+
 GRANT ALL ON TABLE "public"."organizations" TO "anon";
 GRANT ALL ON TABLE "public"."organizations" TO "authenticated";
 GRANT ALL ON TABLE "public"."organizations" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."pos_auto_item_waivers" TO "anon";
+GRANT ALL ON TABLE "public"."pos_auto_item_waivers" TO "authenticated";
+GRANT ALL ON TABLE "public"."pos_auto_item_waivers" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."pos_categories" TO "anon";
+GRANT ALL ON TABLE "public"."pos_categories" TO "authenticated";
+GRANT ALL ON TABLE "public"."pos_categories" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."pos_invoice_items" TO "anon";
+GRANT ALL ON TABLE "public"."pos_invoice_items" TO "authenticated";
+GRANT ALL ON TABLE "public"."pos_invoice_items" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."pos_invoices" TO "anon";
+GRANT ALL ON TABLE "public"."pos_invoices" TO "authenticated";
+GRANT ALL ON TABLE "public"."pos_invoices" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."pos_parked_cart_items" TO "anon";
+GRANT ALL ON TABLE "public"."pos_parked_cart_items" TO "authenticated";
+GRANT ALL ON TABLE "public"."pos_parked_cart_items" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."pos_parked_carts" TO "anon";
+GRANT ALL ON TABLE "public"."pos_parked_carts" TO "authenticated";
+GRANT ALL ON TABLE "public"."pos_parked_carts" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."pos_payments" TO "anon";
+GRANT ALL ON TABLE "public"."pos_payments" TO "authenticated";
+GRANT ALL ON TABLE "public"."pos_payments" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."pos_products" TO "anon";
+GRANT ALL ON TABLE "public"."pos_products" TO "authenticated";
+GRANT ALL ON TABLE "public"."pos_products" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."pos_rental_mappings" TO "anon";
+GRANT ALL ON TABLE "public"."pos_rental_mappings" TO "authenticated";
+GRANT ALL ON TABLE "public"."pos_rental_mappings" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."pos_transactions" TO "anon";
+GRANT ALL ON TABLE "public"."pos_transactions" TO "authenticated";
+GRANT ALL ON TABLE "public"."pos_transactions" TO "service_role";
 
 
 
@@ -2979,6 +4564,12 @@ GRANT ALL ON TABLE "public"."specialties" TO "service_role";
 GRANT ALL ON TABLE "public"."staff" TO "anon";
 GRANT ALL ON TABLE "public"."staff" TO "authenticated";
 GRANT ALL ON TABLE "public"."staff" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."staff_custom_job_card" TO "anon";
+GRANT ALL ON TABLE "public"."staff_custom_job_card" TO "authenticated";
+GRANT ALL ON TABLE "public"."staff_custom_job_card" TO "service_role";
 
 
 
@@ -3009,6 +4600,12 @@ GRANT ALL ON TABLE "public"."trip_clients" TO "service_role";
 GRANT ALL ON TABLE "public"."trip_dives" TO "anon";
 GRANT ALL ON TABLE "public"."trip_dives" TO "authenticated";
 GRANT ALL ON TABLE "public"."trip_dives" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."trip_pricing_tiers" TO "anon";
+GRANT ALL ON TABLE "public"."trip_pricing_tiers" TO "authenticated";
+GRANT ALL ON TABLE "public"."trip_pricing_tiers" TO "service_role";
 
 
 
@@ -3045,6 +4642,12 @@ GRANT ALL ON TABLE "public"."visit_clients" TO "service_role";
 GRANT ALL ON TABLE "public"."visits" TO "anon";
 GRANT ALL ON TABLE "public"."visits" TO "authenticated";
 GRANT ALL ON TABLE "public"."visits" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."weekly_schedule_slots" TO "anon";
+GRANT ALL ON TABLE "public"."weekly_schedule_slots" TO "authenticated";
+GRANT ALL ON TABLE "public"."weekly_schedule_slots" TO "service_role";
 
 
 
