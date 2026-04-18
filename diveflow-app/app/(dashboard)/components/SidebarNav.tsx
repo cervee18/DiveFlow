@@ -334,7 +334,7 @@ export default function SidebarNav({ isStaff, isAdmin, userEmail, isPOSOpen }: P
     { href: '/pos/sell',       label: 'Sell',          icon: <CartIcon /> },
     { href: '/pos/products',   label: 'Products',      icon: <TagIcon /> },
     { href: '/pos/tabs',       label: 'Client Tabs',   icon: <ReceiptIcon /> },
-    { href: '/pos/history',    label: 'History',       icon: <ClockIcon /> },
+    { href: '/pos/invoices',   label: 'Invoices',      icon: <ClockIcon /> },
     { href: '/pos/logs',       label: 'Activity Log',  icon: <ActivityIcon /> },
   ] : [];
 
