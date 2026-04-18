@@ -15,7 +15,7 @@ import DepositModal from './components/DepositModal';
 import EditItemModal from './components/EditItemModal';
 import TripDrawer from '../../components/TripDrawer';
 
-export default function TabsClient({ initialClient, products }: { initialClient?: { id: string; name: string } | null; products: any[] }) {
+export default function TabsClient({ initialClient, products, isSessionOpen }: { initialClient?: { id: string; name: string } | null; products: any[]; isSessionOpen: boolean }) {
   const [isPending, startTransition] = useTransition();
 
   // Client search
@@ -409,6 +409,8 @@ export default function TabsClient({ initialClient, products }: { initialClient?
                         invoice={inv}
                         isSelected={selectedStandaloneIds.has(inv.invoiceId)}
                         onToggle={toggleStandalone}
+                        onEditItem={setEditTarget}
+                        onDeleteItem={handleDeleteItem}
                       />
                     ))}
                   </div>
@@ -481,6 +483,15 @@ export default function TabsClient({ initialClient, products }: { initialClient?
         </div>
 
         {/* Sticky payment footer */}
+        {!isSessionOpen && selectedClient && tabData && (
+          <div className="shrink-0 mt-3 flex items-center gap-2.5 px-4 py-2.5 bg-rose-50 border border-rose-200 rounded-xl text-rose-700 text-xs font-semibold">
+            <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+            </svg>
+            POS is closed — go to Open / Close to start a new session before processing payments.
+          </div>
+        )}
+
         {selectedClient && tabData && grandTotal > 0 && (
           <div className="shrink-0 mt-3 bg-white border border-slate-200 rounded-xl shadow-[0_-4px_12px_-2px_rgba(0,0,0,0.08)] px-6 py-4 flex items-center justify-between gap-4">
             <div>
@@ -495,8 +506,9 @@ export default function TabsClient({ initialClient, products }: { initialClient?
             </div>
             <button
               onClick={openPayModal}
-              disabled={isPending}
-              className="flex items-center gap-2 px-6 py-3 bg-emerald-500 hover:bg-emerald-600 text-white font-bold rounded-xl shadow-md disabled:opacity-50 transition-colors text-sm"
+              disabled={isPending || !isSessionOpen}
+              title={!isSessionOpen ? 'Open the POS before processing payments' : undefined}
+              className="flex items-center gap-2 px-6 py-3 bg-emerald-500 hover:bg-emerald-600 text-white font-bold rounded-xl shadow-md disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm"
             >
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 8.25h19.5M2.25 9h19.5m-16.5 5.25h6m-6 2.25h3m-3.75 3h15a2.25 2.25 0 002.25-2.25V6.75A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25v10.5A2.25 2.25 0 004.5 19.5z" />

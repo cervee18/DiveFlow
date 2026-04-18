@@ -1,4 +1,5 @@
 import { createClient } from '@/utils/supabase/server';
+import { getOpenSession } from '@/utils/pos-session';
 import TabsClient from './TabsClient';
 
 export default async function ClientTabsPage({
@@ -41,6 +42,8 @@ export default async function ClientTabsPage({
     .eq('is_active', true)
     .order('name') : { data: [] };
 
+  const openSession = orgId ? await getOpenSession(orgId, supabase) : null;
+
   return (
     <div className="flex flex-col h-[calc(100vh-4rem)] bg-slate-50 p-6">
       <div className="mb-4">
@@ -50,7 +53,7 @@ export default async function ClientTabsPage({
         </p>
       </div>
       <div className="flex-1 overflow-hidden">
-        <TabsClient initialClient={initialClient} products={products ?? []} />
+        <TabsClient initialClient={initialClient} products={products ?? []} isSessionOpen={!!openSession} />
       </div>
     </div>
   );

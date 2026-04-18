@@ -1,6 +1,7 @@
 'use server';
 
 import { createClient } from '@/utils/supabase/server';
+import { getOpenSession } from '@/utils/pos-session';
 import { revalidatePath } from 'next/cache';
 
 export async function searchClients(query: string) {
@@ -92,7 +93,7 @@ export async function getClientTabData(clientId: string) {
     .select(`
       id, created_at, status,
       pos_transactions ( id, recorded_by_email, created_at ),
-      pos_invoice_items ( id, quantity, unit_price, transaction_id, pos_products ( id, name ) ),
+      pos_invoice_items ( id, quantity, unit_price, transaction_id, pos_products ( id, name, price ) ),
       pos_payments ( id, amount, voided_at )
     `)
     .eq('client_id', clientId)
@@ -105,20 +106,24 @@ export async function getClientTabData(clientId: string) {
       (a: any, b: any) => a.created_at < b.created_at ? -1 : 1
     );
 
+    const mapItem = (i: any) => ({
+      id: i.id as string,
+      name: i.pos_products?.name ?? 'Unknown',
+      price: Number(i.unit_price),
+      basePrice: Number(i.pos_products?.price ?? i.unit_price),
+      qty: i.quantity as number,
+    });
+
     // Group items by transaction, then collect unlinked items as a fallback batch
-    const batches: { recordedByEmail: string | null; addedAt: string; items: { name: string; price: number; qty: number }[] }[] = [];
+    const batches: { recordedByEmail: string | null; addedAt: string; items: ReturnType<typeof mapItem>[] }[] = [];
     for (const txn of transactions) {
-      const txnItems = allItems
-        .filter((i: any) => i.transaction_id === txn.id)
-        .map((i: any) => ({ name: i.pos_products?.name ?? 'Unknown', price: Number(i.unit_price), qty: i.quantity }));
+      const txnItems = allItems.filter((i: any) => i.transaction_id === txn.id).map(mapItem);
       if (txnItems.length > 0) {
         batches.push({ recordedByEmail: txn.recorded_by_email ?? null, addedAt: txn.created_at, items: txnItems });
       }
     }
     // Legacy items with no transaction_id
-    const unlinked = allItems
-      .filter((i: any) => !i.transaction_id)
-      .map((i: any) => ({ name: i.pos_products?.name ?? 'Unknown', price: Number(i.unit_price), qty: i.quantity }));
+    const unlinked = allItems.filter((i: any) => !i.transaction_id).map(mapItem);
     if (unlinked.length > 0) {
       batches.unshift({ recordedByEmail: null, addedAt: inv.created_at, items: unlinked });
     }
@@ -332,6 +337,9 @@ export async function payClientFullTab(
   if (!profile) return { error: 'No org' };
 
   const orgId = profile.organization_id;
+
+  const openSession = await getOpenSession(orgId, supabase);
+  if (!openSession) return { error: 'POS is closed. Open the POS before processing payments.' };
 
   // ── 1. Resolve / create invoice for each visit ──────────────────────────
   const resolvedVisits: Array<{ visitId: string; invoiceId: string; balance: number; members: Array<{ clientId: string; balanceDue: number }> }> = [];

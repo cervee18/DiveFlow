@@ -1,6 +1,7 @@
 'use server';
 
 import { createClient } from '@/utils/supabase/server';
+import { getOpenSession } from '@/utils/pos-session';
 import { revalidatePath } from 'next/cache';
 
 export async function fetchLiveInvoice(visitId: string) {
@@ -99,6 +100,9 @@ export async function checkoutSession(
 
   const { data: profile } = await supabase.from('profiles').select('organization_id').eq('id', user.id).single();
   if (!profile) return { error: 'No org' };
+
+  const openSession = await getOpenSession(profile.organization_id, supabase);
+  if (!openSession) return { error: 'POS is closed. Open the POS before processing payments.' };
 
   const { data, error } = await supabase.rpc('checkout_session', {
     p_org_id:            profile.organization_id,
@@ -211,6 +215,9 @@ export async function addCartToClientTab(
 
   const { data: profile } = await supabase.from('profiles').select('organization_id').eq('id', user.id).single();
   if (!profile) return { error: 'No org' };
+
+  const openSession = await getOpenSession(profile.organization_id, supabase);
+  if (!openSession) return { error: 'POS is closed. Open the POS before processing payments.' };
 
   const { data, error } = await supabase.rpc('add_items_to_client_tab', {
     p_org_id:            profile.organization_id,

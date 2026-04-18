@@ -112,6 +112,15 @@ function ClockIcon() {
   );
 }
 
+function PowerIcon() {
+  return (
+    <svg className="w-5 h-5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M12 3v4m0 0a7 7 0 100 14 7 7 0 000-14" />
+      <path strokeLinecap="round" strokeLinejoin="round" d="M12 7a5 5 0 110 10A5 5 0 0112 7z" />
+    </svg>
+  );
+}
+
 function UserCircleIcon() {
   return (
     <svg className="w-5 h-5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -151,6 +160,7 @@ interface Props {
   isStaff: boolean;
   isAdmin: boolean;
   userEmail: string;
+  isPOSOpen?: boolean;
 }
 
 // ── NavLink ──────────────────────────────────────────────────────────────────
@@ -189,6 +199,7 @@ function AccordionGroup({
   expanded,
   hasActiveChild,
   isActiveChild,
+  indicator,
 }: {
   label: string;
   items: NavItem[];
@@ -196,6 +207,7 @@ function AccordionGroup({
   expanded: boolean;
   hasActiveChild: boolean;
   isActiveChild: (href: string) => boolean;
+  indicator?: 'green' | 'red';
 }) {
   const [open, setOpen] = useState(true);
 
@@ -216,11 +228,17 @@ function AccordionGroup({
     });
   };
 
+  const ledColor = indicator === 'green' ? 'bg-emerald-400' : indicator === 'red' ? 'bg-rose-500' : null;
+
   // Narrow (icon-only): show all items flat with a divider, ignore accordion state
   if (!expanded) {
     return (
       <div className="mt-1">
-        <div className="border-t border-slate-700/50 my-2 mx-2" />
+        <div className="relative border-t border-slate-700/50 my-2 mx-2">
+          {ledColor && (
+            <span className={`absolute -top-1.5 right-1 w-2 h-2 rounded-full ${ledColor} ring-1 ring-slate-900`} />
+          )}
+        </div>
         {items.map(item => (
           <NavLink
             key={item.href}
@@ -245,6 +263,9 @@ function AccordionGroup({
             <span className="w-1.5 h-1.5 rounded-full bg-teal-400 flex-shrink-0" />
           )}
           <span>{label}</span>
+          {ledColor && (
+            <span className={`w-2 h-2 rounded-full ${ledColor} flex-shrink-0`} />
+          )}
         </div>
         <ChevronDownIcon open={open} />
       </button>
@@ -267,7 +288,7 @@ function AccordionGroup({
 
 // ── Sidebar ──────────────────────────────────────────────────────────────────
 
-export default function SidebarNav({ isStaff, isAdmin, userEmail }: Props) {
+export default function SidebarNav({ isStaff, isAdmin, userEmail, isPOSOpen }: Props) {
   const [hovered, setHovered] = useState(false);
   const pathname = usePathname();
   const router = useRouter();
@@ -300,10 +321,11 @@ export default function SidebarNav({ isStaff, isAdmin, userEmail }: Props) {
   ] : [];
 
   const posItems: NavItem[] = isAdmin ? [
-    { href: '/pos/sell',     label: 'Sell',        icon: <CartIcon /> },
-    { href: '/pos/products', label: 'Products',    icon: <TagIcon /> },
-    { href: '/pos/tabs',     label: 'Client Tabs', icon: <ReceiptIcon /> },
-    { href: '/pos/history',  label: 'History',     icon: <ClockIcon /> },
+    { href: '/pos/open-close', label: 'Open / Close', icon: <PowerIcon /> },
+    { href: '/pos/sell',       label: 'Sell',          icon: <CartIcon /> },
+    { href: '/pos/products',   label: 'Products',      icon: <TagIcon /> },
+    { href: '/pos/tabs',       label: 'Client Tabs',   icon: <ReceiptIcon /> },
+    { href: '/pos/history',    label: 'History',       icon: <ClockIcon /> },
   ] : [];
 
   return (
@@ -358,6 +380,7 @@ export default function SidebarNav({ isStaff, isAdmin, userEmail }: Props) {
               expanded={expanded}
               hasActiveChild={posItems.some(i => isActive(i.href))}
               isActiveChild={isActive}
+              indicator={isPOSOpen ? 'green' : 'red'}
             />
           )}
         </nav>
