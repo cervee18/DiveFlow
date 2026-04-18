@@ -13,9 +13,10 @@ interface VisitCardProps {
   onAddItem: (visitId: string, invoiceId: string | null, clientId: string, productId: string, price: number, qty: number) => Promise<void>;
   onWaiveItem: (visitId: string, clientId: string, itemKey: string, waived: boolean) => Promise<void>;
   onDeleteItem: (invoiceItemId: string) => Promise<void>;
+  onOpenTrip: (tripId: string) => void;
 }
 
-export default function VisitCard({ visit, selectedClientId, products, onSelectionChange, onAddItem, onWaiveItem, onDeleteItem }: VisitCardProps) {
+export default function VisitCard({ visit, selectedClientId, products, onSelectionChange, onAddItem, onWaiveItem, onDeleteItem, onOpenTrip }: VisitCardProps) {
   const { payload } = visit;
   const clients: Record<string, any> = payload.clients ?? {};
   const memberIds = Object.keys(clients);
@@ -170,7 +171,14 @@ export default function VisitCard({ visit, selectedClientId, products, onSelecti
                       <div key={`a-${idx}`} className={`flex justify-between items-center text-xs px-2.5 py-1.5 rounded-lg ${item.waived ? 'bg-slate-50 text-slate-400' : 'bg-slate-50 text-slate-500'}`}>
                         <div className="flex items-center gap-2 min-w-0">
                           <span className={`w-1 h-1 rounded-full shrink-0 ${item.waived ? 'bg-slate-200' : 'bg-slate-300'}`} />
-                          <span className={`font-medium ${item.waived ? 'line-through text-slate-400' : 'text-slate-700'}`}>{item.name}</span>
+                          {item.trip_id ? (
+                            <button
+                              onClick={() => onOpenTrip(item.trip_id)}
+                              className={`font-medium text-left hover:underline ${item.waived ? 'line-through text-slate-400' : 'text-indigo-600 hover:text-indigo-800'}`}
+                            >{item.name}</button>
+                          ) : (
+                            <span className={`font-medium ${item.waived ? 'line-through text-slate-400' : 'text-slate-700'}`}>{item.name}</span>
+                          )}
                           {item.waived && <span className="text-[10px] font-semibold text-teal-600 bg-teal-50 border border-teal-200 px-1.5 py-0.5 rounded-full shrink-0">Waived</span>}
                         </div>
                         <div className="flex items-center gap-2 shrink-0">

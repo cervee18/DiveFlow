@@ -192,18 +192,23 @@ export async function getClientTabData(clientId: string) {
       if (!p.payment_group_id) {
         paymentRows.push({
           ids: [p.id], date: p.created_at, amount: Number(p.amount),
-          method: p.payment_method, recordedByEmail: p.recorded_by_email,
+          splits: [{ method: p.payment_method, amount: Number(p.amount) }],
+          recordedByEmail: p.recorded_by_email,
           voided: !!p.voided_at, voidReason: p.void_reason ?? null,
         });
       } else if (!seenGroups.has(p.payment_group_id)) {
         seenGroups.add(p.payment_group_id);
         const siblings = rawPayments.filter(x => x.payment_group_id === p.payment_group_id);
         const allVoided = siblings.every(x => !!x.voided_at);
+        const methodSums = siblings.reduce((acc, x) => {
+          acc[x.payment_method] = (acc[x.payment_method] ?? 0) + Number(x.amount);
+          return acc;
+        }, {} as Record<string, number>);
         paymentRows.push({
           ids: siblings.map(x => x.id),
           date: p.created_at,
           amount: Math.round(siblings.reduce((s, x) => s + Number(x.amount), 0) * 100) / 100,
-          method: p.payment_method,
+          splits: Object.entries(methodSums).map(([method, amount]) => ({ method, amount: Math.round(amount * 100) / 100 })),
           recordedByEmail: p.recorded_by_email,
           voided: allVoided,
           voidReason: allVoided ? (p.void_reason ?? null) : null,
@@ -482,7 +487,11 @@ export async function payClientFullTab(
   }
 
   revalidatePath('/pos/tabs');
-  return { success: true };
+  const invoiceIds = [...new Set([
+    ...resolvedVisits.map(rv => rv.invoiceId),
+    ...(primaryInvoiceId && !resolvedVisits.find(rv => rv.invoiceId === primaryInvoiceId) ? [primaryInvoiceId] : []),
+  ])];
+  return { success: true, invoiceIds };
 }
 
 export async function voidPayment(paymentIds: string[], reason: string) {
@@ -496,6 +505,9 @@ export async function voidPayment(paymentIds: string[], reason: string) {
     .in('id', paymentIds);
 
   if (error) return { error: error.message };
+
+  // Release any credit that was consumed by these payments so it returns to the client's balance
+  await supabase.from('deposit_applications').delete().in('payment_id', paymentIds);
 
   revalidatePath('/pos/tabs');
   return { success: true };

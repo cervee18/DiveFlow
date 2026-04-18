@@ -43,7 +43,7 @@ export default async function POSHistoryPage() {
   type DisplayPayment = {
     ids: string[];
     amount: number;
-    payment_method: string;
+    payment_methods: string[];
     created_at: string;
     recorded_by_email: string | null;
     voided_at: string | null;
@@ -64,7 +64,7 @@ export default async function POSHistoryPage() {
       grouped.push({
         ids: [p.id],
         amount: Number(p.amount),
-        payment_method: p.payment_method,
+        payment_methods: [p.payment_method],
         created_at: p.created_at,
         recorded_by_email: p.recorded_by_email,
         voided_at: p.voided_at,
@@ -91,7 +91,7 @@ export default async function POSHistoryPage() {
     grouped.push({
       ids: siblings.map((x: any) => x.id),
       amount: siblings.reduce((s: number, x: any) => s + Number(x.amount), 0),
-      payment_method: p.payment_method,
+      payment_methods: [...new Set(siblings.map((x: any) => x.payment_method as string))],
       created_at: p.created_at,
       recorded_by_email: p.recorded_by_email,
       voided_at: allVoided ? p.voided_at : null,
@@ -104,10 +104,12 @@ export default async function POSHistoryPage() {
   const activePayments = grouped.filter(p => !p.voided_at);
   const totalCollected = activePayments.reduce((s, p) => s + p.amount, 0);
 
-  const methodTotals = activePayments.reduce<Record<string, number>>((acc, p) => {
-    acc[p.payment_method] = (acc[p.payment_method] ?? 0) + p.amount;
-    return acc;
-  }, {});
+  const methodTotals = payments
+    .filter((p: any) => !p.voided_at)
+    .reduce<Record<string, number>>((acc, p: any) => {
+      acc[p.payment_method] = (acc[p.payment_method] ?? 0) + Number(p.amount);
+      return acc;
+    }, {});
 
   return (
     <div className="max-w-4xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-8">
@@ -152,9 +154,20 @@ export default async function POSHistoryPage() {
               <div key={idx} className={`px-5 py-3.5 flex items-center justify-between gap-4 ${isVoided ? 'opacity-50' : ''}`}>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-indigo-50 text-indigo-700 border border-indigo-100 ${isVoided ? 'line-through' : ''}`}>
-                      {p.payment_method}
-                    </span>
+                    {p.payment_methods.map((method, i) => {
+                      const siblings = payments.filter((x: any) => p.ids.includes(x.id));
+                      const methodAmount = siblings
+                        .filter((x: any) => x.payment_method === method && !x.voided_at)
+                        .reduce((s: number, x: any) => s + Number(x.amount), 0);
+                      return (
+                        <span key={method} className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-semibold bg-indigo-50 text-indigo-700 border border-indigo-100 ${isVoided ? 'line-through' : ''}`}>
+                          {method}
+                          {p.payment_methods.length > 1 && (
+                            <span className="font-mono font-normal">${methodAmount.toFixed(2)}</span>
+                          )}
+                        </span>
+                      );
+                    })}
                     {isVoided && (
                       <span className="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 bg-rose-100 text-rose-500 rounded">
                         Voided

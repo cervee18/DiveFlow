@@ -12,6 +12,7 @@ import TransactionHistoryCard, { type HistoryEntry, type PaymentRow } from './co
 import PayModal from './components/PayModal';
 import VoidModal from './components/VoidModal';
 import DepositModal from './components/DepositModal';
+import TripDrawer from '../../components/TripDrawer';
 
 export default function TabsClient({ initialClient, products }: { initialClient?: { id: string; name: string } | null; products: any[] }) {
   const [isPending, startTransition] = useTransition();
@@ -44,6 +45,9 @@ export default function TabsClient({ initialClient, products }: { initialClient?
   const [depositAmount, setDepositAmount] = useState('');
   const [depositNote, setDepositNote] = useState('');
   const [depositError, setDepositError] = useState('');
+
+  // Trip drawer
+  const [drawerTripId, setDrawerTripId] = useState<string | null>(null);
 
   // Void deposit modal
   const [voidDepositTarget, setVoidDepositTarget] = useState<{ id: string; amount: number; method: string } | null>(null);
@@ -155,6 +159,23 @@ export default function TabsClient({ initialClient, products }: { initialClient?
     });
   };
 
+  const openReceipt = (invoiceId: string) => {
+    const win = window.open(`/api/pos-receipt?invoiceId=${invoiceId}`, '_blank');
+    if (win) win.focus();
+  };
+
+  const emailReceipt = async (invoiceId: string) => {
+    const res = await fetch('/api/pos-receipt/email', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ invoiceId }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error ?? 'Failed to send email');
+    }
+  };
+
   const confirmPayment = (splits: Array<{ amount: number; method: string }>) => {
     setPayError('');
     const visitSources = Object.values(visitsSelection).filter(v => v.balance > 0 && v.members.length > 0);
@@ -181,11 +202,12 @@ export default function TabsClient({ initialClient, products }: { initialClient?
       setIsPayModalOpen(false);
       setSelectedStandaloneIds(new Set());
       await refreshTab();
+      for (const id of res.invoiceIds ?? []) openReceipt(id);
     });
   };
 
   const openVoidModal = (row: PaymentRow) => {
-    setVoidTarget({ ids: row.ids, amount: row.amount, method: row.method });
+    setVoidTarget({ ids: row.ids, amount: row.amount, method: row.splits.map(s => s.method).join(' + ') });
     setVoidReason('');
     setVoidError('');
   };
@@ -340,6 +362,7 @@ export default function TabsClient({ initialClient, products }: { initialClient?
                         onAddItem={handleAddItem}
                         onWaiveItem={handleWaiveItem}
                         onDeleteItem={handleDeleteItem}
+                        onOpenTrip={setDrawerTripId}
                       />
                     ))}
                   </div>
@@ -416,6 +439,8 @@ export default function TabsClient({ initialClient, products }: { initialClient?
                         key={idx}
                         entry={entry}
                         onVoid={openVoidModal}
+                        onReceipt={openReceipt}
+                        onEmailReceipt={emailReceipt}
                       />
                     ))}
                   </div>
@@ -505,6 +530,12 @@ export default function TabsClient({ initialClient, products }: { initialClient?
           onClose={() => setVoidDepositTarget(null)}
         />
       )}
+
+      <TripDrawer
+        isOpen={drawerTripId !== null}
+        tripId={drawerTripId}
+        onClose={() => setDrawerTripId(null)}
+      />
     </div>
   );
 }
