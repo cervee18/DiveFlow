@@ -11,7 +11,7 @@ interface VisitCardProps {
   products: any[];
   onSelectionChange: (sel: VisitSelection) => void;
   onAddItem: (visitId: string, invoiceId: string | null, clientId: string, productId: string, price: number, qty: number) => Promise<void>;
-  onWaiveItem: (visitId: string, clientId: string, itemKey: string, waived: boolean) => Promise<void>;
+  onWaiveItem: (visitId: string, clientId: string, itemKey: string, waived: boolean, itemName?: string) => Promise<void>;
   onDeleteItem: (invoiceItemId: string) => Promise<void>;
   onEditItem: (item: { id: string; name: string; price: number; qty: number }) => void;
   onEditAutoItem: (visitId: string, clientId: string, item: { itemKey: string; name: string; price: number; basePrice: number }) => void;
@@ -200,7 +200,7 @@ export default function VisitCard({ visit, selectedClientId, products, onSelecti
                                 </button>
                               )}
                               <button
-                                onClick={() => onWaiveItem(visit.visitId, memberId, item.item_key, !item.waived)}
+                                onClick={() => onWaiveItem(visit.visitId, memberId, item.item_key, !item.waived, item.name)}
                                 title={item.waived ? 'Restore charge' : 'Waive'}
                                 className={`p-1 rounded transition-colors ${item.waived ? 'text-teal-500 hover:text-slate-400 hover:bg-slate-100' : 'text-slate-400 hover:text-teal-500 hover:bg-teal-50'}`}
                               >

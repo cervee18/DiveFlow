@@ -2,6 +2,7 @@
 
 import { createClient } from '@/utils/supabase/server';
 import { getOpenSession } from '@/utils/pos-session';
+import { logPOSAction } from '@/utils/pos-audit';
 import { revalidatePath } from 'next/cache';
 
 export async function fetchLiveInvoice(visitId: string) {
@@ -118,6 +119,18 @@ export async function checkoutSession(
 
   if (error) return { error: error.message };
 
+  if (paymentAmount && paymentAmount > 0) {
+    await logPOSAction(supabase, profile.organization_id, user.email ?? null,
+      'checkout',
+      clientId,
+      {
+        amount: paymentAmount,
+        method: paymentMethod,
+        item_count: items.length,
+      }
+    );
+  }
+
   revalidatePath('/pos/sell');
   return { success: true, invoiceId: (data as any)?.invoice_id ?? null };
 }
@@ -229,6 +242,16 @@ export async function addCartToClientTab(
   });
 
   if (error) return { error: error.message };
+
+  await logPOSAction(supabase, profile.organization_id, user.email ?? null,
+    'add_to_tab',
+    clientId,
+    {
+      visit_id: visitId,
+      item_count: items.length,
+      total: Math.round(items.reduce((s, i) => s + i.price * i.qty, 0) * 100) / 100,
+    }
+  );
 
   revalidatePath('/pos/tabs');
   return { success: true, invoiceId: (data as any)?.invoice_id ?? null };

@@ -2,6 +2,7 @@
 
 import { createClient } from '@/utils/supabase/server';
 import { getOpenSession } from '@/utils/pos-session';
+import { logPOSAction } from '@/utils/pos-audit';
 import { revalidatePath } from 'next/cache';
 
 async function getOrgAndUser() {
@@ -29,6 +30,11 @@ export async function openPOS(openingCash: number) {
   });
 
   if (error) return { error: error.message };
+
+  await logPOSAction(supabase, orgId, user.email ?? null, 'open_session', null, {
+    opening_cash: Math.max(0, openingCash),
+  });
+
   revalidatePath('/pos');
   return { success: true };
 }
@@ -47,6 +53,12 @@ export async function closePOS() {
     .eq('id', session.id);
 
   if (error) return { error: error.message };
+
+  await logPOSAction(supabase, orgId, user.email ?? null, 'close_session', null, {
+    session_id: session.id,
+    opened_at: session.opened_at,
+  });
+
   revalidatePath('/pos');
   return { success: true };
 }

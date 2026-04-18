@@ -268,8 +268,8 @@ export default function TabsClient({ initialClient, products, isSessionOpen }: {
     await refreshTab(true);
   };
 
-  const handleWaiveItem = async (visitId: string, clientId: string, itemKey: string, waived: boolean) => {
-    await toggleItemWaiver(visitId, clientId, itemKey, waived);
+  const handleWaiveItem = async (visitId: string, clientId: string, itemKey: string, waived: boolean, itemName?: string) => {
+    await toggleItemWaiver(visitId, clientId, itemKey, waived, itemName);
     await refreshTab(true);
   };
 
@@ -294,7 +294,7 @@ export default function TabsClient({ initialClient, products, isSessionOpen }: {
   const confirmEditAutoItem = (_id: string, unitPrice: number, _qty: number) => {
     if (!editAutoTarget) return;
     startTransition(async () => {
-      await setAutoItemPriceOverride(editAutoTarget.visitId, editAutoTarget.clientId, editAutoTarget.itemKey, unitPrice);
+      await setAutoItemPriceOverride(editAutoTarget.visitId, editAutoTarget.clientId, editAutoTarget.itemKey, unitPrice, editAutoTarget.name);
       setEditAutoTarget(null);
       await refreshTab(true);
     });
