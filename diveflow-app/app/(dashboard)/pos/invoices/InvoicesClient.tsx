@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, Fragment } from 'react';
 import Link from 'next/link';
 
 interface DisplayPayment {
@@ -170,9 +170,8 @@ export default function InvoicesClient({ invoices }: { invoices: InvoiceRow[] })
                 const isSettled = inv.status === 'settled';
 
                 return (
-                  <>
+                  <Fragment key={inv.id}>
                     <tr
-                      key={inv.id}
                       onClick={() => isSettled ? toggleExpand(inv.id) : undefined}
                       className={`border-b border-slate-50 transition-colors ${isSettled ? 'cursor-pointer hover:bg-slate-50/70' : ''}`}
                     >
@@ -273,7 +272,7 @@ export default function InvoicesClient({ invoices }: { invoices: InvoiceRow[] })
                         </td>
                       </tr>
                     )}
-                  </>
+                  </Fragment>
                 );
               })}
             </tbody>

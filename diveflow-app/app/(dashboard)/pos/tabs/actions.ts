@@ -214,7 +214,7 @@ export async function getClientTabData(clientId: string) {
           ids: siblings.map(x => x.id),
           date: p.created_at,
           amount: Math.round(siblings.reduce((s, x) => s + Number(x.amount), 0) * 100) / 100,
-          splits: Object.entries(methodSums).map(([method, amount]) => ({ method, amount: Math.round(amount * 100) / 100 })),
+          splits: Object.entries(methodSums).map(([method, amount]) => ({ method, amount: Math.round((amount as number) * 100) / 100 })),
           recordedByEmail: p.recorded_by_email,
           voided: allVoided,
           voidReason: allVoided ? (p.void_reason ?? null) : null,
