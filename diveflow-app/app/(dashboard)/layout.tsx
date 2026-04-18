@@ -4,6 +4,7 @@ import { getAuthContext, isStaff, isAdmin } from "@/utils/auth";
 import { createClient } from "@/utils/supabase/server";
 import MobileNav        from "@/app/(dashboard)/components/MobileNav";
 import SidebarNav       from "@/app/(dashboard)/components/SidebarNav";
+import SubNavBar        from "@/app/(dashboard)/components/SubNavBar";
 import { OrgSettingsProvider, type OrgSettings } from "@/app/(dashboard)/components/OrgSettingsContext";
 import { getOpenSession } from "@/utils/pos-session";
 
@@ -60,6 +61,7 @@ export default async function DashboardLayout({
 
         {/* Main Content Area */}
         <div className="flex-1 flex flex-col min-w-0">
+          <SubNavBar isPOSOpen={isPOSOpen} />
           <main className="flex-1 pb-16 md:pb-0">
             {children}
           </main>
