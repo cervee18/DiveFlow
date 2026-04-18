@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect, useRef } from "react";
 import { createClient } from "@/utils/supabase/client";
+import DateRangePicker from "./DateRangePicker";
 
 interface VisitFormModalProps {
   mode: 'add' | 'edit';
@@ -143,7 +144,7 @@ export default function VisitFormModal({
 
   const handleSaveVisit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    if (!selectedClientId || !userOrgId || hasOverlap) return;
+    if (!selectedClientId || !userOrgId || !startDate || !endDate || hasOverlap) return;
     setIsSavingVisit(true);
     
     const fd = new FormData(e.currentTarget);
@@ -236,29 +237,13 @@ export default function VisitFormModal({
               </div>
             )}
 
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Check-in Date *</label>
-                <input 
-                  type="date" 
-                  name="start_date" 
-                  value={startDate}
-                  onChange={(e) => setStartDate(e.target.value)}
-                  required 
-                  className="w-full px-3 py-2 border rounded-md border-slate-300 focus:ring-2 focus:ring-teal-500 outline-none" 
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Check-out Date *</label>
-                <input 
-                  type="date" 
-                  name="end_date" 
-                  value={endDate}
-                  onChange={(e) => setEndDate(e.target.value)}
-                  required 
-                  className="w-full px-3 py-2 border rounded-md border-slate-300 focus:ring-2 focus:ring-teal-500 outline-none" 
-                />
-              </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-2">Visit Dates *</label>
+              <DateRangePicker
+                startDate={startDate}
+                endDate={endDate}
+                onChange={(start, end) => { setStartDate(start); setEndDate(end); }}
+              />
             </div>
 
             <div className="grid grid-cols-2 gap-4">
@@ -369,7 +354,7 @@ export default function VisitFormModal({
           <button 
             type="submit" 
             form="visit-form" // Triggers the form submission above
-            disabled={isSavingVisit || hasOverlap} 
+            disabled={isSavingVisit || hasOverlap || !startDate || !endDate}
             className="bg-teal-600 hover:bg-teal-700 text-white px-5 py-2 rounded-md text-sm font-medium shadow-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {isSavingVisit ? "Saving..." : "Save Visit"}

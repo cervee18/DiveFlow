@@ -7,6 +7,7 @@ interface HistoryItem {
   name: string;
   price: number;
   clientName: string | null;
+  discountPct?: number;
 }
 
 export interface PaymentRow {
@@ -27,6 +28,10 @@ export interface HistoryEntry {
   payments: PaymentRow[];
   totalPaid: number;
   lastDate: string;
+}
+
+function fmtDiscount(pct: number) {
+  return pct % 1 === 0 ? `${pct}%` : `${pct.toFixed(1)}%`;
 }
 
 interface Props {
@@ -150,9 +155,14 @@ export default function TransactionHistoryCard({ entry, onVoid, onReceipt, onEma
               <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-2">Charges</p>
               {entry.items.map((item, idx) => (
                 <div key={idx} className="flex justify-between items-center text-xs text-slate-500 px-2.5 py-1.5 bg-slate-50 rounded-lg">
-                  <div className="flex items-center gap-2 min-w-0">
+                  <div className="flex items-center gap-2 min-w-0 flex-wrap">
                     <span className="w-1 h-1 rounded-full bg-slate-300 shrink-0" />
                     <span className="font-medium text-slate-700 truncate">{item.name}</span>
+                    {item.discountPct !== undefined && item.discountPct > 0 && (
+                      <span className="text-[10px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded-full shrink-0">
+                        -{fmtDiscount(item.discountPct)}
+                      </span>
+                    )}
                     {hasMultipleClients && item.clientName && (
                       <span className="text-slate-400 shrink-0">({item.clientName})</span>
                     )}

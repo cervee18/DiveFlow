@@ -17,7 +17,7 @@ export interface ReceiptData {
   clientEmail: string | null;
   issuedAt: string;
   visitContext: string | null;
-  allItems: { name: string; price: number; clientName: string | null }[];
+  allItems: { name: string; price: number; clientName: string | null; discountPct?: number }[];
   methodTotals: Record<string, number>;
   subtotal: number;
   totalPaid: number;
@@ -44,7 +44,7 @@ export async function fetchReceiptData(invoiceId: string, supabase: SupabaseClie
     : { data: null };
 
   let visitContext: string | null = null;
-  let automatedItems: { clientName: string; name: string; price: number; waived: boolean }[] = [];
+  let automatedItems: { clientName: string; name: string; price: number; waived: boolean; discountPct?: number }[] = [];
 
   if (invoice.visit_id) {
     const { data: visit } = await supabase
@@ -59,7 +59,12 @@ export async function fetchReceiptData(invoiceId: string, supabase: SupabaseClie
     if (payload?.clients) {
       for (const [, member] of Object.entries(payload.clients as Record<string, any>)) {
         for (const item of (member as any).automated_items ?? []) {
-          automatedItems.push({ clientName: (member as any).client_name, name: item.name, price: Number(item.price), waived: !!item.waived });
+          const base = Number(item.base_price ?? item.price);
+          const price = Number(item.price);
+          const discountPct = base > price && base > 0
+            ? Math.round((1 - price / base) * 10000) / 100
+            : undefined;
+          automatedItems.push({ clientName: (member as any).client_name, name: item.name, price, waived: !!item.waived, discountPct });
         }
       }
     }
@@ -67,14 +72,22 @@ export async function fetchReceiptData(invoiceId: string, supabase: SupabaseClie
 
   const { data: rawItems } = await supabase
     .from('pos_invoice_items')
-    .select('quantity, unit_price, pos_products(name), client_id, clients(first_name, last_name)')
+    .select('quantity, unit_price, pos_products(name, price), client_id, clients(first_name, last_name)')
     .eq('invoice_id', invoiceId);
 
-  const manualItems = (rawItems ?? []).map((i: any) => ({
-    name: i.pos_products?.name ?? 'Item',
-    price: Number(i.unit_price) * Number(i.quantity),
-    clientName: i.clients ? `${i.clients.first_name} ${i.clients.last_name}` : null,
-  }));
+  const manualItems = (rawItems ?? []).map((i: any) => {
+    const catalogPrice = Number(i.pos_products?.price ?? i.unit_price);
+    const unitPrice = Number(i.unit_price);
+    const discountPct = catalogPrice > unitPrice && catalogPrice > 0
+      ? Math.round((1 - unitPrice / catalogPrice) * 10000) / 100
+      : undefined;
+    return {
+      name: i.pos_products?.name ?? 'Item',
+      price: unitPrice * Number(i.quantity),
+      clientName: i.clients ? `${i.clients.first_name} ${i.clients.last_name}` : null,
+      discountPct,
+    };
+  });
 
   const { data: rawPayments } = await supabase
     .from('pos_payments')
@@ -95,7 +108,7 @@ export async function fetchReceiptData(invoiceId: string, supabase: SupabaseClie
   }
 
   const allItems = [
-    ...automatedItems.filter(i => !i.waived).map(i => ({ name: i.name, price: i.price, clientName: i.clientName })),
+    ...automatedItems.filter(i => !i.waived).map(i => ({ name: i.name, price: i.price, clientName: i.clientName, discountPct: i.discountPct })),
     ...manualItems,
   ];
 
@@ -123,11 +136,16 @@ export function buildReceiptHtml(data: ReceiptData): string {
 
   const multipleClients = new Set(allItems.map(i => i.clientName).filter(Boolean)).size > 1;
 
-  const itemRowsHtml = allItems.map(item => `
+  const itemRowsHtml = allItems.map(item => {
+    const discountLabel = item.discountPct && item.discountPct > 0
+      ? ` <span class="item-discount">-${item.discountPct % 1 === 0 ? item.discountPct : item.discountPct.toFixed(1)}%</span>`
+      : '';
+    return `
     <tr>
-      <td class="item-name">${item.name}${multipleClients && item.clientName ? ` <span class="item-client">(${item.clientName})</span>` : ''}</td>
+      <td class="item-name">${item.name}${discountLabel}${multipleClients && item.clientName ? ` <span class="item-client">(${item.clientName})</span>` : ''}</td>
       <td class="item-price">${fmtMoney(item.price)}</td>
-    </tr>`).join('');
+    </tr>`;
+  }).join('');
 
   const paymentRowsHtml = Object.entries(methodTotals).map(([method, amount]) => `
     <tr>
@@ -159,6 +177,7 @@ export function buildReceiptHtml(data: ReceiptData): string {
     table { width: 100%; border-collapse: collapse; }
     .item-name { color: #334155; padding: 1mm 0; }
     .item-client { font-size: 9px; color: #94a3b8; }
+    .item-discount { font-size: 9px; font-weight: 700; color: #b45309; background: #fffbeb; border: 0.5px solid #fcd34d; border-radius: 3px; padding: 0 2px; margin-left: 2px; }
     .item-price { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; padding: 1mm 0; color: #334155; }
     .totals-row td { padding: 1mm 0; }
     .totals-label { color: #64748b; }

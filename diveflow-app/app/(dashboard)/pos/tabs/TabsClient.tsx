@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useTransition, useMemo, useRef, useEffect } from 'react';
-import { searchClients, getClientTabData, payClientFullTab, voidPayment, recordDeposit, voidDeposit, toggleItemWaiver, deleteInvoiceItem } from './actions';
+import { searchClients, getClientTabData, payClientFullTab, voidPayment, recordDeposit, voidDeposit, toggleItemWaiver, deleteInvoiceItem, updateInvoiceItem, setAutoItemPriceOverride } from './actions';
 import { addManualItem } from '../sell/actions';
 import { SectionLabel, EmptyState, fmtMoney } from './components/helpers';
 import { type Client, type VisitSelection } from './components/types';
@@ -12,6 +12,7 @@ import TransactionHistoryCard, { type HistoryEntry, type PaymentRow } from './co
 import PayModal from './components/PayModal';
 import VoidModal from './components/VoidModal';
 import DepositModal from './components/DepositModal';
+import EditItemModal from './components/EditItemModal';
 import TripDrawer from '../../components/TripDrawer';
 
 export default function TabsClient({ initialClient, products }: { initialClient?: { id: string; name: string } | null; products: any[] }) {
@@ -48,6 +49,11 @@ export default function TabsClient({ initialClient, products }: { initialClient?
 
   // Trip drawer
   const [drawerTripId, setDrawerTripId] = useState<string | null>(null);
+
+  // Edit item modal (manual)
+  const [editTarget, setEditTarget] = useState<{ id: string; name: string; price: number; qty: number } | null>(null);
+  // Edit auto item modal
+  const [editAutoTarget, setEditAutoTarget] = useState<{ visitId: string; clientId: string; itemKey: string; name: string; price: number; basePrice: number } | null>(null);
 
   // Void deposit modal
   const [voidDepositTarget, setVoidDepositTarget] = useState<{ id: string; amount: number; method: string } | null>(null);
@@ -272,6 +278,28 @@ export default function TabsClient({ initialClient, products }: { initialClient?
     await refreshTab(true);
   };
 
+  const handleEditItem = (unitPrice: number, qty: number) => {
+    if (!editTarget) return;
+    startTransition(async () => {
+      await updateInvoiceItem(editTarget.id, unitPrice, qty);
+      setEditTarget(null);
+      await refreshTab(true);
+    });
+  };
+
+  const handleEditAutoItem = (visitId: string, clientId: string, item: { itemKey: string; name: string; price: number; basePrice: number }) => {
+    setEditAutoTarget({ visitId, clientId, ...item });
+  };
+
+  const confirmEditAutoItem = (_id: string, unitPrice: number, _qty: number) => {
+    if (!editAutoTarget) return;
+    startTransition(async () => {
+      await setAutoItemPriceOverride(editAutoTarget.visitId, editAutoTarget.clientId, editAutoTarget.itemKey, unitPrice);
+      setEditAutoTarget(null);
+      await refreshTab(true);
+    });
+  };
+
   return (
     <div className="flex gap-6 h-full overflow-hidden">
 
@@ -362,6 +390,8 @@ export default function TabsClient({ initialClient, products }: { initialClient?
                         onAddItem={handleAddItem}
                         onWaiveItem={handleWaiveItem}
                         onDeleteItem={handleDeleteItem}
+                        onEditItem={setEditTarget}
+                        onEditAutoItem={handleEditAutoItem}
                         onOpenTrip={setDrawerTripId}
                       />
                     ))}
@@ -528,6 +558,26 @@ export default function TabsClient({ initialClient, products }: { initialClient?
           onReasonChange={setVoidDepositReason}
           onConfirm={confirmVoidDeposit}
           onClose={() => setVoidDepositTarget(null)}
+        />
+      )}
+
+      {editTarget && (
+        <EditItemModal
+          item={editTarget}
+          mode="manual"
+          isPending={isPending}
+          onConfirm={(_id, unitPrice, qty) => handleEditItem(unitPrice, qty)}
+          onClose={() => setEditTarget(null)}
+        />
+      )}
+
+      {editAutoTarget && (
+        <EditItemModal
+          item={{ id: editAutoTarget.itemKey, name: editAutoTarget.name, price: editAutoTarget.price, qty: 1, basePrice: editAutoTarget.basePrice }}
+          mode="auto"
+          isPending={isPending}
+          onConfirm={confirmEditAutoItem}
+          onClose={() => setEditAutoTarget(null)}
         />
       )}
 

@@ -219,18 +219,28 @@ export async function getClientTabData(clientId: string) {
     // Resolve items + context from visit payload or standalone invoice
     const fmt = (d: string) => new Date(d + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
     let context: string | null = null;
-    let items: { name: string; price: number; clientName: string | null }[] = [];
+    let items: { name: string; price: number; clientName: string | null; discountPct?: number }[] = [];
 
     const visitPayload = visitPayloads.find(v => v.payload.invoice_id === invoiceId);
     if (visitPayload) {
       const clients = visitPayload.payload.clients ?? {};
       items = Object.values(clients).flatMap((c: any) => [
-        ...(c.automated_items ?? []).map((i: any) => ({
-          name: i.name, price: Number(i.price), clientName: c.client_name as string,
-        })),
-        ...(c.manual_items ?? []).map((i: any) => ({
-          name: i.name, price: Number(i.price) * (i.qty ?? 1), clientName: c.client_name as string,
-        })),
+        ...(c.automated_items ?? []).map((i: any) => {
+          const base = Number(i.base_price ?? i.price);
+          const price = Number(i.price);
+          const discountPct = base > price && base > 0
+            ? Math.round((1 - price / base) * 10000) / 100
+            : undefined;
+          return { name: i.name, price, clientName: c.client_name as string, discountPct };
+        }),
+        ...(c.manual_items ?? []).map((i: any) => {
+          const base = Number(i.base_price ?? i.price);
+          const unit = Number(i.price);
+          const discountPct = base > unit && base > 0
+            ? Math.round((1 - unit / base) * 10000) / 100
+            : undefined;
+          return { name: i.name, price: unit * (i.qty ?? 1), clientName: c.client_name as string, discountPct };
+        }),
       ]);
       context = `${fmt(visitPayload.startDate)} – ${fmt(visitPayload.endDate)}`;
     } else {
@@ -584,6 +594,39 @@ export async function deleteInvoiceItem(invoiceItemId: string) {
   const { error } = await supabase
     .from('pos_invoice_items')
     .delete()
+    .eq('id', invoiceItemId);
+
+  if (error) return { error: error.message };
+  revalidatePath('/pos/tabs');
+  return { success: true };
+}
+
+export async function setAutoItemPriceOverride(visitId: string, clientId: string, itemKey: string, price: number) {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { error: 'Unauthorized' };
+
+  if (price < 0) return { error: 'Price cannot be negative.' };
+
+  const { error } = await supabase
+    .from('pos_auto_item_price_overrides')
+    .upsert({ visit_id: visitId, client_id: clientId, item_key: itemKey, price: Math.round(price * 100) / 100 });
+
+  if (error) return { error: error.message };
+  revalidatePath('/pos/tabs');
+  return { success: true };
+}
+
+export async function updateInvoiceItem(invoiceItemId: string, unitPrice: number, qty: number) {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { error: 'Unauthorized' };
+
+  if (unitPrice < 0 || qty < 1) return { error: 'Invalid price or quantity.' };
+
+  const { error } = await supabase
+    .from('pos_invoice_items')
+    .update({ unit_price: Math.round(unitPrice * 100) / 100, quantity: qty })
     .eq('id', invoiceItemId);
 
   if (error) return { error: error.message };
