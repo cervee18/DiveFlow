@@ -5,7 +5,9 @@ import { useRouter } from 'next/navigation';
 import { createClient } from '@/utils/supabase/client';
 
 const TIMEOUT_MS = 10 * 60 * 1000;
-/*const TIMEOUT_MS = 5000; /*debug*/
+
+const SS_LOCKED        = 'pos_locked';
+const SS_LAST_ACTIVITY = 'pos_last_activity';
 
 export default function POSInactivityGuard({
   children,
@@ -15,43 +17,63 @@ export default function POSInactivityGuard({
   userEmail: string;
 }) {
   const router = useRouter();
-  const [locked, setLocked]   = useState(false);
+  const [locked, setLocked]     = useState(false);
   const [password, setPassword] = useState('');
-  const [error, setError]     = useState('');
-  const [loading, setLoading] = useState(false);
-  const timerRef              = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [error, setError]       = useState('');
+  const [loading, setLoading]   = useState(false);
+  const timerRef                = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const lock = useCallback(() => {
-    sessionStorage.setItem('pos_locked', '1');
+    sessionStorage.setItem(SS_LOCKED, '1');
+    sessionStorage.removeItem(SS_LAST_ACTIVITY);
     setLocked(true);
   }, []);
 
   const unlock = useCallback(() => {
-    sessionStorage.removeItem('pos_locked');
+    sessionStorage.removeItem(SS_LOCKED);
+    sessionStorage.removeItem(SS_LAST_ACTIVITY);
     setLocked(false);
   }, []);
 
   const resetTimer = useCallback(() => {
+    sessionStorage.setItem(SS_LAST_ACTIVITY, String(Date.now()));
     if (timerRef.current) clearTimeout(timerRef.current);
     timerRef.current = setTimeout(lock, TIMEOUT_MS);
   }, [lock]);
 
+  // On mount: check both the explicit lock flag and elapsed time since last activity
   useEffect(() => {
-    if (sessionStorage.getItem('pos_locked') === '1') setLocked(true);
-  }, []);
+    if (sessionStorage.getItem(SS_LOCKED) === '1') {
+      setLocked(true);
+      return;
+    }
+    const last = Number(sessionStorage.getItem(SS_LAST_ACTIVITY) ?? 0);
+    if (last && Date.now() - last >= TIMEOUT_MS) {
+      lock();
+    }
+  }, [lock]);
 
+  // Inactivity timer + visibilitychange check (handles browser timer throttling)
   useEffect(() => {
     if (!locked) resetTimer();
 
     const events = ['mousemove', 'keydown', 'click', 'touchstart'] as const;
-    const handler = () => { if (!locked) resetTimer(); };
-    events.forEach(e => window.addEventListener(e, handler, { passive: true }));
+    const onActivity = () => { if (!locked) resetTimer(); };
+    events.forEach(e => window.addEventListener(e, onActivity, { passive: true }));
+
+    const onVisibility = () => {
+      if (locked || document.visibilityState !== 'visible') return;
+      const last = Number(sessionStorage.getItem(SS_LAST_ACTIVITY) ?? 0);
+      if (last && Date.now() - last >= TIMEOUT_MS) lock();
+    };
+    document.addEventListener('visibilitychange', onVisibility);
 
     return () => {
       if (timerRef.current) clearTimeout(timerRef.current);
-      events.forEach(e => window.removeEventListener(e, handler));
+      events.forEach(e => window.removeEventListener(e, onActivity));
+      document.removeEventListener('visibilitychange', onVisibility);
     };
-  }, [locked, resetTimer]);
+  }, [locked, resetTimer, lock]);
 
   const handleUnlock = async (e: React.FormEvent) => {
     e.preventDefault();
