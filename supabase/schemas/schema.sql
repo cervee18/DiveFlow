@@ -353,10 +353,15 @@ BEGIN
     WHERE  vc.visit_id = p_visit_id
   ),
 
-  -- Pre-load all waivers for this visit so each CTE can check them
   visit_waivers AS (
     SELECT client_id, item_key
     FROM   public.pos_auto_item_waivers
+    WHERE  visit_id = p_visit_id
+  ),
+
+  visit_price_overrides AS (
+    SELECT client_id, item_key, price
+    FROM   public.pos_auto_item_price_overrides
     WHERE  visit_id = p_visit_id
   ),
 
@@ -449,39 +454,47 @@ BEGIN
            jsonb_build_object(
              'item_key',   ctl.item_key,
              'name',       ctl.product_name,
-             'price',      CASE WHEN vw.item_key IS NOT NULL THEN 0 ELSE ctl.effective_price END,
+             'base_price', ctl.effective_price,
+             'price',      CASE WHEN vw.item_key IS NOT NULL THEN 0
+                                ELSE COALESCE(po.price, ctl.effective_price) END,
              'type',       'trip',
              'trip_id',    ctl.trip_id,
              'trip_date',  ctl.start_time,
              'waived',     (vw.item_key IS NOT NULL)
            ) AS item,
-           CASE WHEN vw.item_key IS NOT NULL THEN 0 ELSE ctl.effective_price END AS price_num
+           CASE WHEN vw.item_key IS NOT NULL THEN 0
+                ELSE COALESCE(po.price, ctl.effective_price) END AS price_num
     FROM   client_trips_list ctl
     LEFT   JOIN visit_waivers vw
-           ON  vw.client_id = ctl.client_id
-           AND vw.item_key  = ctl.item_key
+           ON  vw.client_id = ctl.client_id AND vw.item_key = ctl.item_key
+    LEFT   JOIN visit_price_overrides po
+           ON  po.client_id = ctl.client_id AND po.item_key = ctl.item_key
 
     UNION ALL
 
     -- ② Private guide fee
     SELECT tc.client_id,
            jsonb_build_object(
-             'item_key',  'guide:' || t.id::text,
-             'name',      pp.name,
-             'price',     CASE WHEN vw.item_key IS NOT NULL THEN 0 ELSE pp.price END,
-             'type',      'private_guide',
-             'trip_id',   t.id,
-             'trip_date', t.start_time,
-             'waived',    (vw.item_key IS NOT NULL)
+             'item_key',   'guide:' || t.id::text,
+             'name',       pp.name,
+             'base_price', pp.price,
+             'price',      CASE WHEN vw.item_key IS NOT NULL THEN 0
+                                ELSE COALESCE(po.price, pp.price) END,
+             'type',       'private_guide',
+             'trip_id',    t.id,
+             'trip_date',  t.start_time,
+             'waived',     (vw.item_key IS NOT NULL)
            ) AS item,
-           CASE WHEN vw.item_key IS NOT NULL THEN 0 ELSE pp.price END AS price_num
+           CASE WHEN vw.item_key IS NOT NULL THEN 0
+                ELSE COALESCE(po.price, pp.price) END AS price_num
     FROM   public.trip_clients  tc
     JOIN   public.trips         t   ON t.id  = tc.trip_id
     JOIN   public.org_pos_config opc ON opc.organization_id = v_org_id
     JOIN   public.pos_products  pp  ON pp.id = opc.private_instruction_product_id
     LEFT   JOIN visit_waivers   vw
-           ON  vw.client_id = tc.client_id
-           AND vw.item_key  = 'guide:' || t.id::text
+           ON  vw.client_id = tc.client_id AND vw.item_key = 'guide:' || t.id::text
+    LEFT   JOIN visit_price_overrides po
+           ON  po.client_id = tc.client_id AND po.item_key = 'guide:' || t.id::text
     WHERE  tc.client_id IN (SELECT client_id FROM visit_clients_list)
       AND  t.start_time::date BETWEEN v_visit_start AND v_visit_end
       AND  tc.private = true
@@ -491,21 +504,24 @@ BEGIN
     -- ③ Rental uncapped
     SELECT dri.client_id,
            jsonb_build_object(
-             'item_key',  'rental:' || dri.trip_date::text,
-             'name',      dri.name || ' Rental',
-             'price',     CASE WHEN vw.item_key IS NOT NULL THEN 0 ELSE dri.price END,
-             'type',      'rental',
-             'trip_date', dri.trip_date::timestamptz,
-             'waived',    (vw.item_key IS NOT NULL)
+             'item_key',   'rental:' || dri.trip_date::text,
+             'name',       dri.name || ' Rental',
+             'base_price', dri.price,
+             'price',      CASE WHEN vw.item_key IS NOT NULL THEN 0
+                                ELSE COALESCE(po.price, dri.price) END,
+             'type',       'rental',
+             'trip_date',  dri.trip_date::timestamptz,
+             'waived',     (vw.item_key IS NOT NULL)
            ) AS item,
-           CASE WHEN vw.item_key IS NOT NULL THEN 0 ELSE dri.price END AS price_num
+           CASE WHEN vw.item_key IS NOT NULL THEN 0
+                ELSE COALESCE(po.price, dri.price) END AS price_num
     FROM   daily_rental_items dri
     JOIN   daily_rental_totals drt
-           ON  drt.client_id = dri.client_id
-           AND drt.trip_date = dri.trip_date
+           ON  drt.client_id = dri.client_id AND drt.trip_date = dri.trip_date
     LEFT   JOIN visit_waivers vw
-           ON  vw.client_id = dri.client_id
-           AND vw.item_key  = 'rental:' || dri.trip_date::text
+           ON  vw.client_id = dri.client_id AND vw.item_key = 'rental:' || dri.trip_date::text
+    LEFT   JOIN visit_price_overrides po
+           ON  po.client_id = dri.client_id AND po.item_key = 'rental:' || dri.trip_date::text
     WHERE  drt.raw_total <= drt.charged_amount
 
     UNION ALL
@@ -513,18 +529,22 @@ BEGIN
     -- ④ Rental capped
     SELECT drt.client_id,
            jsonb_build_object(
-             'item_key',  'rental:' || drt.trip_date::text,
-             'name',      'Full Rental Gear',
-             'price',     CASE WHEN vw.item_key IS NOT NULL THEN 0 ELSE drt.charged_amount END,
-             'type',      'rental',
-             'trip_date', drt.trip_date::timestamptz,
-             'waived',    (vw.item_key IS NOT NULL)
+             'item_key',   'rental:' || drt.trip_date::text,
+             'name',       'Full Rental Gear',
+             'base_price', drt.charged_amount,
+             'price',      CASE WHEN vw.item_key IS NOT NULL THEN 0
+                                ELSE COALESCE(po.price, drt.charged_amount) END,
+             'type',       'rental',
+             'trip_date',  drt.trip_date::timestamptz,
+             'waived',     (vw.item_key IS NOT NULL)
            ) AS item,
-           CASE WHEN vw.item_key IS NOT NULL THEN 0 ELSE drt.charged_amount END AS price_num
+           CASE WHEN vw.item_key IS NOT NULL THEN 0
+                ELSE COALESCE(po.price, drt.charged_amount) END AS price_num
     FROM   daily_rental_totals drt
     LEFT   JOIN visit_waivers vw
-           ON  vw.client_id = drt.client_id
-           AND vw.item_key  = 'rental:' || drt.trip_date::text
+           ON  vw.client_id = drt.client_id AND vw.item_key = 'rental:' || drt.trip_date::text
+    LEFT   JOIN visit_price_overrides po
+           ON  po.client_id = drt.client_id AND po.item_key = 'rental:' || drt.trip_date::text
     WHERE  drt.raw_total > drt.charged_amount
   ),
 
@@ -541,10 +561,11 @@ BEGIN
            ) AS auto_subtotal,
            COALESCE(
              (SELECT jsonb_agg(jsonb_build_object(
-                       'item_id', pii.id,
-                       'name',    pp.name,
-                       'price',   pii.unit_price,
-                       'qty',     pii.quantity))
+                       'item_id',    pii.id,
+                       'name',       pp.name,
+                       'price',      pii.unit_price,
+                       'base_price', pp.price,
+                       'qty',        pii.quantity))
               FROM   public.pos_invoice_items pii
               JOIN   public.pos_products pp ON pp.id = pii.pos_product_id
               WHERE  pii.invoice_id = v_invoice_id AND pii.client_id = vcl.client_id),
@@ -1848,7 +1869,9 @@ CREATE TABLE IF NOT EXISTS "public"."clients" (
     "organization_id" "uuid" NOT NULL,
     "location_id" "uuid",
     "client_number" bigint NOT NULL,
-    "requires_visit" boolean DEFAULT true NOT NULL
+    "requires_visit" boolean DEFAULT true NOT NULL,
+    "emergency_contact_name" "text",
+    "emergency_contact_phone" "text"
 );
 
 
@@ -2029,6 +2052,32 @@ CREATE TABLE IF NOT EXISTS "public"."organizations" (
 ALTER TABLE "public"."organizations" OWNER TO "postgres";
 
 
+CREATE TABLE IF NOT EXISTS "public"."pos_audit_log" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "organization_id" "uuid" NOT NULL,
+    "actor_email" "text",
+    "action" "text" NOT NULL,
+    "client_id" "uuid",
+    "metadata" "jsonb" DEFAULT '{}'::"jsonb" NOT NULL,
+    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL
+);
+
+
+ALTER TABLE "public"."pos_audit_log" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."pos_auto_item_price_overrides" (
+    "visit_id" "uuid" NOT NULL,
+    "client_id" "uuid" NOT NULL,
+    "item_key" "text" NOT NULL,
+    "price" numeric(10,2) NOT NULL,
+    CONSTRAINT "pos_auto_item_price_overrides_price_check" CHECK (("price" >= (0)::numeric))
+);
+
+
+ALTER TABLE "public"."pos_auto_item_price_overrides" OWNER TO "postgres";
+
+
 CREATE TABLE IF NOT EXISTS "public"."pos_auto_item_waivers" (
     "visit_id" "uuid" NOT NULL,
     "client_id" "uuid" NOT NULL,
@@ -2157,6 +2206,20 @@ CREATE TABLE IF NOT EXISTS "public"."pos_rental_mappings" (
 
 
 ALTER TABLE "public"."pos_rental_mappings" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."pos_sessions" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "organization_id" "uuid" NOT NULL,
+    "opened_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    "opened_by_email" "text",
+    "opening_cash" numeric(10,2) DEFAULT 0 NOT NULL,
+    "closed_at" timestamp with time zone,
+    "closed_by_email" "text"
+);
+
+
+ALTER TABLE "public"."pos_sessions" OWNER TO "postgres";
 
 
 CREATE TABLE IF NOT EXISTS "public"."pos_transactions" (
@@ -2602,6 +2665,16 @@ ALTER TABLE ONLY "public"."organizations"
 
 
 
+ALTER TABLE ONLY "public"."pos_audit_log"
+    ADD CONSTRAINT "pos_audit_log_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."pos_auto_item_price_overrides"
+    ADD CONSTRAINT "pos_auto_item_price_overrides_pkey" PRIMARY KEY ("visit_id", "client_id", "item_key");
+
+
+
 ALTER TABLE ONLY "public"."pos_auto_item_waivers"
     ADD CONSTRAINT "pos_auto_item_waivers_pkey" PRIMARY KEY ("visit_id", "client_id", "item_key");
 
@@ -2654,6 +2727,11 @@ ALTER TABLE ONLY "public"."pos_rental_mappings"
 
 ALTER TABLE ONLY "public"."pos_rental_mappings"
     ADD CONSTRAINT "pos_rental_mappings_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."pos_sessions"
+    ADD CONSTRAINT "pos_sessions_pkey" PRIMARY KEY ("id");
 
 
 
@@ -3066,6 +3144,14 @@ CREATE INDEX "idx_visits_start_date" ON "public"."visits" USING "btree" ("start_
 
 
 
+CREATE INDEX "pos_audit_log_org_time" ON "public"."pos_audit_log" USING "btree" ("organization_id", "created_at" DESC);
+
+
+
+CREATE INDEX "pos_sessions_org_open_idx" ON "public"."pos_sessions" USING "btree" ("organization_id", "opened_at" DESC) WHERE ("closed_at" IS NULL);
+
+
+
 CREATE UNIQUE INDEX "trip_staff_activity_unique" ON "public"."trip_staff" USING "btree" ("trip_id", "staff_id", "activity_id") WHERE ("activity_id" IS NOT NULL);
 
 
@@ -3305,6 +3391,26 @@ ALTER TABLE ONLY "public"."org_pos_config"
 
 
 
+ALTER TABLE ONLY "public"."pos_audit_log"
+    ADD CONSTRAINT "pos_audit_log_client_id_fkey" FOREIGN KEY ("client_id") REFERENCES "public"."clients"("id") ON DELETE SET NULL;
+
+
+
+ALTER TABLE ONLY "public"."pos_audit_log"
+    ADD CONSTRAINT "pos_audit_log_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "public"."organizations"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."pos_auto_item_price_overrides"
+    ADD CONSTRAINT "pos_auto_item_price_overrides_client_id_fkey" FOREIGN KEY ("client_id") REFERENCES "public"."clients"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."pos_auto_item_price_overrides"
+    ADD CONSTRAINT "pos_auto_item_price_overrides_visit_id_fkey" FOREIGN KEY ("visit_id") REFERENCES "public"."visits"("id") ON DELETE CASCADE;
+
+
+
 ALTER TABLE ONLY "public"."pos_auto_item_waivers"
     ADD CONSTRAINT "pos_auto_item_waivers_client_id_fkey" FOREIGN KEY ("client_id") REFERENCES "public"."clients"("id") ON DELETE CASCADE;
 
@@ -3427,6 +3533,11 @@ ALTER TABLE ONLY "public"."pos_rental_mappings"
 
 ALTER TABLE ONLY "public"."pos_rental_mappings"
     ADD CONSTRAINT "pos_rental_mappings_pos_product_id_fkey" FOREIGN KEY ("pos_product_id") REFERENCES "public"."pos_products"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."pos_sessions"
+    ADD CONSTRAINT "pos_sessions_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "public"."organizations"("id") ON DELETE CASCADE;
 
 
 
@@ -3845,6 +3956,14 @@ CREATE POLICY "org admins manage pos_transactions" ON "public"."pos_transactions
 
 
 
+CREATE POLICY "org members can manage auto item price overrides" ON "public"."pos_auto_item_price_overrides" USING ((EXISTS ( SELECT 1
+   FROM "public"."visits" "v"
+  WHERE (("v"."id" = "pos_auto_item_price_overrides"."visit_id") AND ("v"."organization_id" = "public"."my_org_id"()))))) WITH CHECK ((EXISTS ( SELECT 1
+   FROM "public"."visits" "v"
+  WHERE (("v"."id" = "pos_auto_item_price_overrides"."visit_id") AND ("v"."organization_id" = "public"."my_org_id"())))));
+
+
+
 CREATE POLICY "org members can manage custom job cards" ON "public"."staff_custom_job_card" TO "authenticated" USING (("organization_id" IN ( SELECT "profiles"."organization_id"
    FROM "public"."profiles"
   WHERE ("profiles"."id" = "auth"."uid"())))) WITH CHECK (("organization_id" IN ( SELECT "profiles"."organization_id"
@@ -3874,6 +3993,10 @@ CREATE POLICY "org members can manage pos_parked_cart_items" ON "public"."pos_pa
 
 
 CREATE POLICY "org members can manage pos_parked_carts" ON "public"."pos_parked_carts" USING (("organization_id" = "public"."my_org_id"()));
+
+
+
+CREATE POLICY "org members can manage their sessions" ON "public"."pos_sessions" USING (("organization_id" = "public"."my_org_id"())) WITH CHECK (("organization_id" = "public"."my_org_id"()));
 
 
 
@@ -3935,6 +4058,24 @@ CREATE POLICY "organizations: update own" ON "public"."organizations" FOR UPDATE
 
 
 
+ALTER TABLE "public"."pos_audit_log" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "pos_audit_org_insert" ON "public"."pos_audit_log" FOR INSERT WITH CHECK (("organization_id" IN ( SELECT "profiles"."organization_id"
+   FROM "public"."profiles"
+  WHERE ("profiles"."id" = "auth"."uid"()))));
+
+
+
+CREATE POLICY "pos_audit_org_read" ON "public"."pos_audit_log" FOR SELECT USING (("organization_id" IN ( SELECT "profiles"."organization_id"
+   FROM "public"."profiles"
+  WHERE ("profiles"."id" = "auth"."uid"()))));
+
+
+
+ALTER TABLE "public"."pos_auto_item_price_overrides" ENABLE ROW LEVEL SECURITY;
+
+
 ALTER TABLE "public"."pos_auto_item_waivers" ENABLE ROW LEVEL SECURITY;
 
 
@@ -3960,6 +4101,9 @@ ALTER TABLE "public"."pos_products" ENABLE ROW LEVEL SECURITY;
 
 
 ALTER TABLE "public"."pos_rental_mappings" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."pos_sessions" ENABLE ROW LEVEL SECURITY;
 
 
 ALTER TABLE "public"."pos_transactions" ENABLE ROW LEVEL SECURITY;
@@ -4483,6 +4627,18 @@ GRANT ALL ON TABLE "public"."organizations" TO "service_role";
 
 
 
+GRANT ALL ON TABLE "public"."pos_audit_log" TO "anon";
+GRANT ALL ON TABLE "public"."pos_audit_log" TO "authenticated";
+GRANT ALL ON TABLE "public"."pos_audit_log" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."pos_auto_item_price_overrides" TO "anon";
+GRANT ALL ON TABLE "public"."pos_auto_item_price_overrides" TO "authenticated";
+GRANT ALL ON TABLE "public"."pos_auto_item_price_overrides" TO "service_role";
+
+
+
 GRANT ALL ON TABLE "public"."pos_auto_item_waivers" TO "anon";
 GRANT ALL ON TABLE "public"."pos_auto_item_waivers" TO "authenticated";
 GRANT ALL ON TABLE "public"."pos_auto_item_waivers" TO "service_role";
@@ -4534,6 +4690,12 @@ GRANT ALL ON TABLE "public"."pos_products" TO "service_role";
 GRANT ALL ON TABLE "public"."pos_rental_mappings" TO "anon";
 GRANT ALL ON TABLE "public"."pos_rental_mappings" TO "authenticated";
 GRANT ALL ON TABLE "public"."pos_rental_mappings" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."pos_sessions" TO "anon";
+GRANT ALL ON TABLE "public"."pos_sessions" TO "authenticated";
+GRANT ALL ON TABLE "public"."pos_sessions" TO "service_role";
 
 
 
