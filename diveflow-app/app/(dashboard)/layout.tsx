@@ -4,7 +4,9 @@ import { getAuthContext, isStaff, isAdmin } from "@/utils/auth";
 import { createClient } from "@/utils/supabase/server";
 import MobileNav        from "@/app/(dashboard)/components/MobileNav";
 import SidebarNav       from "@/app/(dashboard)/components/SidebarNav";
+import SubNavBar        from "@/app/(dashboard)/components/SubNavBar";
 import { OrgSettingsProvider, type OrgSettings } from "@/app/(dashboard)/components/OrgSettingsContext";
+import { getOpenSession } from "@/utils/pos-session";
 
 // Routes that require staff-level access (non-clients)
 const STAFF_ONLY_PATHS = ['/overview', '/clients', '/trips', '/staff'];
@@ -33,7 +35,7 @@ export default async function DashboardLayout({
   const supabase = await createClient();
   const { data: profileData } = await supabase
     .from('profiles')
-    .select('organizations ( unit_system, currency )')
+    .select('organization_id, organizations ( unit_system, currency )')
     .eq('id', user.id)
     .single();
 
@@ -43,6 +45,10 @@ export default async function DashboardLayout({
     currency:   org.currency ?? 'EUR',
   };
 
+  const orgId = profileData?.organization_id as string | undefined;
+  const openSession = orgId ? await getOpenSession(orgId, supabase) : null;
+  const isPOSOpen = !!openSession;
+
   return (
     <OrgSettingsProvider settings={orgSettings}>
       <div className="min-h-screen flex bg-slate-50">
@@ -50,10 +56,12 @@ export default async function DashboardLayout({
           isStaff={isStaff(role)}
           isAdmin={isAdmin(role)}
           userEmail={user.email ?? ''}
+          isPOSOpen={isPOSOpen}
         />
 
         {/* Main Content Area */}
         <div className="flex-1 flex flex-col min-w-0">
+          <SubNavBar isPOSOpen={isPOSOpen} />
           <main className="flex-1 pb-16 md:pb-0">
             {children}
           </main>

@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useTransition, useMemo, useRef, useEffect } from 'react';
-import { searchClients, getClientTabData, payClientFullTab, voidPayment, recordDeposit, voidDeposit, toggleItemWaiver, deleteInvoiceItem } from './actions';
+import { searchClients, getClientTabData, payClientFullTab, voidPayment, recordDeposit, voidDeposit, toggleItemWaiver, deleteInvoiceItem, updateInvoiceItem, setAutoItemPriceOverride } from './actions';
 import { addManualItem } from '../sell/actions';
 import { SectionLabel, EmptyState, fmtMoney } from './components/helpers';
 import { type Client, type VisitSelection } from './components/types';
@@ -12,8 +12,10 @@ import TransactionHistoryCard, { type HistoryEntry, type PaymentRow } from './co
 import PayModal from './components/PayModal';
 import VoidModal from './components/VoidModal';
 import DepositModal from './components/DepositModal';
+import EditItemModal from './components/EditItemModal';
+import TripDrawer from '../../components/TripDrawer';
 
-export default function TabsClient({ initialClient, products }: { initialClient?: { id: string; name: string } | null; products: any[] }) {
+export default function TabsClient({ initialClient, products, isSessionOpen }: { initialClient?: { id: string; name: string } | null; products: any[]; isSessionOpen: boolean }) {
   const [isPending, startTransition] = useTransition();
 
   // Client search
@@ -44,6 +46,14 @@ export default function TabsClient({ initialClient, products }: { initialClient?
   const [depositAmount, setDepositAmount] = useState('');
   const [depositNote, setDepositNote] = useState('');
   const [depositError, setDepositError] = useState('');
+
+  // Trip drawer
+  const [drawerTripId, setDrawerTripId] = useState<string | null>(null);
+
+  // Edit item modal (manual)
+  const [editTarget, setEditTarget] = useState<{ id: string; name: string; price: number; qty: number } | null>(null);
+  // Edit auto item modal
+  const [editAutoTarget, setEditAutoTarget] = useState<{ visitId: string; clientId: string; itemKey: string; name: string; price: number; basePrice: number } | null>(null);
 
   // Void deposit modal
   const [voidDepositTarget, setVoidDepositTarget] = useState<{ id: string; amount: number; method: string } | null>(null);
@@ -155,6 +165,23 @@ export default function TabsClient({ initialClient, products }: { initialClient?
     });
   };
 
+  const openReceipt = (invoiceId: string) => {
+    const win = window.open(`/api/pos-receipt?invoiceId=${invoiceId}`, '_blank');
+    if (win) win.focus();
+  };
+
+  const emailReceipt = async (invoiceId: string) => {
+    const res = await fetch('/api/pos-receipt/email', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ invoiceId }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error ?? 'Failed to send email');
+    }
+  };
+
   const confirmPayment = (splits: Array<{ amount: number; method: string }>) => {
     setPayError('');
     const visitSources = Object.values(visitsSelection).filter(v => v.balance > 0 && v.members.length > 0);
@@ -181,11 +208,12 @@ export default function TabsClient({ initialClient, products }: { initialClient?
       setIsPayModalOpen(false);
       setSelectedStandaloneIds(new Set());
       await refreshTab();
+      for (const id of res.invoiceIds ?? []) openReceipt(id);
     });
   };
 
   const openVoidModal = (row: PaymentRow) => {
-    setVoidTarget({ ids: row.ids, amount: row.amount, method: row.method });
+    setVoidTarget({ ids: row.ids, amount: row.amount, method: row.splits.map(s => s.method).join(' + ') });
     setVoidReason('');
     setVoidError('');
   };
@@ -240,14 +268,36 @@ export default function TabsClient({ initialClient, products }: { initialClient?
     await refreshTab(true);
   };
 
-  const handleWaiveItem = async (visitId: string, clientId: string, itemKey: string, waived: boolean) => {
-    await toggleItemWaiver(visitId, clientId, itemKey, waived);
+  const handleWaiveItem = async (visitId: string, clientId: string, itemKey: string, waived: boolean, itemName?: string) => {
+    await toggleItemWaiver(visitId, clientId, itemKey, waived, itemName);
     await refreshTab(true);
   };
 
   const handleDeleteItem = async (invoiceItemId: string) => {
     await deleteInvoiceItem(invoiceItemId);
     await refreshTab(true);
+  };
+
+  const handleEditItem = (unitPrice: number, qty: number) => {
+    if (!editTarget) return;
+    startTransition(async () => {
+      await updateInvoiceItem(editTarget.id, unitPrice, qty);
+      setEditTarget(null);
+      await refreshTab(true);
+    });
+  };
+
+  const handleEditAutoItem = (visitId: string, clientId: string, item: { itemKey: string; name: string; price: number; basePrice: number }) => {
+    setEditAutoTarget({ visitId, clientId, ...item });
+  };
+
+  const confirmEditAutoItem = (_id: string, unitPrice: number, _qty: number) => {
+    if (!editAutoTarget) return;
+    startTransition(async () => {
+      await setAutoItemPriceOverride(editAutoTarget.visitId, editAutoTarget.clientId, editAutoTarget.itemKey, unitPrice, editAutoTarget.name);
+      setEditAutoTarget(null);
+      await refreshTab(true);
+    });
   };
 
   return (
@@ -340,6 +390,9 @@ export default function TabsClient({ initialClient, products }: { initialClient?
                         onAddItem={handleAddItem}
                         onWaiveItem={handleWaiveItem}
                         onDeleteItem={handleDeleteItem}
+                        onEditItem={setEditTarget}
+                        onEditAutoItem={handleEditAutoItem}
+                        onOpenTrip={setDrawerTripId}
                       />
                     ))}
                   </div>
@@ -356,6 +409,8 @@ export default function TabsClient({ initialClient, products }: { initialClient?
                         invoice={inv}
                         isSelected={selectedStandaloneIds.has(inv.invoiceId)}
                         onToggle={toggleStandalone}
+                        onEditItem={setEditTarget}
+                        onDeleteItem={handleDeleteItem}
                       />
                     ))}
                   </div>
@@ -416,6 +471,8 @@ export default function TabsClient({ initialClient, products }: { initialClient?
                         key={idx}
                         entry={entry}
                         onVoid={openVoidModal}
+                        onReceipt={openReceipt}
+                        onEmailReceipt={emailReceipt}
                       />
                     ))}
                   </div>
@@ -426,6 +483,15 @@ export default function TabsClient({ initialClient, products }: { initialClient?
         </div>
 
         {/* Sticky payment footer */}
+        {!isSessionOpen && selectedClient && tabData && (
+          <div className="shrink-0 mt-3 flex items-center gap-2.5 px-4 py-2.5 bg-rose-50 border border-rose-200 rounded-xl text-rose-700 text-xs font-semibold">
+            <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+            </svg>
+            POS is closed — go to Open / Close to start a new session before processing payments.
+          </div>
+        )}
+
         {selectedClient && tabData && grandTotal > 0 && (
           <div className="shrink-0 mt-3 bg-white border border-slate-200 rounded-xl shadow-[0_-4px_12px_-2px_rgba(0,0,0,0.08)] px-6 py-4 flex items-center justify-between gap-4">
             <div>
@@ -440,8 +506,9 @@ export default function TabsClient({ initialClient, products }: { initialClient?
             </div>
             <button
               onClick={openPayModal}
-              disabled={isPending}
-              className="flex items-center gap-2 px-6 py-3 bg-emerald-500 hover:bg-emerald-600 text-white font-bold rounded-xl shadow-md disabled:opacity-50 transition-colors text-sm"
+              disabled={isPending || !isSessionOpen}
+              title={!isSessionOpen ? 'Open the POS before processing payments' : undefined}
+              className="flex items-center gap-2 px-6 py-3 bg-emerald-500 hover:bg-emerald-600 text-white font-bold rounded-xl shadow-md disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm"
             >
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 8.25h19.5M2.25 9h19.5m-16.5 5.25h6m-6 2.25h3m-3.75 3h15a2.25 2.25 0 002.25-2.25V6.75A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25v10.5A2.25 2.25 0 004.5 19.5z" />
@@ -505,6 +572,32 @@ export default function TabsClient({ initialClient, products }: { initialClient?
           onClose={() => setVoidDepositTarget(null)}
         />
       )}
+
+      {editTarget && (
+        <EditItemModal
+          item={editTarget}
+          mode="manual"
+          isPending={isPending}
+          onConfirm={(_id, unitPrice, qty) => handleEditItem(unitPrice, qty)}
+          onClose={() => setEditTarget(null)}
+        />
+      )}
+
+      {editAutoTarget && (
+        <EditItemModal
+          item={{ id: editAutoTarget.itemKey, name: editAutoTarget.name, price: editAutoTarget.price, qty: 1, basePrice: editAutoTarget.basePrice }}
+          mode="auto"
+          isPending={isPending}
+          onConfirm={confirmEditAutoItem}
+          onClose={() => setEditAutoTarget(null)}
+        />
+      )}
+
+      <TripDrawer
+        isOpen={drawerTripId !== null}
+        tripId={drawerTripId}
+        onClose={() => setDrawerTripId(null)}
+      />
     </div>
   );
 }

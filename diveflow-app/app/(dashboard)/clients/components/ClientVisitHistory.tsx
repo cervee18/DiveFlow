@@ -35,6 +35,8 @@ export default function ClientVisitHistory({
 
   const [isFetchingSummary, setIsFetchingSummary] = useState(false);
   const [summaryError, setSummaryError] = useState<string[] | null>(null);
+  const [isEmailingSummary, setIsEmailingSummary] = useState(false);
+  const [emailFeedback, setEmailFeedback] = useState<'sent' | 'error' | null>(null);
 
   const handlePrintSummary = async () => {
     setSummaryError(null);
@@ -55,6 +57,30 @@ export default function ClientVisitHistory({
       if (win) { win.document.write(html); win.document.close(); }
     } finally {
       setIsFetchingSummary(false);
+    }
+  };
+
+  const handleEmailSummary = async () => {
+    setSummaryError(null);
+    setEmailFeedback(null);
+    setIsEmailingSummary(true);
+    try {
+      const res = await fetch('/api/client-summary/email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clientId: selectedClient.id }),
+      });
+      if (res.status === 422) {
+        const body = await res.json();
+        if (body.error === 'missing_logs') { setSummaryError(body.trips ?? ['Unknown error']); return; }
+        setSummaryError([body.error ?? 'No email address on file for this client.']);
+        return;
+      }
+      if (!res.ok) { setSummaryError(['Could not send email. Please try again.']); return; }
+      setEmailFeedback('sent');
+      setTimeout(() => setEmailFeedback(null), 3000);
+    } finally {
+      setIsEmailingSummary(false);
     }
   };
 
@@ -141,6 +167,28 @@ export default function ClientVisitHistory({
               </svg>
             )}
             {isFetchingSummary ? "Building..." : "Summary"}
+          </button>
+          <button
+            onClick={handleEmailSummary}
+            disabled={isEmailingSummary}
+            className={`flex items-center gap-1.5 border px-3 py-1.5 rounded-md text-sm font-medium shadow-sm transition-colors disabled:opacity-60 ${
+              emailFeedback === 'sent' ? 'bg-emerald-50 border-emerald-200 text-emerald-700' :
+              emailFeedback === 'error' ? 'bg-rose-50 border-rose-200 text-rose-600' :
+              'bg-white border-slate-300 hover:bg-slate-50 text-slate-600'
+            }`}
+            title="Email dive summary to client"
+          >
+            {isEmailingSummary ? (
+              <svg className="animate-spin w-3.5 h-3.5" viewBox="0 0 24 24" fill="none">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+              </svg>
+            ) : (
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+              </svg>
+            )}
+            {isEmailingSummary ? 'Sending...' : emailFeedback === 'sent' ? 'Sent!' : emailFeedback === 'error' ? 'Failed' : 'Email'}
           </button>
           <button
             onClick={onAddVisit}

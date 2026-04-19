@@ -1,6 +1,8 @@
 'use server';
 
 import { createClient } from '@/utils/supabase/server';
+import { getOpenSession } from '@/utils/pos-session';
+import { logPOSAction } from '@/utils/pos-audit';
 import { revalidatePath } from 'next/cache';
 
 export async function fetchLiveInvoice(visitId: string) {
@@ -100,6 +102,9 @@ export async function checkoutSession(
   const { data: profile } = await supabase.from('profiles').select('organization_id').eq('id', user.id).single();
   if (!profile) return { error: 'No org' };
 
+  const openSession = await getOpenSession(profile.organization_id, supabase);
+  if (!openSession) return { error: 'POS is closed. Open the POS before processing payments.' };
+
   const { data, error } = await supabase.rpc('checkout_session', {
     p_org_id:            profile.organization_id,
     p_visit_id:          visitId   ?? null,
@@ -113,6 +118,18 @@ export async function checkoutSession(
   });
 
   if (error) return { error: error.message };
+
+  if (paymentAmount && paymentAmount > 0) {
+    await logPOSAction(supabase, profile.organization_id, user.email ?? null,
+      'checkout',
+      clientId,
+      {
+        amount: paymentAmount,
+        method: paymentMethod,
+        item_count: items.length,
+      }
+    );
+  }
 
   revalidatePath('/pos/sell');
   return { success: true, invoiceId: (data as any)?.invoice_id ?? null };
@@ -212,6 +229,9 @@ export async function addCartToClientTab(
   const { data: profile } = await supabase.from('profiles').select('organization_id').eq('id', user.id).single();
   if (!profile) return { error: 'No org' };
 
+  const openSession = await getOpenSession(profile.organization_id, supabase);
+  if (!openSession) return { error: 'POS is closed. Open the POS before processing payments.' };
+
   const { data, error } = await supabase.rpc('add_items_to_client_tab', {
     p_org_id:            profile.organization_id,
     p_client_id:         clientId,
@@ -222,6 +242,16 @@ export async function addCartToClientTab(
   });
 
   if (error) return { error: error.message };
+
+  await logPOSAction(supabase, profile.organization_id, user.email ?? null,
+    'add_to_tab',
+    clientId,
+    {
+      visit_id: visitId,
+      item_count: items.length,
+      total: Math.round(items.reduce((s, i) => s + i.price * i.qty, 0) * 100) / 100,
+    }
+  );
 
   revalidatePath('/pos/tabs');
   return { success: true, invoiceId: (data as any)?.invoice_id ?? null };

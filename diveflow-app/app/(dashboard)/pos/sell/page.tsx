@@ -1,4 +1,5 @@
 import { createClient } from "@/utils/supabase/server";
+import { getOpenSession } from "@/utils/pos-session";
 import SellTerminalClient from "./SellTerminalClient";
 
 export default async function POSSellPage() {
@@ -37,6 +38,8 @@ export default async function POSSellPage() {
     name: `${c.first_name} ${c.last_name}`
   }));
 
+  const openSession = await getOpenSession(orgId, supabase);
+
   return (
     <div className="flex flex-col h-[calc(100vh-4rem)] bg-slate-50 p-6">
       <div className="mb-4 flex flex-col">
@@ -49,6 +52,7 @@ export default async function POSSellPage() {
           manualProducts={manualProductsRes ?? []}
           categories={categoriesRes ?? []}
           clients={clients}
+          isSessionOpen={!!openSession}
         />
       </div>
     </div>

@@ -21,6 +21,7 @@ interface SellTerminalClientProps {
   manualProducts: any[];
   categories: any[];
   clients: Client[];
+  isSessionOpen: boolean;
 }
 
 /** Return today in YYYY-MM-DD (local) */
@@ -38,7 +39,7 @@ function findDefaultVisit(visits: ClientVisit[]): string | null {
   return null;
 }
 
-export default function SellTerminalClient({ manualProducts, categories, clients }: SellTerminalClientProps) {
+export default function SellTerminalClient({ manualProducts, categories, clients, isSessionOpen }: SellTerminalClientProps) {
   const [isPending, startTransition] = useTransition();
 
   // Catalog filters
@@ -235,6 +236,14 @@ export default function SellTerminalClient({ manualProducts, categories, clients
 
       {/* ── RIGHT: Cart ── */}
       <div className="w-2/3 flex flex-col bg-white overflow-hidden relative">
+        {!isSessionOpen && (
+          <div className="flex items-center gap-2.5 px-4 py-2.5 bg-rose-50 border-b border-rose-200 text-rose-700 text-xs font-semibold shrink-0">
+            <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+            </svg>
+            POS is closed — go to Open / Close to start a new session before processing payments.
+          </div>
+        )}
 
         <CartHeader
           clientSearchText={clientSearchText}
@@ -298,8 +307,9 @@ export default function SellTerminalClient({ manualProducts, categories, clients
               )}
               <button
                 onClick={() => { setPaymentAmount(cartTotal.toFixed(2)); setPaymentMethod('Visa'); setIsPaymentModalOpen(true); }}
-                disabled={isPending}
-                className="flex items-center gap-2 px-5 py-2.5 bg-emerald-500 hover:bg-emerald-600 text-white font-bold rounded-xl shadow-md disabled:opacity-50 transition-colors"
+                disabled={isPending || !isSessionOpen}
+                title={!isSessionOpen ? 'Open the POS before processing payments' : undefined}
+                className="flex items-center gap-2 px-5 py-2.5 bg-emerald-500 hover:bg-emerald-600 text-white font-bold rounded-xl shadow-md disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 8.25h19.5M2.25 9h19.5m-16.5 5.25h6m-6 2.25h3m-3.75 3h15a2.25 2.25 0 002.25-2.25V6.75A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25v10.5A2.25 2.25 0 004.5 19.5z" />

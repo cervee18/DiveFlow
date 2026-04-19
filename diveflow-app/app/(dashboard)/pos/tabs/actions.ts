@@ -1,6 +1,8 @@
 'use server';
 
 import { createClient } from '@/utils/supabase/server';
+import { getOpenSession } from '@/utils/pos-session';
+import { logPOSAction } from '@/utils/pos-audit';
 import { revalidatePath } from 'next/cache';
 
 export async function searchClients(query: string) {
@@ -92,7 +94,7 @@ export async function getClientTabData(clientId: string) {
     .select(`
       id, created_at, status,
       pos_transactions ( id, recorded_by_email, created_at ),
-      pos_invoice_items ( id, quantity, unit_price, transaction_id, pos_products ( id, name ) ),
+      pos_invoice_items ( id, quantity, unit_price, transaction_id, pos_products ( id, name, price ) ),
       pos_payments ( id, amount, voided_at )
     `)
     .eq('client_id', clientId)
@@ -105,20 +107,24 @@ export async function getClientTabData(clientId: string) {
       (a: any, b: any) => a.created_at < b.created_at ? -1 : 1
     );
 
+    const mapItem = (i: any) => ({
+      id: i.id as string,
+      name: i.pos_products?.name ?? 'Unknown',
+      price: Number(i.unit_price),
+      basePrice: Number(i.pos_products?.price ?? i.unit_price),
+      qty: i.quantity as number,
+    });
+
     // Group items by transaction, then collect unlinked items as a fallback batch
-    const batches: { recordedByEmail: string | null; addedAt: string; items: { name: string; price: number; qty: number }[] }[] = [];
+    const batches: { recordedByEmail: string | null; addedAt: string; items: ReturnType<typeof mapItem>[] }[] = [];
     for (const txn of transactions) {
-      const txnItems = allItems
-        .filter((i: any) => i.transaction_id === txn.id)
-        .map((i: any) => ({ name: i.pos_products?.name ?? 'Unknown', price: Number(i.unit_price), qty: i.quantity }));
+      const txnItems = allItems.filter((i: any) => i.transaction_id === txn.id).map(mapItem);
       if (txnItems.length > 0) {
         batches.push({ recordedByEmail: txn.recorded_by_email ?? null, addedAt: txn.created_at, items: txnItems });
       }
     }
     // Legacy items with no transaction_id
-    const unlinked = allItems
-      .filter((i: any) => !i.transaction_id)
-      .map((i: any) => ({ name: i.pos_products?.name ?? 'Unknown', price: Number(i.unit_price), qty: i.quantity }));
+    const unlinked = allItems.filter((i: any) => !i.transaction_id).map(mapItem);
     if (unlinked.length > 0) {
       batches.unshift({ recordedByEmail: null, addedAt: inv.created_at, items: unlinked });
     }
@@ -192,18 +198,23 @@ export async function getClientTabData(clientId: string) {
       if (!p.payment_group_id) {
         paymentRows.push({
           ids: [p.id], date: p.created_at, amount: Number(p.amount),
-          method: p.payment_method, recordedByEmail: p.recorded_by_email,
+          splits: [{ method: p.payment_method, amount: Number(p.amount) }],
+          recordedByEmail: p.recorded_by_email,
           voided: !!p.voided_at, voidReason: p.void_reason ?? null,
         });
       } else if (!seenGroups.has(p.payment_group_id)) {
         seenGroups.add(p.payment_group_id);
         const siblings = rawPayments.filter(x => x.payment_group_id === p.payment_group_id);
         const allVoided = siblings.every(x => !!x.voided_at);
+        const methodSums = siblings.reduce((acc, x) => {
+          acc[x.payment_method] = (acc[x.payment_method] ?? 0) + Number(x.amount);
+          return acc;
+        }, {} as Record<string, number>);
         paymentRows.push({
           ids: siblings.map(x => x.id),
           date: p.created_at,
           amount: Math.round(siblings.reduce((s, x) => s + Number(x.amount), 0) * 100) / 100,
-          method: p.payment_method,
+          splits: Object.entries(methodSums).map(([method, amount]) => ({ method, amount: Math.round((amount as number) * 100) / 100 })),
           recordedByEmail: p.recorded_by_email,
           voided: allVoided,
           voidReason: allVoided ? (p.void_reason ?? null) : null,
@@ -214,18 +225,28 @@ export async function getClientTabData(clientId: string) {
     // Resolve items + context from visit payload or standalone invoice
     const fmt = (d: string) => new Date(d + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
     let context: string | null = null;
-    let items: { name: string; price: number; clientName: string | null }[] = [];
+    let items: { name: string; price: number; clientName: string | null; discountPct?: number }[] = [];
 
     const visitPayload = visitPayloads.find(v => v.payload.invoice_id === invoiceId);
     if (visitPayload) {
       const clients = visitPayload.payload.clients ?? {};
       items = Object.values(clients).flatMap((c: any) => [
-        ...(c.automated_items ?? []).map((i: any) => ({
-          name: i.name, price: Number(i.price), clientName: c.client_name as string,
-        })),
-        ...(c.manual_items ?? []).map((i: any) => ({
-          name: i.name, price: Number(i.price) * (i.qty ?? 1), clientName: c.client_name as string,
-        })),
+        ...(c.automated_items ?? []).map((i: any) => {
+          const base = Number(i.base_price ?? i.price);
+          const price = Number(i.price);
+          const discountPct = base > price && base > 0
+            ? Math.round((1 - price / base) * 10000) / 100
+            : undefined;
+          return { name: i.name, price, clientName: c.client_name as string, discountPct };
+        }),
+        ...(c.manual_items ?? []).map((i: any) => {
+          const base = Number(i.base_price ?? i.price);
+          const unit = Number(i.price);
+          const discountPct = base > unit && base > 0
+            ? Math.round((1 - unit / base) * 10000) / 100
+            : undefined;
+          return { name: i.name, price: unit * (i.qty ?? 1), clientName: c.client_name as string, discountPct };
+        }),
       ]);
       context = `${fmt(visitPayload.startDate)} – ${fmt(visitPayload.endDate)}`;
     } else {
@@ -317,6 +338,9 @@ export async function payClientFullTab(
   if (!profile) return { error: 'No org' };
 
   const orgId = profile.organization_id;
+
+  const openSession = await getOpenSession(orgId, supabase);
+  if (!openSession) return { error: 'POS is closed. Open the POS before processing payments.' };
 
   // ── 1. Resolve / create invoice for each visit ──────────────────────────
   const resolvedVisits: Array<{ visitId: string; invoiceId: string; balance: number; members: Array<{ clientId: string; balanceDue: number }> }> = [];
@@ -481,8 +505,23 @@ export async function payClientFullTab(
     }
   }
 
+  const totalPaid = splits.reduce((s, sp) => s + sp.amount, 0);
+  await logPOSAction(supabase, orgId, user.email ?? null,
+    'payment',
+    clientId,
+    {
+      total: Math.round(totalPaid * 100) / 100,
+      splits: splits.map(sp => ({ method: sp.method, amount: Math.round(sp.amount * 100) / 100 })),
+      visit_count: resolvedVisits.length,
+    }
+  );
+
   revalidatePath('/pos/tabs');
-  return { success: true };
+  const invoiceIds = [...new Set([
+    ...resolvedVisits.map(rv => rv.invoiceId),
+    ...(primaryInvoiceId && !resolvedVisits.find(rv => rv.invoiceId === primaryInvoiceId) ? [primaryInvoiceId] : []),
+  ])];
+  return { success: true, invoiceIds };
 }
 
 export async function voidPayment(paymentIds: string[], reason: string) {
@@ -490,12 +529,34 @@ export async function voidPayment(paymentIds: string[], reason: string) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { error: 'Unauthorized' };
 
+  const { data: profile } = await supabase.from('profiles').select('organization_id').eq('id', user.id).single();
+  if (!profile) return { error: 'No org' };
+
+  const { data: payments } = await supabase
+    .from('pos_payments')
+    .select('amount, payment_method, client_id')
+    .in('id', paymentIds);
+
   const { error } = await supabase
     .from('pos_payments')
     .update({ voided_at: new Date().toISOString(), void_reason: reason || 'Voided by staff' })
     .in('id', paymentIds);
 
   if (error) return { error: error.message };
+
+  await supabase.from('deposit_applications').delete().in('payment_id', paymentIds);
+
+  const totalVoided = (payments ?? []).reduce((s, p) => s + Number(p.amount), 0);
+  const clientId = (payments ?? [])[0]?.client_id ?? null;
+  await logPOSAction(supabase, profile.organization_id, user.email ?? null,
+    'void_payment',
+    clientId as string | null,
+    {
+      amount: Math.round(totalVoided * 100) / 100,
+      reason: reason || 'Voided by staff',
+      payment_ids: paymentIds,
+    }
+  );
 
   revalidatePath('/pos/tabs');
   return { success: true };
@@ -536,14 +597,24 @@ export async function recordDeposit(
   });
 
   if (error) return { error: error.message };
+
+  await logPOSAction(supabase, profile.organization_id, user.email ?? null,
+    'deposit',
+    clientId,
+    { amount, method, note: note.trim() || null }
+  );
+
   revalidatePath('/pos/tabs');
   return { success: true };
 }
 
-export async function toggleItemWaiver(visitId: string, clientId: string, itemKey: string, waived: boolean) {
+export async function toggleItemWaiver(visitId: string, clientId: string, itemKey: string, waived: boolean, itemName?: string) {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { error: 'Unauthorized' };
+
+  const { data: profile } = await supabase.from('profiles').select('organization_id').eq('id', user.id).single();
+  if (!profile) return { error: 'No org' };
 
   if (waived) {
     const { error } = await supabase
@@ -560,6 +631,12 @@ export async function toggleItemWaiver(visitId: string, clientId: string, itemKe
     if (error) return { error: error.message };
   }
 
+  await logPOSAction(supabase, profile.organization_id, user.email ?? null,
+    waived ? 'waive_item' : 'unwaive_item',
+    clientId,
+    { item_key: itemKey, item_name: itemName ?? null, visit_id: visitId }
+  );
+
   revalidatePath('/pos/tabs');
   return { success: true };
 }
@@ -569,12 +646,96 @@ export async function deleteInvoiceItem(invoiceItemId: string) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { error: 'Unauthorized' };
 
+  const { data: profile } = await supabase.from('profiles').select('organization_id').eq('id', user.id).single();
+  if (!profile) return { error: 'No org' };
+
+  // Fetch item info before deleting for the audit log
+  const { data: item } = await supabase
+    .from('pos_invoice_items')
+    .select('client_id, unit_price, quantity, pos_products(name)')
+    .eq('id', invoiceItemId)
+    .maybeSingle();
+
   const { error } = await supabase
     .from('pos_invoice_items')
     .delete()
     .eq('id', invoiceItemId);
 
   if (error) return { error: error.message };
+
+  await logPOSAction(supabase, profile.organization_id, user.email ?? null,
+    'delete_item',
+    (item?.client_id as string | null) ?? null,
+    {
+      product_name: (item?.pos_products as any)?.name ?? null,
+      unit_price: item ? Number(item.unit_price) : null,
+      qty: item?.quantity ?? null,
+    }
+  );
+
+  revalidatePath('/pos/tabs');
+  return { success: true };
+}
+
+export async function setAutoItemPriceOverride(visitId: string, clientId: string, itemKey: string, price: number, itemName?: string) {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { error: 'Unauthorized' };
+
+  const { data: profile } = await supabase.from('profiles').select('organization_id').eq('id', user.id).single();
+  if (!profile) return { error: 'No org' };
+
+  if (price < 0) return { error: 'Price cannot be negative.' };
+
+  const { error } = await supabase
+    .from('pos_auto_item_price_overrides')
+    .upsert({ visit_id: visitId, client_id: clientId, item_key: itemKey, price: Math.round(price * 100) / 100 });
+
+  if (error) return { error: error.message };
+
+  await logPOSAction(supabase, profile.organization_id, user.email ?? null,
+    'price_override',
+    clientId,
+    { item_key: itemKey, item_name: itemName ?? null, visit_id: visitId, new_price: Math.round(price * 100) / 100 }
+  );
+
+  revalidatePath('/pos/tabs');
+  return { success: true };
+}
+
+export async function updateInvoiceItem(invoiceItemId: string, unitPrice: number, qty: number) {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { error: 'Unauthorized' };
+
+  const { data: profile } = await supabase.from('profiles').select('organization_id').eq('id', user.id).single();
+  if (!profile) return { error: 'No org' };
+
+  if (unitPrice < 0 || qty < 1) return { error: 'Invalid price or quantity.' };
+
+  const { data: item } = await supabase
+    .from('pos_invoice_items')
+    .select('client_id, pos_products(name)')
+    .eq('id', invoiceItemId)
+    .maybeSingle();
+
+  const { error } = await supabase
+    .from('pos_invoice_items')
+    .update({ unit_price: Math.round(unitPrice * 100) / 100, quantity: qty })
+    .eq('id', invoiceItemId);
+
+  if (error) return { error: error.message };
+
+  await logPOSAction(supabase, profile.organization_id, user.email ?? null,
+    'edit_item',
+    (item?.client_id as string | null) ?? null,
+    {
+      product_name: (item?.pos_products as any)?.name ?? null,
+      unit_price: Math.round(unitPrice * 100) / 100,
+      qty,
+    }
+  );
+
   revalidatePath('/pos/tabs');
   return { success: true };
 }
@@ -583,6 +744,15 @@ export async function voidDeposit(depositId: string, reason: string) {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { error: 'Unauthorized' };
+
+  const { data: profile } = await supabase.from('profiles').select('organization_id').eq('id', user.id).single();
+  if (!profile) return { error: 'No org' };
+
+  const { data: dep } = await supabase
+    .from('client_deposits')
+    .select('amount, method, client_id')
+    .eq('id', depositId)
+    .maybeSingle();
 
   const { error } = await supabase
     .from('client_deposits')
@@ -594,6 +764,17 @@ export async function voidDeposit(depositId: string, reason: string) {
     .eq('id', depositId);
 
   if (error) return { error: error.message };
+
+  await logPOSAction(supabase, profile.organization_id, user.email ?? null,
+    'void_deposit',
+    (dep?.client_id as string | null) ?? null,
+    {
+      amount: dep ? Number(dep.amount) : null,
+      method: dep?.method ?? null,
+      reason: reason.trim() || 'Voided by staff',
+    }
+  );
+
   revalidatePath('/pos/tabs');
   return { success: true };
 }

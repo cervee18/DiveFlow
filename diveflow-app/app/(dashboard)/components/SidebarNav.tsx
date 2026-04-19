@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { createClient } from '@/utils/supabase/client';
@@ -55,59 +55,10 @@ function CogIcon() {
   );
 }
 
-function ListIcon() {
-  return (
-    <svg className="w-5 h-5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
-    </svg>
-  );
-}
-
-function ChartIcon() {
-  return (
-    <svg className="w-5 h-5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-    </svg>
-  );
-}
-
-function BoxIcon() {
-  return (
-    <svg className="w-5 h-5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10" />
-    </svg>
-  );
-}
-
 function CartIcon() {
   return (
     <svg className="w-5 h-5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
       <path strokeLinecap="round" strokeLinejoin="round" d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z" />
-    </svg>
-  );
-}
-
-function TagIcon() {
-  return (
-    <svg className="w-5 h-5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" />
-    </svg>
-  );
-}
-
-function ReceiptIcon() {
-  return (
-    <svg className="w-5 h-5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M9 14l6-6m-5.5.5h.01m4.99 5h.01M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16l3.5-2 3.5 2 3.5-2 3.5 2z" />
-    </svg>
-  );
-}
-
-function ClockIcon() {
-  return (
-    <svg className="w-5 h-5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-      <circle cx="12" cy="12" r="9" />
-      <path strokeLinecap="round" strokeLinejoin="round" d="M12 7v5l3 3" />
     </svg>
   );
 }
@@ -128,146 +79,51 @@ function SignOutIcon() {
   );
 }
 
-function ChevronDownIcon({ open }: { open: boolean }) {
-  return (
-    <svg
-      className={`w-3.5 h-3.5 flex-shrink-0 transition-transform duration-200 ${open ? 'rotate-180' : ''}`}
-      fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}
-    >
-      <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-    </svg>
-  );
-}
-
 // ── Types ────────────────────────────────────────────────────────────────────
-
-interface NavItem {
-  href: string;
-  label: string;
-  icon: React.ReactNode;
-}
 
 interface Props {
   isStaff: boolean;
   isAdmin: boolean;
   userEmail: string;
+  isPOSOpen?: boolean;
 }
 
 // ── NavLink ──────────────────────────────────────────────────────────────────
 
 function NavLink({
-  item,
+  href,
+  label,
+  icon,
   isActive,
   expanded,
 }: {
-  item: NavItem;
+  href: string;
+  label: string;
+  icon: React.ReactNode;
   isActive: boolean;
   expanded: boolean;
 }) {
   return (
     <Link
-      href={item.href}
-      title={!expanded ? item.label : undefined}
+      href={href}
+      title={!expanded ? label : undefined}
       className={`flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors ${
         isActive
           ? 'bg-teal-500/10 text-teal-400'
           : 'text-slate-400 hover:bg-slate-800 hover:text-teal-400'
       }`}
     >
-      {item.icon}
-      {expanded && <span className="truncate">{item.label}</span>}
+      {icon}
+      {expanded && <span className="truncate">{label}</span>}
     </Link>
-  );
-}
-
-// ── AccordionGroup ────────────────────────────────────────────────────────────
-
-function AccordionGroup({
-  label,
-  items,
-  storageKey,
-  expanded,
-  hasActiveChild,
-  isActiveChild,
-}: {
-  label: string;
-  items: NavItem[];
-  storageKey: string;
-  expanded: boolean;
-  hasActiveChild: boolean;
-  isActiveChild: (href: string) => boolean;
-}) {
-  const [open, setOpen] = useState(true);
-
-  useEffect(() => {
-    const stored = localStorage.getItem(storageKey);
-    if (stored !== null) setOpen(stored === 'true');
-  }, [storageKey]);
-
-  // Auto-expand when navigating into this section
-  useEffect(() => {
-    if (hasActiveChild) setOpen(true);
-  }, [hasActiveChild]);
-
-  const toggle = () => {
-    setOpen(prev => {
-      localStorage.setItem(storageKey, String(!prev));
-      return !prev;
-    });
-  };
-
-  // Narrow (icon-only): show all items flat with a divider, ignore accordion state
-  if (!expanded) {
-    return (
-      <div className="mt-1">
-        <div className="border-t border-slate-700/50 my-2 mx-2" />
-        {items.map(item => (
-          <NavLink
-            key={item.href}
-            item={item}
-            isActive={isActiveChild(item.href)}
-            expanded={false}
-          />
-        ))}
-      </div>
-    );
-  }
-
-  // Expanded: full accordion with header and chevron
-  return (
-    <div className="mt-2">
-      <button
-        onClick={toggle}
-        className="w-full flex items-center justify-between px-3 py-1.5 rounded-md text-xs font-semibold uppercase tracking-wider text-slate-500 hover:text-slate-300 hover:bg-slate-800/50 transition-colors"
-      >
-        <div className="flex items-center gap-2">
-          {hasActiveChild && !open && (
-            <span className="w-1.5 h-1.5 rounded-full bg-teal-400 flex-shrink-0" />
-          )}
-          <span>{label}</span>
-        </div>
-        <ChevronDownIcon open={open} />
-      </button>
-
-      {open && (
-        <div className="mt-1 flex flex-col gap-1">
-          {items.map(item => (
-            <NavLink
-              key={item.href}
-              item={item}
-              isActive={isActiveChild(item.href)}
-              expanded={true}
-            />
-          ))}
-        </div>
-      )}
-    </div>
   );
 }
 
 // ── Sidebar ──────────────────────────────────────────────────────────────────
 
-export default function SidebarNav({ isStaff, isAdmin, userEmail }: Props) {
+const ADMIN_ROOTS = ['/management', '/logs', '/statistics', '/inventory'];
+
+export default function SidebarNav({ isStaff, isAdmin, userEmail, isPOSOpen }: Props) {
   const [hovered, setHovered] = useState(false);
   const pathname = usePathname();
   const router = useRouter();
@@ -283,31 +139,19 @@ export default function SidebarNav({ isStaff, isAdmin, userEmail }: Props) {
   const isActive = (href: string) =>
     href === '/' ? pathname === '/' : pathname.startsWith(href);
 
-  const mainItems: NavItem[] = [
-    { href: '/',         label: 'Dashboard', icon: <HomeIcon /> },
-    ...(isStaff ? [
-      { href: '/overview', label: 'Overview',   icon: <GridIcon /> },
-      { href: '/clients',  label: 'Clients',    icon: <UsersIcon /> },
-      { href: '/staff',    label: 'Staff',      icon: <BadgeIcon /> },
-    ] : []),
-  ];
+  const isAdminActive = ADMIN_ROOTS.some(p => pathname.startsWith(p));
+  const isPOSActive   = pathname.startsWith('/pos');
 
-  const adminItems: NavItem[] = isAdmin ? [
-    { href: '/management', label: 'Configuration', icon: <CogIcon /> },
-    { href: '/logs',       label: 'Logs',       icon: <ListIcon /> },
-    { href: '/statistics', label: 'Statistics', icon: <ChartIcon /> },
-    { href: '/inventory',  label: 'Inventory',  icon: <BoxIcon /> },
-  ] : [];
+  const ledColor = isPOSOpen ? 'bg-emerald-400' : 'bg-rose-500';
 
-  const posItems: NavItem[] = isAdmin ? [
-    { href: '/pos/sell',     label: 'Sell',        icon: <CartIcon /> },
-    { href: '/pos/products', label: 'Products',    icon: <TagIcon /> },
-    { href: '/pos/tabs',     label: 'Client Tabs', icon: <ReceiptIcon /> },
-    { href: '/pos/history',  label: 'History',     icon: <ClockIcon /> },
-  ] : [];
+  const posIcon = (
+    <span className="relative inline-flex flex-shrink-0">
+      <CartIcon />
+      <span className={`absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full ${ledColor} ring-1 ring-slate-900`} />
+    </span>
+  );
 
   return (
-    // This outer div always occupies w-16 in the layout — prevents content shift on hover
     <div className="hidden md:block w-16 flex-shrink-0 relative">
       <aside
         onMouseEnter={() => setHovered(true)}
@@ -330,36 +174,19 @@ export default function SidebarNav({ isStaff, isAdmin, userEmail }: Props) {
 
         {/* Nav */}
         <nav className="flex-1 px-2 py-4 overflow-y-auto overflow-x-hidden flex flex-col gap-1">
-          {mainItems.map(item => (
-            <NavLink
-              key={item.href}
-              item={item}
-              isActive={isActive(item.href)}
-              expanded={expanded}
-            />
-          ))}
+          <NavLink href="/"         label="Dashboard" icon={<HomeIcon />}    isActive={isActive('/')}        expanded={expanded} />
 
-          {adminItems.length > 0 && (
-            <AccordionGroup
-              label="Admin"
-              items={adminItems}
-              storageKey="sidebar-admin-open"
-              expanded={expanded}
-              hasActiveChild={adminItems.some(i => isActive(i.href))}
-              isActiveChild={isActive}
-            />
-          )}
+          {isStaff && <>
+            <NavLink href="/overview" label="Overview"  icon={<GridIcon />}   isActive={isActive('/overview')} expanded={expanded} />
+            <NavLink href="/clients"  label="Clients"   icon={<UsersIcon />}  isActive={isActive('/clients')}  expanded={expanded} />
+            <NavLink href="/staff"    label="Staff"     icon={<BadgeIcon />}  isActive={isActive('/staff')}    expanded={expanded} />
+          </>}
 
-          {posItems.length > 0 && (
-            <AccordionGroup
-              label="Point of Sale"
-              items={posItems}
-              storageKey="sidebar-pos-open"
-              expanded={expanded}
-              hasActiveChild={posItems.some(i => isActive(i.href))}
-              isActiveChild={isActive}
-            />
-          )}
+          {isAdmin && <>
+            <div className="border-t border-slate-700/50 my-2 mx-1" />
+            <NavLink href="/management" label="Admin"          icon={<CogIcon />}  isActive={isAdminActive} expanded={expanded} />
+            <NavLink href="/pos/sell"   label="Point of Sale"  icon={posIcon}      isActive={isPOSActive}   expanded={expanded} />
+          </>}
         </nav>
 
         {/* Bottom */}
@@ -371,7 +198,9 @@ export default function SidebarNav({ isStaff, isAdmin, userEmail }: Props) {
           )}
 
           <NavLink
-            item={{ href: '/profile', label: 'My Profile', icon: <UserCircleIcon /> }}
+            href="/profile"
+            label="My Profile"
+            icon={<UserCircleIcon />}
             isActive={isActive('/profile')}
             expanded={expanded}
           />

@@ -7,13 +7,14 @@ interface HistoryItem {
   name: string;
   price: number;
   clientName: string | null;
+  discountPct?: number;
 }
 
 export interface PaymentRow {
   ids: string[];
   date: string;
   amount: number;
-  method: string;
+  splits: { method: string; amount: number }[];
   recordedByEmail: string | null;
   voided: boolean;
   voidReason: string | null;
@@ -29,9 +30,15 @@ export interface HistoryEntry {
   lastDate: string;
 }
 
+function fmtDiscount(pct: number) {
+  return pct % 1 === 0 ? `${pct}%` : `${pct.toFixed(1)}%`;
+}
+
 interface Props {
   entry: HistoryEntry;
   onVoid: (row: PaymentRow) => void;
+  onReceipt: (invoiceId: string) => void;
+  onEmailReceipt?: (invoiceId: string) => Promise<void>;
 }
 
 function formatEmail(email: string | null) {
@@ -47,8 +54,26 @@ function formatTime(iso: string) {
   return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
 }
 
-export default function TransactionHistoryCard({ entry, onVoid }: Props) {
+export default function TransactionHistoryCard({ entry, onVoid, onReceipt, onEmailReceipt }: Props) {
   const [isExpanded, setIsExpanded] = useState(false);
+  const [isEmailing, setIsEmailing] = useState(false);
+  const [emailFeedback, setEmailFeedback] = useState<'sent' | 'error' | null>(null);
+
+  const handleEmailReceipt = async () => {
+    if (!onEmailReceipt) return;
+    setIsEmailing(true);
+    setEmailFeedback(null);
+    try {
+      await onEmailReceipt(entry.invoiceId);
+      setEmailFeedback('sent');
+      setTimeout(() => setEmailFeedback(null), 3000);
+    } catch {
+      setEmailFeedback('error');
+      setTimeout(() => setEmailFeedback(null), 3000);
+    } finally {
+      setIsEmailing(false);
+    }
+  };
 
   const hasMultipleClients = new Set(entry.items.map(i => i.clientName).filter(Boolean)).size > 1;
   const activePayments = entry.payments.filter(p => !p.voided);
@@ -86,6 +111,29 @@ export default function TransactionHistoryCard({ entry, onVoid }: Props) {
           </div>
         </div>
         <div className="flex items-center gap-3 shrink-0">
+          <button
+            type="button"
+            onClick={e => { e.stopPropagation(); onReceipt(entry.invoiceId); }}
+            className="text-xs font-semibold text-slate-400 hover:text-indigo-600 transition-colors px-1.5 py-0.5 rounded hover:bg-indigo-50"
+            title="Print receipt"
+          >
+            Receipt
+          </button>
+          {onEmailReceipt && (
+            <button
+              type="button"
+              onClick={e => { e.stopPropagation(); handleEmailReceipt(); }}
+              disabled={isEmailing}
+              className={`text-xs font-semibold transition-colors px-1.5 py-0.5 rounded disabled:opacity-50 ${
+                emailFeedback === 'sent' ? 'text-emerald-600 bg-emerald-50' :
+                emailFeedback === 'error' ? 'text-rose-500 bg-rose-50' :
+                'text-slate-400 hover:text-teal-600 hover:bg-teal-50'
+              }`}
+              title="Email receipt to client"
+            >
+              {isEmailing ? '...' : emailFeedback === 'sent' ? 'Sent!' : emailFeedback === 'error' ? 'Failed' : 'Email'}
+            </button>
+          )}
           <span className="text-sm font-black font-mono text-emerald-600">
             {fmtMoney(entry.totalPaid)}
           </span>
@@ -107,9 +155,14 @@ export default function TransactionHistoryCard({ entry, onVoid }: Props) {
               <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-2">Charges</p>
               {entry.items.map((item, idx) => (
                 <div key={idx} className="flex justify-between items-center text-xs text-slate-500 px-2.5 py-1.5 bg-slate-50 rounded-lg">
-                  <div className="flex items-center gap-2 min-w-0">
+                  <div className="flex items-center gap-2 min-w-0 flex-wrap">
                     <span className="w-1 h-1 rounded-full bg-slate-300 shrink-0" />
                     <span className="font-medium text-slate-700 truncate">{item.name}</span>
+                    {item.discountPct !== undefined && item.discountPct > 0 && (
+                      <span className="text-[10px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded-full shrink-0">
+                        -{fmtDiscount(item.discountPct)}
+                      </span>
+                    )}
                     {hasMultipleClients && item.clientName && (
                       <span className="text-slate-400 shrink-0">({item.clientName})</span>
                     )}
@@ -139,12 +192,20 @@ export default function TransactionHistoryCard({ entry, onVoid }: Props) {
                 <div className="flex items-center gap-2 min-w-0">
                   <span className={`w-1 h-1 rounded-full shrink-0 ${row.voided ? 'bg-slate-300' : 'bg-emerald-400'}`} />
                   <div className="min-w-0">
-                    <p className={`font-medium ${row.voided ? 'line-through text-slate-400' : 'text-slate-700'}`}>
-                      {row.method}
+                    <div className={`font-medium ${row.voided ? 'line-through text-slate-400' : 'text-slate-700'}`}>
+                      {row.splits.length === 1 ? (
+                        <span>{row.splits[0].method}</span>
+                      ) : (
+                        <span className="flex flex-wrap gap-x-2">
+                          {row.splits.map(s => (
+                            <span key={s.method}>{s.method} <span className="font-mono">{fmtMoney(s.amount)}</span></span>
+                          ))}
+                        </span>
+                      )}
                       {formatEmail(row.recordedByEmail) && (
                         <span className="font-normal text-slate-400"> · by {formatEmail(row.recordedByEmail)}</span>
                       )}
-                    </p>
+                    </div>
                     <p className="text-slate-400">
                       {formatDate(row.date)} · {formatTime(row.date)}
                       {row.voided && row.voidReason && ` · ${row.voidReason}`}
