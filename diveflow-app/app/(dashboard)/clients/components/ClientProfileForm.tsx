@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import { createClient } from "@/utils/supabase/client";
+import MergeDuplicatesModal from "./MergeDuplicatesModal";
 
 interface ClientProfileFormProps {
   selectedClient: any;
@@ -9,6 +10,7 @@ interface ClientProfileFormProps {
   onClose: () => void;
   onUpdate: (updatedClient: any) => void;
   onDelete: (clientId: string) => void;
+  onMergeComplete: (survivingId: string, removedId: string) => void;
 }
 
 export default function ClientProfileForm({
@@ -18,6 +20,7 @@ export default function ClientProfileForm({
   onClose,
   onUpdate,
   onDelete,
+  onMergeComplete,
 }: ClientProfileFormProps) {
   const supabase = createClient();
   const [isSaving, setIsSaving] = useState(false);
@@ -27,6 +30,8 @@ export default function ClientProfileForm({
   const [requiresVisit, setRequiresVisit] = useState<boolean>(selectedClient.requires_visit ?? true);
   const [globalProfile, setGlobalProfile] = useState<any | null>(null);
   const [isLoadingProfile, setIsLoadingProfile] = useState(false);
+  const [similarClients, setSimilarClients] = useState<any[]>([]);
+  const [showMergeModal, setShowMergeModal] = useState(false);
 
   // Determine the source of truth for global metadata (Passport vs Local DB)
   const isOnline = !!selectedClient.user_id;
@@ -49,6 +54,17 @@ export default function ClientProfileForm({
     }
     loadGlobalProfile();
   }, [selectedClient.user_id, isOnline, supabase]);
+
+  useEffect(() => {
+    setSimilarClients([]);
+    setShowMergeModal(false);
+    async function findSimilar() {
+      const { data, error } = await supabase.rpc("find_similar_clients", { p_client_id: selectedClient.id });
+      if (error) { console.error("find_similar_clients error:", error.message, error.code, error.details, error.hint); return; }
+      if (data && data.length > 0) setSimilarClients(data);
+    }
+    findSimilar();
+  }, [selectedClient.id, supabase]);
 
   // Derived display data prioritizes Global Passport if they are online
   const displayData = isOnline && globalProfile ? { ...selectedClient, ...globalProfile } : selectedClient;
@@ -182,6 +198,18 @@ export default function ClientProfileForm({
                <span className="px-2 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wider bg-slate-100 border border-slate-200 text-slate-500">
                  Offline Local Client
                </span>
+            )}
+            {similarClients.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setShowMergeModal(true)}
+                className="px-2 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wider bg-amber-50 border border-amber-300 text-amber-700 flex items-center gap-1 hover:bg-amber-100 transition-colors"
+              >
+                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+                </svg>
+                {similarClients.length} possible duplicate{similarClients.length !== 1 ? "s" : ""}
+              </button>
             )}
           </div>
         </div>
@@ -412,6 +440,19 @@ export default function ClientProfileForm({
             </button>
           </div>
         </form>
+      )}
+
+      {showMergeModal && (
+        <MergeDuplicatesModal
+          primaryClient={selectedClient}
+          candidates={similarClients}
+          certLevels={certLevels}
+          onClose={() => setShowMergeModal(false)}
+          onMergeComplete={(survivingId, removedId) => {
+            setShowMergeModal(false);
+            onMergeComplete(survivingId, removedId);
+          }}
+        />
       )}
     </div>
   );

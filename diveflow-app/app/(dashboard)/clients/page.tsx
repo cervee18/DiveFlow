@@ -185,6 +185,16 @@ function ClientsContent() {
     router.push(pathname, { scroll: false });
   };
 
+  const handleMergeComplete = async (survivingId: string, removedId: string) => {
+    setRecentClients(prev => prev.filter(c => c.id !== removedId));
+    const { data } = await supabase.from("clients").select("*").eq("id", survivingId).single();
+    if (data) {
+      setSelectedClient(data);
+      fetchClientHistory(survivingId);
+      router.push(`${pathname}?clientId=${survivingId}`, { scroll: false });
+    }
+  };
+
   const handleCreateClientSuccess = (newClient: any) => {
     setRecentClients([newClient, ...recentClients].slice(0, 6)); 
     handleSelectClient(newClient); // Select immediately and push URL
@@ -222,6 +232,7 @@ function ClientsContent() {
             }}
             onUpdate={handleUpdateClientState}
             onDelete={handleDeleteClient}
+            onMergeComplete={handleMergeComplete}
           />
 
           <ClientVisitHistory
