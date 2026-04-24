@@ -95,6 +95,7 @@ export default function TripManifest({
 }) {
   const {
     manifest,
+    activeHolds,
     isLoading,
     isAddModalOpen,
     setIsAddModalOpen,
@@ -551,8 +552,31 @@ export default function TripManifest({
             )}
 
             {/* Empty slots up to vessel capacity */}
+            {/* On-hold placeholder rows — one row per reserved pax slot */}
+            {!isLoading && activeHolds.flatMap(hold =>
+              Array.from({ length: hold.pax_count }).map((_, i) => (
+                <tr key={`hold-${hold.id}-${i}`} className="bg-amber-50/60">
+                  <td className="p-0 sticky left-0 z-10 bg-amber-50" style={{ width: '15px' }} />
+                  <td className="px-2 py-2 sticky left-[15px] bg-amber-50 z-10" style={{ width: '28px' }} />
+                  <td className="px-3 py-2 border-r sticky left-[43px] bg-amber-50 z-10 shadow-[1px_0_0_0_#fde68a]">
+                    <div className="flex items-center gap-1.5">
+                      <svg className="w-3 h-3 text-amber-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                      <span className="text-[11px] font-semibold text-amber-700">On hold</span>
+                      <span className="text-[11px] text-amber-500 truncate">· {hold.lead_name}</span>
+                    </div>
+                  </td>
+                  {Array.from({ length: 16 + Math.min(numberOfDives, 2) - (numberOfDives === 0 ? 3 : 0) }).map((_, j) => (
+                    <td key={j} className="px-2 py-2 bg-amber-50/40"><span className="block h-[18px]" /></td>
+                  ))}
+                </tr>
+              ))
+            )}
+
             {capacity && !isLoading && (() => {
-              const emptySlots = Math.max(0, capacity - manifest.length);
+              const totalHeldPax = activeHolds.reduce((s, h) => s + h.pax_count, 0);
+              const emptySlots = Math.max(0, capacity - manifest.length - totalHeldPax);
               return Array.from({ length: emptySlots }).map((_, i) => (
                 <tr key={`empty-${i}`} className="hover:bg-slate-50/50 transition-colors group/empty">
                   <td className="p-0 sticky left-0 z-10 bg-white" style={{ width: '15px' }} />

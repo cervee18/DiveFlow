@@ -6,6 +6,7 @@ import TripDrawerHeader from './TripDrawerHeader';
 import TripManifest from '@/app/(dashboard)/trips/components/TripManifest';
 import TripFormModal from '@/app/(dashboard)/components/TripFormModal';
 import PostTripLog from './PostTripLog';
+import OnlineBookingsTab from './OnlineBookingsTab';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -61,8 +62,8 @@ export default function TripDrawer({
   const [isEditOpen, setIsEditOpen] = useState(false);
   /** Bump to re-fetch the trip header (e.g. after an edit). */
   const [refreshKey, setRefreshKey] = useState(0);
-  /** 'manifest' = normal view, 'post-trip' = dive log entry */
-  const [drawerMode, setDrawerMode] = useState<'manifest' | 'post-trip'>('manifest');
+  /** 'manifest' = normal view, 'post-trip' = dive log entry, 'online-bookings' = online booking list */
+  const [drawerMode, setDrawerMode] = useState<'manifest' | 'post-trip' | 'online-bookings'>('manifest');
 
   // ── Fetch trip data ──────────────────────────────────────────────────────
   const loadTrip = useCallback(async (id: string) => {
@@ -73,7 +74,7 @@ export default function TripDrawer({
         .select(`
           id, label, start_time, duration_minutes, max_divers, vessel_id, trip_type_id,
           vessels ( name, abbreviation ),
-          trip_types ( id, name, default_start_time_am, default_start_time_pm, number_of_dives, category ),
+          trip_types ( id, name, default_start_time_am, default_start_time_pm, number_of_dives, category, online_bookable ),
           trip_staff ( roles ( name ), staff ( id, first_name, last_name, initials ) )
         `)
         .eq('id', id)
@@ -223,6 +224,18 @@ export default function TripDrawer({
               >
                 Post-trip log
               </button>
+              {trip.trip_types?.online_bookable && (
+                <button
+                  onClick={() => setDrawerMode('online-bookings')}
+                  className={`px-4 py-3 text-sm font-semibold border-b-2 transition-colors ${
+                    drawerMode === 'online-bookings'
+                      ? 'border-teal-600 text-teal-700'
+                      : 'border-transparent text-slate-500 hover:text-slate-700'
+                  }`}
+                >
+                  Online bookings
+                </button>
+              )}
             </div>
 
             {/* ── Content (scrollable) ── */}
@@ -244,6 +257,11 @@ export default function TripDrawer({
                       .map((ts: any) => ({ initials: ts.staff?.initials, isCapitan: ts.staff?.id === trip._captainStaffId }))
                       .filter((s: any) => s.initials),
                   }}
+                />
+              ) : drawerMode === 'online-bookings' ? (
+                <OnlineBookingsTab
+                  tripId={trip.id}
+                  onBookingChange={onSuccess}
                 />
               ) : (
                 <PostTripLog

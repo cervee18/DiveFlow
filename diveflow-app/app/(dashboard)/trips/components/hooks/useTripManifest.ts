@@ -61,6 +61,7 @@ export function useTripManifest({
   const supabase = createClient();
 
   const [manifest, setManifest] = useState<any[]>([]);
+  const [activeHolds, setActiveHolds] = useState<{ id: string; pax_count: number; lead_name: string; hold_expires_at: string }[]>([]);
   const [categories, setCategories] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
@@ -156,7 +157,15 @@ export function useTripManifest({
     if (tripCategory) activityQuery = activityQuery.eq('category', tripCategory);
     const { data: activityData } = await activityQuery;
 
+    const { data: holdsData } = await supabase
+      .from('online_bookings')
+      .select('id, pax_count, lead_name, hold_expires_at')
+      .eq('trip_id', tripId)
+      .eq('status', 'held')
+      .gt('hold_expires_at', new Date().toISOString());
+
     if (manifestData) setManifest(manifestData);
+    if (holdsData) setActiveHolds(holdsData);
     if (catData) setCategories(catData);
     if (certData) setCertLevels(certData);
     if (activityData) setActivities(activityData);
@@ -457,6 +466,7 @@ export function useTripManifest({
 
   return {
     manifest,
+    activeHolds,
     isLoading,
     isAddModalOpen,
     setIsAddModalOpen,
