@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { promoteToStaff, searchOrganizationUsers, addClientToOrganization } from "../actions";
 import ReadOnlyPassportModal from "./ReadOnlyPassportModal";
 
-export default function StaffAllocator({ adminOrgId }: { adminOrgId: string }) {
+export default function StaffAllocator({ adminOrgId, onHire }: { adminOrgId: string; onHire?: () => void }) {
   const [users, setUsers] = useState<any[]>([]);
   const [loadingId, setLoadingId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -60,9 +60,9 @@ export default function StaffAllocator({ adminOrgId }: { adminOrgId: string }) {
     if (result && result.error) {
       alert("Error promoting user: " + result.error);
     } else {
-      // Refresh the list directly
       const updated = await searchOrganizationUsers(searchQuery);
       setUsers(updated?.data || []);
+      onHire?.();
     }
   };
 

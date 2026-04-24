@@ -6,7 +6,8 @@ import VesselsConfig   from './VesselsConfig';
 import DiveSitesConfig from './DiveSitesConfig';
 import TripTypesConfig from './TripTypesConfig';
 import GeneralSettings from './GeneralSettings';
-import StaffAllocator  from './StaffAllocator';
+import StaffList       from './StaffList';
+import RolesConfig     from './RolesConfig';
 import ScheduleConfig  from './ScheduleConfig';
 
 type SectionId = 'general' | 'boats' | 'divesites' | 'trips' | 'schedule' | 'team';
@@ -65,6 +66,11 @@ export default function ConfigurationClient({ orgId }: { orgId: string | null })
           <div className="flex-1 min-h-0 px-4 pb-8">
             <ScheduleConfig orgId={orgId} />
           </div>
+        ) : section === 'team' ? (
+          <div className="flex-1 min-h-0 px-6 pb-8 space-y-6">
+            <StaffList adminOrgId={orgId} />
+            <RolesConfig adminOrgId={orgId} />
+          </div>
         ) : (
           <div className="max-w-3xl mx-auto w-full px-8 pb-8 space-y-6">
             {section === 'general'   && (
@@ -77,7 +83,6 @@ export default function ConfigurationClient({ orgId }: { orgId: string | null })
             {section === 'boats'     && <VesselsConfig orgId={orgId} />}
             {section === 'divesites' && <DiveSitesConfig orgId={orgId} />}
             {section === 'trips'     && <TripTypesConfig orgId={orgId} />}
-            {section === 'team'      && <StaffAllocator adminOrgId={orgId} />}
           </div>
         )}
 

@@ -1,7 +1,11 @@
+'use client';
+
 import { useState, useEffect } from 'react';
 import { parseDayLabel, getTodayStr } from './dateUtils';
 import OverviewTripCard from './OverviewTripCard';
 import BlueprintSlotCard, { type BlueprintSlot } from './BlueprintSlotCard';
+import { usePermission } from '@/app/(dashboard)/components/PermissionsContext';
+import { PERMISSIONS } from '@/lib/permissions';
 
 interface OverviewBoardProps {
   days: string[];
@@ -33,6 +37,9 @@ export default function OverviewBoard({
   onEditSlot,
   onOpenTrip,
 }: OverviewBoardProps) {
+  const canCreateTrip  = usePermission(PERMISSIONS.OVERVIEW_CREATE_TRIP);
+  const canConfirmTrip = usePermission(PERMISSIONS.OVERVIEW_CONFIRM_TRIP);
+
   // Deferred to client to avoid server/client date mismatch hydration error
   const [todayStr, setTodayStr] = useState('');
   useEffect(() => { setTodayStr(getTodayStr()); }, []);
@@ -167,7 +174,7 @@ export default function OverviewBoard({
                         <div className="space-y-1" style={{ minHeight: maxAmHeight || undefined }}>
                           <div className="flex items-center justify-between px-1 pt-0.5">
                             <span className="text-[8px] font-bold uppercase tracking-wider text-slate-300">Morning</span>
-                            {!selectionMode && onAddTrip && (
+                            {!selectionMode && onAddTrip && canCreateTrip && (
                               <button type="button" onClick={() => onAddTrip(day, 'am')}
                                 className="opacity-100 lg:opacity-0 lg:group-hover/col:opacity-100 transition-opacity w-3.5 h-3.5 flex items-center justify-center rounded text-slate-400 hover:text-teal-600 hover:bg-teal-50">
                                 <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" /></svg>
@@ -189,7 +196,7 @@ export default function OverviewBoard({
                               key={slot.id}
                               slot={slot}
                               isConfirming={confirmingSlotId === slot.id}
-                              onConfirm={() => onConfirmSlot(slot, day)}
+                              onConfirm={canConfirmTrip ? () => onConfirmSlot(slot, day) : undefined}
                               onEdit={() => onEditSlot(slot, day)}
                             />
                           ))}
@@ -199,7 +206,7 @@ export default function OverviewBoard({
                         <div className="space-y-1 mt-2" style={{ minHeight: maxPmHeight || undefined }}>
                           <div className={`flex items-center justify-between px-1 pt-0.5 ${maxAmHeight > 0 ? 'border-t border-slate-200 pt-2' : ''}`}>
                             <span className="text-[8px] font-bold uppercase tracking-wider text-slate-300">Afternoon</span>
-                            {!selectionMode && onAddTrip && (
+                            {!selectionMode && onAddTrip && canCreateTrip && (
                               <button type="button" onClick={() => onAddTrip(day, 'pm')}
                                 className="opacity-100 lg:opacity-0 lg:group-hover/col:opacity-100 transition-opacity w-3.5 h-3.5 flex items-center justify-center rounded text-slate-400 hover:text-teal-600 hover:bg-teal-50">
                                 <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" /></svg>
@@ -221,7 +228,7 @@ export default function OverviewBoard({
                               key={slot.id}
                               slot={slot}
                               isConfirming={confirmingSlotId === slot.id}
-                              onConfirm={() => onConfirmSlot(slot, day)}
+                              onConfirm={canConfirmTrip ? () => onConfirmSlot(slot, day) : undefined}
                               onEdit={() => onEditSlot(slot, day)}
                             />
                           ))}
@@ -232,7 +239,7 @@ export default function OverviewBoard({
                           <div className="space-y-1 mt-2">
                             <div className="flex items-center justify-between px-1 pt-0.5 border-t border-slate-200 pt-2">
                               <span className="text-[8px] font-bold uppercase tracking-wider text-slate-300">Night</span>
-                              {!selectionMode && onAddTrip && (
+                              {!selectionMode && onAddTrip && canCreateTrip && (
                                 <button type="button" onClick={() => onAddTrip(day, 'night')}
                                   className="opacity-100 lg:opacity-0 lg:group-hover/col:opacity-100 transition-opacity w-3.5 h-3.5 flex items-center justify-center rounded text-slate-400 hover:text-teal-600 hover:bg-teal-50">
                                   <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" /></svg>
@@ -254,7 +261,7 @@ export default function OverviewBoard({
                                 key={slot.id}
                                 slot={slot}
                                 isConfirming={confirmingSlotId === slot.id}
-                                onConfirm={() => onConfirmSlot(slot, day)}
+                                onConfirm={canConfirmTrip ? () => onConfirmSlot(slot, day) : undefined}
                                 onEdit={() => onEditSlot(slot, day)}
                               />
                             ))}

@@ -152,11 +152,11 @@ export default function SidebarNav({ isStaff, isAdmin, userEmail, isPOSOpen }: P
   );
 
   return (
-    <div className="hidden md:block w-16 flex-shrink-0 relative">
+    <div className="hidden md:block w-16 flex-shrink-0 sticky top-0 h-screen z-50">
       <aside
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
-        className={`absolute top-0 left-0 h-full flex flex-col bg-slate-900 border-r border-slate-700/50 z-30 transition-[width] duration-200 ease-in-out overflow-hidden ${
+        className={`absolute top-0 left-0 h-full flex flex-col bg-slate-900 border-r border-slate-700/50 z-50 transition-[width] duration-200 ease-in-out overflow-hidden ${
           expanded ? 'w-52 shadow-xl shadow-black/30' : 'w-16'
         }`}
       >
