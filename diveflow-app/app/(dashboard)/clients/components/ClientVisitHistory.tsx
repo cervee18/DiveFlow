@@ -304,10 +304,10 @@ export default function ClientVisitHistory({
                               className="flex items-center gap-2 w-full bg-slate-50 hover:bg-teal-50 border border-slate-100 hover:border-teal-200 px-3 py-2 rounded-md transition-colors group text-sm text-left"
                             >
                               <span className="font-semibold text-slate-600 shrink-0 w-12 text-xs">
-                                {tripDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                                {tripDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' })}
                               </span>
                               <span className="text-slate-500 font-medium shrink-0 w-12 text-xs">
-                                {tripDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                {tripDate.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'UTC' })}
                               </span>
                               <span className="font-medium text-slate-800 truncate group-hover:text-teal-700">
                                 {trip.trip_types?.name || 'Standard Trip'}

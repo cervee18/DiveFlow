@@ -21,12 +21,12 @@ interface TripFormModalProps {
 
 function formatTime(iso: string) {
   const d = new Date(iso);
-  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  return `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`;
 }
 
 function toLocalDateStr(iso: string) {
   const d = new Date(iso);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
 }
 
 /** Returns the Monday of the week that contains dateStr (Mon-based weeks). */
@@ -236,7 +236,7 @@ export default function TripFormModal({
     if (mode === 'edit' && tripData) {
       const d = new Date(tripData.start_time);
       setFormDate(toLocalDateStr(tripData.start_time));
-      setFormTime(`${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`);
+      setFormTime(`${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`);
       setFormDuration(tripData.duration_minutes);
       setFormCapacity(tripData.max_divers ?? 14);
       setFormVesselId(tripData.vessel_id ?? '');

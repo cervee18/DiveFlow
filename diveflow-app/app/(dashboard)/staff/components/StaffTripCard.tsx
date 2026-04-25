@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { SelectedBubble, MoveDestination, bubbleKey } from './staffTypes';
 
 function formatTime(timestamp: string): string {
-  return new Date(timestamp).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+  return new Date(timestamp).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'UTC' });
 }
 
 function FillBar({ booked, capacity, startTime }: { booked: number; capacity: number | null; startTime: string }) {

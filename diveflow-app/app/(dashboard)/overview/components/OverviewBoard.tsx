@@ -1,24 +1,19 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { parseDayLabel, getTodayStr } from './dateUtils';
+import { parseDayLabel, getTodayStr, hourUTC } from './dateUtils';
 import OverviewTripCard from './OverviewTripCard';
-import BlueprintSlotCard, { type BlueprintSlot } from './BlueprintSlotCard';
 import { usePermission } from '@/app/(dashboard)/components/PermissionsContext';
 import { PERMISSIONS } from '@/lib/permissions';
 
 interface OverviewBoardProps {
   days: string[];
   tripsByDay: Record<string, any[]>;
-  slotsByDay: Record<string, BlueprintSlot[]>;
   isLoading: boolean;
-  confirmingSlotId: string | null;
   selectionMode?: boolean;
   selectedTripIds?: string[];
   onTripToggle?: (tripId: string) => void;
   onAddTrip?: (date: string, section: 'am' | 'pm' | 'night') => void;
-  onConfirmSlot: (slot: BlueprintSlot, date: string) => void;
-  onEditSlot: (slot: BlueprintSlot, date: string) => void;
   /** When provided, clicking a trip card opens it in the TripDrawer instead of navigating */
   onOpenTrip?: (tripId: string) => void;
 }
@@ -26,28 +21,22 @@ interface OverviewBoardProps {
 export default function OverviewBoard({
   days,
   tripsByDay,
-  slotsByDay,
   isLoading,
-  confirmingSlotId,
   selectionMode = false,
   selectedTripIds = [],
   onTripToggle,
   onAddTrip,
-  onConfirmSlot,
-  onEditSlot,
   onOpenTrip,
 }: OverviewBoardProps) {
-  const canCreateTrip  = usePermission(PERMISSIONS.OVERVIEW_CREATE_TRIP);
-  const canConfirmTrip = usePermission(PERMISSIONS.OVERVIEW_CONFIRM_TRIP);
+  const canCreateTrip = usePermission(PERMISSIONS.OVERVIEW_CREATE_TRIP);
 
   // Deferred to client to avoid server/client date mismatch hydration error
   const [todayStr, setTodayStr] = useState('');
   useEffect(() => { setTodayStr(getTodayStr()); }, []);
 
   // Card heights (px) — must match the actual rendered sizes
-  const CARD_H          = 49; // trip, no label
-  const CARD_H_LABEL    = 71; // trip, with label
-  const BLUEPRINT_CARD_H = 49; // blueprint placeholder (same height as a trip card)
+  const CARD_H       = 49; // trip, no label
+  const CARD_H_LABEL = 71; // trip, with label
   const SECTION_LABEL_H = 14;
   const GAP = 4; // space-y-1
 
@@ -57,36 +46,25 @@ export default function OverviewBoard({
   type Slot = 'am' | 'pm' | 'night';
 
   const slotForIso = (iso: string): Slot => {
-    const h = new Date(iso).getHours();
+    const h = hourUTC(iso);
     if (h < AM_END) return 'am';
     if (h < PM_END) return 'pm';
     return 'night';
   };
 
-  const slotForTime = (timeStr: string): Slot => {
-    const h = parseInt(timeStr.split(':')[0], 10);
-    if (h < AM_END) return 'am';
-    if (h < PM_END) return 'pm';
-    return 'night';
-  };
-
-  // Height of a section (trip cards + blueprint cards)
-  const sectionHeight = (trips: any[], blueprints: BlueprintSlot[], slot: Slot) => {
-    const slotTrips       = trips.filter(t => slotForIso(t.start_time) === slot);
-    const slotBlueprints  = blueprints.filter(b => slotForTime(b.start_time) === slot);
-    const total = slotTrips.length + slotBlueprints.length;
-    if (total === 0) return 0;
-    const tripH      = slotTrips.reduce((s, t) => s + (t.label ? CARD_H_LABEL : CARD_H), 0);
-    const blueprintH = slotBlueprints.length * BLUEPRINT_CARD_H;
-    return SECTION_LABEL_H + total * GAP + tripH + blueprintH;
+  const sectionHeight = (trips: any[], slot: Slot) => {
+    const slotTrips = trips.filter(t => slotForIso(t.start_time) === slot);
+    if (slotTrips.length === 0) return 0;
+    const tripH = slotTrips.reduce((s, t) => s + (t.label ? CARD_H_LABEL : CARD_H), 0);
+    return SECTION_LABEL_H + slotTrips.length * GAP + tripH;
   };
 
   // Tallest AM / PM section across all days — used to align the dividers
   const maxAmHeight = Math.max(0, ...days.map(day =>
-    sectionHeight(tripsByDay[day] ?? [], slotsByDay[day] ?? [], 'am')
+    sectionHeight(tripsByDay[day] ?? [], 'am')
   ));
   const maxPmHeight = Math.max(0, ...days.map(day =>
-    sectionHeight(tripsByDay[day] ?? [], slotsByDay[day] ?? [], 'pm')
+    sectionHeight(tripsByDay[day] ?? [], 'pm')
   ));
 
   return (
@@ -147,18 +125,14 @@ export default function OverviewBoard({
         <div className="flex-1 overflow-y-auto min-h-0">
           <div className="flex pl-6 min-h-full">
             {days.map((day, i) => {
-              const dayTrips      = tripsByDay[day] ?? [];
-              const dayBlueprints = slotsByDay[day] ?? [];
-              const colBg         = i % 2 === 0 ? 'bg-white' : 'bg-slate-50';
+              const dayTrips = tripsByDay[day] ?? [];
+              const colBg    = i % 2 === 0 ? 'bg-white' : 'bg-slate-50';
 
-              const am            = dayTrips.filter(t => slotForIso(t.start_time) === 'am');
-              const pm            = dayTrips.filter(t => slotForIso(t.start_time) === 'pm');
-              const night         = dayTrips.filter(t => slotForIso(t.start_time) === 'night');
-              const bpAm          = dayBlueprints.filter(b => slotForTime(b.start_time) === 'am');
-              const bpPm          = dayBlueprints.filter(b => slotForTime(b.start_time) === 'pm');
-              const bpNight       = dayBlueprints.filter(b => slotForTime(b.start_time) === 'night');
+              const am    = dayTrips.filter(t => slotForIso(t.start_time) === 'am');
+              const pm    = dayTrips.filter(t => slotForIso(t.start_time) === 'pm');
+              const night = dayTrips.filter(t => slotForIso(t.start_time) === 'night');
 
-              const hasNightContent = night.length > 0 || bpNight.length > 0;
+              const hasNightContent = night.length > 0;
 
               return (
                 <div
@@ -191,15 +165,6 @@ export default function OverviewBoard({
                               onOpenTrip={onOpenTrip}
                             />
                           ))}
-                          {bpAm.map(slot => (
-                            <BlueprintSlotCard
-                              key={slot.id}
-                              slot={slot}
-                              isConfirming={confirmingSlotId === slot.id}
-                              onConfirm={canConfirmTrip ? () => onConfirmSlot(slot, day) : undefined}
-                              onEdit={() => onEditSlot(slot, day)}
-                            />
-                          ))}
                         </div>
 
                         {/* PM section */}
@@ -221,15 +186,6 @@ export default function OverviewBoard({
                               isSelected={selectedTripIds.includes(trip.id)}
                               onToggle={() => onTripToggle?.(trip.id)}
                               onOpenTrip={onOpenTrip}
-                            />
-                          ))}
-                          {bpPm.map(slot => (
-                            <BlueprintSlotCard
-                              key={slot.id}
-                              slot={slot}
-                              isConfirming={confirmingSlotId === slot.id}
-                              onConfirm={canConfirmTrip ? () => onConfirmSlot(slot, day) : undefined}
-                              onEdit={() => onEditSlot(slot, day)}
                             />
                           ))}
                         </div>
@@ -254,15 +210,6 @@ export default function OverviewBoard({
                                 isSelected={selectedTripIds.includes(trip.id)}
                                 onToggle={() => onTripToggle?.(trip.id)}
                                 onOpenTrip={onOpenTrip}
-                              />
-                            ))}
-                            {bpNight.map(slot => (
-                              <BlueprintSlotCard
-                                key={slot.id}
-                                slot={slot}
-                                isConfirming={confirmingSlotId === slot.id}
-                                onConfirm={canConfirmTrip ? () => onConfirmSlot(slot, day) : undefined}
-                                onEdit={() => onEditSlot(slot, day)}
                               />
                             ))}
                           </div>

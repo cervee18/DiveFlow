@@ -29,8 +29,8 @@ interface DiveState {
 /** Default start time for dive slot i (0-indexed): trip start + 30min + i×2h */
 function defaultDiveTime(tripStartTime: string, diveIndex: number): string {
   const d = new Date(tripStartTime);
-  d.setMinutes(d.getMinutes() + 30 + diveIndex * 120);
-  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  d.setUTCMinutes(d.getUTCMinutes() + 30 + diveIndex * 120);
+  return `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`;
 }
 
 /** Build a full ISO timestamp from the trip's date and an HH:MM string. */
@@ -39,7 +39,7 @@ function buildTimestamp(tripStartTime: string, timeStr: string): string | null {
   const [hh, mm] = timeStr.split(':').map(Number);
   if (isNaN(hh) || isNaN(mm)) return null;
   const d = new Date(tripStartTime);
-  d.setHours(hh, mm, 0, 0);
+  d.setUTCHours(hh, mm, 0, 0);
   return d.toISOString();
 }
 
@@ -287,7 +287,7 @@ export default function PostTripLog({ trip, onSaved }: Props) {
       let startedAt = defaultDiveTime(trip.start_time, i);
       if (existing?.started_at) {
         const d = new Date(existing.started_at);
-        startedAt = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+        startedAt = `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`;
       }
 
       return {

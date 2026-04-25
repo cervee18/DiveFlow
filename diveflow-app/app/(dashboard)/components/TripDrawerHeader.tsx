@@ -9,13 +9,15 @@ interface TripDrawerHeaderProps {
 
 export default function TripDrawerHeader({ trip, onEdit, onDelete, onClose }: TripDrawerHeaderProps) {
   const formatTime = (isoString: string) => {
-    const date = new Date(isoString);
-    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+    return new Date(isoString).toLocaleTimeString('en-GB', {
+      hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'UTC',
+    });
   };
 
   const formatDate = (isoString: string) => {
-    const date = new Date(isoString);
-    return date.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
+    return new Date(isoString).toLocaleDateString('en-GB', {
+      weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC',
+    });
   };
 
   // Deduplicated staff list

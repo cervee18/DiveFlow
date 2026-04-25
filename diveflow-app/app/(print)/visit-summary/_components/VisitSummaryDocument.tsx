@@ -66,9 +66,9 @@ function formatDepth(depth: number, unitSystem: string): string {
   return `${depth % 1 === 0 ? depth.toFixed(0) : depth.toFixed(1)} m`;
 }
 
-function formatTripTime(isoStr: string, timezone: string): string {
+function formatTripTime(isoStr: string): string {
   return new Date(isoStr).toLocaleTimeString("en-GB", {
-    timeZone: timezone,
+    timeZone: 'UTC',
     hour: "2-digit",
     minute: "2-digit",
   });
@@ -159,7 +159,7 @@ export default function VisitSummaryDocument({ data }: { data: VisitSummaryData 
                       {formatTripDay(trip.start_time, org.timezone)}
                     </td>
                     <td className="py-2.5 pr-4 text-slate-600 tabular-nums">
-                      {formatTripTime(trip.start_time, org.timezone)}
+                      {formatTripTime(trip.start_time)}
                     </td>
                     <td className="py-2.5 pr-4 text-slate-800">
                       {trip.trip_type_name ?? "—"}

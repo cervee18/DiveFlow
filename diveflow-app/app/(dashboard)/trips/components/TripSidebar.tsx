@@ -9,8 +9,7 @@ export default function TripSidebar({
 }: any) {
   
   const formatTime = (isoString: string) => {
-    const date = new Date(isoString);
-    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    return new Date(isoString).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'UTC' });
   };
 
   return (

@@ -107,9 +107,9 @@ export default function TripDrawer({
   // ── Handlers ─────────────────────────────────────────────────────────────
   const handleDelete = async () => {
     if (!trip) return;
-    if (!window.confirm('Are you sure you want to delete this trip? All manifest data will be lost.')) return;
-    const { error } = await supabase.from('trips').delete().eq('id', trip.id);
-    if (error) { alert('Error deleting trip: ' + error.message); return; }
+    if (!window.confirm('Cancel this trip? It will be hidden from the schedule and online booking.')) return;
+    const { error } = await supabase.from('trips').update({ status: 'cancelled' }).eq('id', trip.id);
+    if (error) { alert('Error cancelling trip: ' + error.message); return; }
     onClose();
     onSuccess?.();
   };

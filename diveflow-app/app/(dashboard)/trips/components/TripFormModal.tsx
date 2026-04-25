@@ -20,7 +20,7 @@ export default function TripFormModal({
     if (isOpen) {
       if (mode === 'edit' && tripData) {
         const d = new Date(tripData.start_time);
-        setFormTime(`${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`);
+        setFormTime(`${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`);
         setFormDuration(tripData.duration_minutes);
         setFormCapacity(tripData.max_divers || 14);
       } else if (mode === 'add' && tripTypes.length > 0) {

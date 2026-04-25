@@ -3,11 +3,14 @@ import Link from 'next/link';
 import DatePicker from './DatePicker';
 
 function formatTime(iso: string) {
-  return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: 'UTC' });
 }
 
-function toLocalDateString(date: Date) {
-  return date.toLocaleDateString('en-CA'); // YYYY-MM-DD
+function toUTCDateString(date: Date) {
+  const y = date.getUTCFullYear();
+  const m = String(date.getUTCMonth() + 1).padStart(2, '0');
+  const d = String(date.getUTCDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
 }
 
 export default async function BookPage({
@@ -17,7 +20,7 @@ export default async function BookPage({
 }) {
   const { date: rawDate } = await searchParams;
 
-  const today = toLocalDateString(new Date());
+  const today = toUTCDateString(new Date());
   const selectedDate = rawDate ?? today;
 
   const dayStart = `${selectedDate}T00:00:00`;
@@ -46,8 +49,8 @@ export default async function BookPage({
 
   const available = withSpaces.filter(t => t.available > 0);
 
-  const displayDate = new Date(`${selectedDate}T12:00:00`).toLocaleDateString('en-US', {
-    weekday: 'long', month: 'long', day: 'numeric',
+  const displayDate = new Date(`${selectedDate}T12:00:00Z`).toLocaleDateString('en-US', {
+    weekday: 'long', month: 'long', day: 'numeric', timeZone: 'UTC',
   });
 
   return (

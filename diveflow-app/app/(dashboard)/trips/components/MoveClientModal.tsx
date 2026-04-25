@@ -26,7 +26,7 @@ export default function MoveClientModal({
 
   const getLocalDate = (isoString: string) => {
     const d = new Date(isoString);
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
   };
 
   const [selectedDate, setSelectedDate] = useState('');
@@ -93,8 +93,7 @@ export default function MoveClientModal({
   };
 
   const formatTime = (isoString: string) => {
-    const d = new Date(isoString);
-    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+    return new Date(isoString).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'UTC' });
   };
 
   if (!isOpen || divers.length === 0) return null;

@@ -25,10 +25,10 @@ function formatPrice(amount: number) {
 }
 
 function formatDate(iso: string) {
-  return new Date(iso).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+  return new Date(iso).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', timeZone: 'UTC' });
 }
 function formatTime(iso: string) {
-  return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: 'UTC' });
 }
 
 function HoldCountdown({ expiresAt, onExpired }: { expiresAt: string; onExpired: () => void }) {
@@ -139,10 +139,10 @@ export default function BookingForm({ trip }: { trip: TripInfo }) {
     <div className="bg-white rounded-xl border border-slate-200 px-5 py-4 flex items-start gap-4">
       <div className="shrink-0 text-center w-12">
         <div className="text-xl font-bold text-slate-800 leading-none">
-          {new Date(trip.start_time).getDate()}
+          {new Date(trip.start_time).getUTCDate()}
         </div>
         <div className="text-[11px] text-slate-400 uppercase tracking-wide mt-0.5">
-          {new Date(trip.start_time).toLocaleDateString('en-US', { month: 'short' })}
+          {new Date(trip.start_time).toLocaleDateString('en-US', { month: 'short', timeZone: 'UTC' })}
         </div>
       </div>
       <div className="w-px self-stretch bg-slate-100 shrink-0" />
