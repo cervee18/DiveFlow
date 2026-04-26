@@ -72,7 +72,7 @@ export interface SummaryData {
 
 export type SummaryFetchResult =
   | { ok: true; data: SummaryData }
-  | { ok: false; error: 'not_found' | 'missing_logs'; trips?: string[] };
+  | { ok: false; error: 'not_found' };
 
 export async function fetchSummaryData(clientId: string, supabase: SupabaseClient): Promise<SummaryFetchResult> {
   const { data: client } = await supabase
@@ -94,34 +94,42 @@ export async function fetchSummaryData(clientId: string, supabase: SupabaseClien
 
   const { data: tripClients } = await supabase
     .from('trip_clients')
-    .select(`id, trips(id, start_time, trip_types(name), vessels(name), trip_dives(id, dive_number, started_at, divesites(name)))`)
+    .select(`id, trips(id, start_time, trip_types(name), vessels(name))`)
     .eq('client_id', clientId);
 
-  const nowTs = new Date();
-  const allTripClients: any[] = (tripClients ?? [])
-    .filter((tc: any) => tc.trips && (!tc.trips.start_time || new Date(tc.trips.start_time) <= nowTs));
+  const allTripClients: any[] = (tripClients ?? []).filter((tc: any) => tc.trips);
 
+  const tripIds = allTripClients.map((tc: any) => tc.trips.id);
   const tripClientIds = allTripClients.map((tc: any) => tc.id);
+
+  let tripDives: any[] = [];
   let diveLogs: any[] = [];
-  if (tripClientIds.length > 0) {
-    const { data: logs } = await supabase
-      .from('client_dive_logs')
-      .select('id, trip_dive_id, trip_client_id, max_depth, bottom_time')
-      .in('trip_client_id', tripClientIds);
+  if (tripIds.length > 0) {
+    const [{ data: dives }, { data: logs }] = await Promise.all([
+      supabase
+        .from('trip_dives')
+        .select('id, trip_id, dive_number, started_at, divesites(name)')
+        .in('trip_id', tripIds),
+      supabase
+        .from('client_dive_logs')
+        .select('id, trip_dive_id, trip_client_id, max_depth, bottom_time')
+        .in('trip_client_id', tripClientIds),
+    ]);
+    tripDives = dives ?? [];
     diveLogs = logs ?? [];
   }
 
-  const diveLogSet = new Set(diveLogs.map(l => `${l.trip_client_id}:${l.trip_dive_id}`));
-  const missingTrips: string[] = [];
-  for (const tc of allTripClients) {
-    const dives: any[] = tc.trips.trip_dives ?? [];
-    if (dives.length === 0) continue;
-    const missingDives = dives.filter((td: any) => !diveLogSet.has(`${tc.id}:${td.id}`));
-    if (missingDives.length > 0) {
-      missingTrips.push(`${fmtDate(tc.trips.start_time)} — ${tc.trips.trip_types?.name ?? 'Trip'}`);
-    }
+  // Group trip_dives by trip_id
+  const tripDivesMap = new Map<string, any[]>();
+  for (const td of tripDives) {
+    if (!tripDivesMap.has(td.trip_id)) tripDivesMap.set(td.trip_id, []);
+    tripDivesMap.get(td.trip_id)!.push(td);
   }
-  if (missingTrips.length > 0) return { ok: false, error: 'missing_logs', trips: missingTrips };
+  // Attach trip_dives to each trip_client
+  for (const tc of allTripClients) {
+    tc.trips.trip_dives = (tripDivesMap.get(tc.trips.id) ?? [])
+      .sort((a: any, b: any) => a.dive_number - b.dive_number);
+  }
 
   const tcLogMap = new Map<string, Map<string, any>>();
   for (const log of diveLogs) {

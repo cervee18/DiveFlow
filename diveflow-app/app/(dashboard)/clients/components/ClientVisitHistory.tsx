@@ -43,11 +43,6 @@ export default function ClientVisitHistory({
     setIsFetchingSummary(true);
     try {
       const resp = await fetch(`/api/client-summary?clientId=${selectedClient.id}`);
-      if (resp.status === 422) {
-        const body = await resp.json();
-        setSummaryError(body.trips ?? ["Unknown error"]);
-        return;
-      }
       if (!resp.ok) {
         setSummaryError(["Could not generate summary. Please try again."]);
         return;
@@ -72,7 +67,6 @@ export default function ClientVisitHistory({
       });
       if (res.status === 422) {
         const body = await res.json();
-        if (body.error === 'missing_logs') { setSummaryError(body.trips ?? ['Unknown error']); return; }
         setSummaryError([body.error ?? 'No email address on file for this client.']);
         return;
       }

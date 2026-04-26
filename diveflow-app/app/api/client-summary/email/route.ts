@@ -16,8 +16,7 @@ export async function POST(request: NextRequest) {
   const result = await fetchSummaryData(clientId, supabase);
 
   if (!result.ok) {
-    if (result.error === 'not_found') return Response.json({ error: 'Client not found' }, { status: 404 });
-    return Response.json({ error: 'missing_logs', trips: result.trips }, { status: 422 });
+    return Response.json({ error: 'Client not found' }, { status: 404 });
   }
 
   const { data } = result;
