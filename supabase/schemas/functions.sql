@@ -5,9 +5,10 @@
 -- pick_up from any other trip within the same visit.
 -- ============================================================
 CREATE OR REPLACE FUNCTION add_clients_to_trip(
-  p_trip_id   uuid,
+  p_trip_id    uuid,
   p_client_ids uuid[],
-  p_trip_date date          -- YYYY-MM-DD of the target trip
+  p_trip_date  date,
+  p_status     text DEFAULT 'confirmed'
 )
 RETURNS void
 LANGUAGE plpgsql
@@ -37,8 +38,8 @@ BEGIN
     END IF;
 
     -- 1. Insert (unique constraint will raise 23505 if already on trip)
-    INSERT INTO trip_clients (trip_id, client_id)
-    VALUES (p_trip_id, v_client_id)
+    INSERT INTO trip_clients (trip_id, client_id, status)
+    VALUES (p_trip_id, v_client_id, p_status)
     RETURNING id INTO v_new_tc_id;
 
     -- 2. Most recent prior trip → equipment defaults
