@@ -202,14 +202,20 @@ DECLARE
   v_max_divers integer;
   v_booked     integer;
 BEGIN
+  -- Waitlisted rows don't consume a confirmed slot
+  IF NEW.status = 'waitlist' THEN
+    RETURN NEW;
+  END IF;
+
   SELECT max_divers INTO v_max_divers
   FROM public.trips
   WHERE id = NEW.trip_id;
 
-  -- Count existing rows, excluding the row being updated (UPDATE path)
+  -- Count confirmed rows only, excluding the row being updated (UPDATE path)
   SELECT COUNT(*) INTO v_booked
   FROM public.trip_clients
   WHERE trip_id = NEW.trip_id
+    AND status = 'confirmed'
     AND id IS DISTINCT FROM NEW.id;
 
   IF v_booked >= v_max_divers THEN

@@ -76,29 +76,36 @@ export function useTripManifest({
   const [certLevels, setCertLevels] = useState<any[]>([]);
   const [activities, setActivities] = useState<any[]>([]);
 
-  // Sort manifest so group members (same visitId) are adjacent, preserving first-occurrence order
+  // Sort confirmed manifest so group members (same visitId) are adjacent
   const displayManifest = useMemo(() => {
-    if (manifest.length === 0 || Object.keys(clientVisitIdMap).length === 0) return manifest;
+    const confirmed = manifest.filter(d => (d.status ?? 'confirmed') === 'confirmed');
+    if (confirmed.length === 0 || Object.keys(clientVisitIdMap).length === 0) return confirmed;
     const visitFirstIdx: Record<string, number> = {};
-    manifest.forEach((d, i) => {
+    confirmed.forEach((d, i) => {
       const vid = clientVisitIdMap[d.client_id];
       if (vid && !(vid in visitFirstIdx)) visitFirstIdx[vid] = i;
     });
-    return [...manifest].sort((a, b) => {
+    return [...confirmed].sort((a, b) => {
       const vidA = clientVisitIdMap[a.client_id];
       const vidB = clientVisitIdMap[b.client_id];
-      const keyA = vidA ? visitFirstIdx[vidA] : manifest.indexOf(a);
-      const keyB = vidB ? visitFirstIdx[vidB] : manifest.indexOf(b);
+      const keyA = vidA ? visitFirstIdx[vidA] : confirmed.indexOf(a);
+      const keyB = vidB ? visitFirstIdx[vidB] : confirmed.indexOf(b);
       if (keyA !== keyB) return keyA - keyB;
-      return manifest.indexOf(a) - manifest.indexOf(b);
+      return confirmed.indexOf(a) - confirmed.indexOf(b);
     });
   }, [manifest, clientVisitIdMap]);
 
-  // Tank summary: count each tank type across all manifest rows
+  const waitlistManifest = useMemo(() =>
+    manifest.filter(d => d.status === 'waitlist'),
+  [manifest]);
+
+  // Tank summary: count each tank type across confirmed manifest rows only
   const tankSummary = useMemo(() => {
     if (manifest.length === 0 || numberOfDives === 0) return [];
+    const confirmed = manifest.filter(d => (d.status ?? 'confirmed') === 'confirmed');
+    if (confirmed.length === 0) return [];
     const counts: Record<string, number> = {};
-    for (const diver of manifest) {
+    for (const diver of confirmed) {
       const row = pendingChanges[diver.id] || {};
       if (numberOfDives >= 1) {
         const t = (row.tank1 ?? diver.tank1 ?? 'air') as string;
@@ -116,8 +123,9 @@ export function useTripManifest({
     }));
   }, [manifest, pendingChanges, numberOfDives]);
 
-  // Sync all ping animations to the same phase of the 1s cycle
-  const pingDelay = useMemo(() => `${-(Date.now() % 1000)}ms`, []);
+  // Sync all ping animations to the same phase of the 1s cycle.
+  // Updated on every fetch so newly added rows share the same phase as existing ones.
+  const [pingDelay, setPingDelay] = useState(`${-(Date.now() % 1000)}ms`);
 
   const fetchData = useCallback(async () => {
     if (!tripId) return;
@@ -283,6 +291,7 @@ export function useTripManifest({
       setNextTripMap(nextMap);
     }
 
+    setPingDelay(`${-(Date.now() % 1000)}ms`);
     setIsLoading(false);
   }, [tripId, tripDate, tripCategory, supabase]);
 
@@ -460,6 +469,26 @@ export function useTripManifest({
     onMovedToTrip?.(targetTrip);
   }, [selectedIds, displayManifest, fetchData, onManifestChange, onMovedToTrip]);
 
+  const handleDemoteToWaitlist = useCallback(async (ids: string[]) => {
+    if (ids.length === 0) return;
+    setIsSaving(true);
+    const { error } = await supabase.from('trip_clients').update({ status: 'waitlist' }).in('id', ids);
+    if (error) { alert('Could not move to waitlist: ' + error.message); setIsSaving(false); return; }
+    setSelectedIds(new Set());
+    await fetchData();
+    onManifestChange?.();
+    setIsSaving(false);
+  }, [supabase, fetchData, onManifestChange]);
+
+  const handlePromoteFromWaitlist = useCallback(async (id: string) => {
+    setIsSaving(true);
+    const { error } = await supabase.from('trip_clients').update({ status: 'confirmed' }).eq('id', id);
+    if (error) { alert('Could not confirm client: ' + error.message); setIsSaving(false); return; }
+    await fetchData();
+    onManifestChange?.();
+    setIsSaving(false);
+  }, [supabase, fetchData, onManifestChange]);
+
   const getSizesFor = (name: string) => {
     return categories.find(c => c.name.toLowerCase() === name.toLowerCase())?.sizes || [];
   };
@@ -483,6 +512,7 @@ export function useTripManifest({
     certLevels,
     activities,
     displayManifest,
+    waitlistManifest,
     tankSummary,
     pingDelay,
     fetchData,
@@ -492,6 +522,8 @@ export function useTripManifest({
     handleDiscard,
     handleBulkDelete,
     handleMoveSuccess,
+    handleDemoteToWaitlist,
+    handlePromoteFromWaitlist,
     getSizesFor,
   };
 }
