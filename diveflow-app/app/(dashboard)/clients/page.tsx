@@ -23,7 +23,7 @@ function ClientsContent() {
   
   // Auth & Org State
   const [userOrgId, setUserOrgId] = useState<string | null>(null);
-  const [requireVisitDefault, setRequireVisitDefault] = useState(false);
+  const [requireVisitDefault, setRequireVisitDefault] = useState(true);
 
   // Search State
   const [searchQuery, setSearchQuery] = useState("");
@@ -62,7 +62,7 @@ function ClientsContent() {
             .select("require_visit_for_trips")
             .eq("id", profile.organization_id)
             .single();
-          if (org) setRequireVisitDefault(org.require_visit_for_trips ?? false);
+          if (org) setRequireVisitDefault(org.require_visit_for_trips ?? true);
         }
       }
       const { data: levels } = await supabase.from("certification_levels").select("*").order("id", { ascending: true });
@@ -266,6 +266,7 @@ function ClientsContent() {
           mode={visitModalMode}
           editingVisit={editingVisit}
           selectedClientId={selectedClient?.id}
+          clientRequiresVisit={selectedClient?.requires_visit ?? false}
           userOrgId={userOrgId}
           hotels={hotels}
           clientVisits={clientVisits}

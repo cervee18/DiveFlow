@@ -23,7 +23,7 @@ const SECTIONS: { id: SectionId; label: string; description: string }[] = [
 
 export default function ConfigurationClient({ orgId }: { orgId: string | null }) {
   const [section, setSection] = useState<SectionId>('general');
-  const { unitSystem, currency } = useOrgSettings();
+  const { unitSystem, currency, requireVisitForTrips } = useOrgSettings();
 
   const active = SECTIONS.find(s => s.id === section)!;
 
@@ -78,6 +78,7 @@ export default function ConfigurationClient({ orgId }: { orgId: string | null })
                 orgId={orgId}
                 initialUnitSystem={unitSystem}
                 initialCurrency={currency}
+                initialRequireVisitForTrips={requireVisitForTrips}
               />
             )}
             {section === 'boats'     && <VesselsConfig orgId={orgId} />}

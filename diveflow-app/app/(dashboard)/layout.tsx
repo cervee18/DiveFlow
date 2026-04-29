@@ -7,6 +7,7 @@ import SidebarNav       from "@/app/(dashboard)/components/SidebarNav";
 import SubNavBar        from "@/app/(dashboard)/components/SubNavBar";
 import { OrgSettingsProvider, type OrgSettings } from "@/app/(dashboard)/components/OrgSettingsContext";
 import { PermissionsProvider } from "@/app/(dashboard)/components/PermissionsContext";
+import DevToolsModal from "@/app/(dashboard)/components/DevToolsModal";
 import { getOpenSession } from "@/utils/pos-session";
 import { ALL_PERMISSIONS, PAGE_PERMISSION_MAP } from "@/lib/permissions";
 
@@ -35,14 +36,15 @@ export default async function DashboardLayout({
   const supabase = await createClient();
   const { data: profileData } = await supabase
     .from('profiles')
-    .select('organization_id, organizations ( unit_system, currency )')
+    .select('organization_id, organizations ( unit_system, currency, require_visit_for_trips )')
     .eq('id', user.id)
     .single();
 
   const org = (profileData?.organizations as any) ?? {};
   const orgSettings: OrgSettings = {
-    unitSystem: (org.unit_system ?? 'metric') as 'metric' | 'imperial',
-    currency:   org.currency ?? 'EUR',
+    unitSystem:           (org.unit_system ?? 'metric') as 'metric' | 'imperial',
+    currency:             org.currency ?? 'EUR',
+    requireVisitForTrips: org.require_visit_for_trips ?? true,
   };
   const orgId = profileData?.organization_id as string | undefined;
 
@@ -77,6 +79,7 @@ export default async function DashboardLayout({
 
   const openSession = orgId ? await getOpenSession(orgId, supabase) : null;
   const isPOSOpen = !!openSession;
+  const isLocalDev = process.env.NEXT_PUBLIC_SUPABASE_URL?.includes('127.0.0.1') ?? false;
 
   return (
     <OrgSettingsProvider settings={orgSettings}>
@@ -97,6 +100,7 @@ export default async function DashboardLayout({
           </div>
 
           <MobileNav isStaff={staff} />
+          {isLocalDev && orgId && <DevToolsModal orgId={orgId} />}
         </div>
       </PermissionsProvider>
     </OrgSettingsProvider>

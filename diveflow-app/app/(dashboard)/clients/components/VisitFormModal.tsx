@@ -6,9 +6,10 @@ interface VisitFormModalProps {
   mode: 'add' | 'edit';
   editingVisit: any;
   selectedClientId?: string;
+  clientRequiresVisit?: boolean;
   userOrgId: string | null;
   hotels: any[];
-  clientVisits: any[]; 
+  clientVisits: any[];
   onClose: () => void;
   onSuccess: () => void;
 }
@@ -17,6 +18,7 @@ export default function VisitFormModal({
   mode,
   editingVisit,
   selectedClientId,
+  clientRequiresVisit = false,
   userOrgId,
   hotels,
   clientVisits,
@@ -29,6 +31,8 @@ export default function VisitFormModal({
   // -- Visit Details State --
   const [startDate, setStartDate] = useState(editingVisit?.visits?.start_date || "");
   const [endDate, setEndDate] = useState(editingVisit?.visits?.end_date || "");
+  const [selectedHotelId, setSelectedHotelId] = useState<string>(editingVisit?.visits?.hotel_id || "");
+  const [roomNumber, setRoomNumber] = useState<string>(editingVisit?.room_number || "");
 
   // -- Companion State --
   const initialCompanions = useMemo(() => {
@@ -145,41 +149,65 @@ export default function VisitFormModal({
   const handleSaveVisit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!selectedClientId || !userOrgId || !startDate || !endDate || hasOverlap) return;
+    if (clientRequiresVisit && (!selectedHotelId || !roomNumber.trim())) return;
     setIsSavingVisit(true);
-    
-    const fd = new FormData(e.currentTarget);
-    const hotelId = fd.get("hotel_id") || null;
-    const roomNumber = fd.get("room_number") || null;
+
+    const hotelId = selectedHotelId || null;
+    const roomNumberValue = roomNumber.trim() || null;
 
     let targetVisitId = null;
 
     if (mode === 'add') {
       const { data: newVisit, error: visitError } = await supabase.from("visits").insert({
         organization_id: userOrgId,
-        start_date: startDate, 
+        start_date: startDate,
         end_date: endDate,
         hotel_id: hotelId
       }).select().single();
 
-      if (!visitError && newVisit) {
-        targetVisitId = newVisit.id;
-        // Insert main client
-        await supabase.from("visit_clients").insert({
-          visit_id: targetVisitId,
-          client_id: selectedClientId,
-          room_number: roomNumber
-        });
+      if (visitError || !newVisit) {
+        console.error("Error creating visit:", visitError);
+        alert("Could not create visit. Please try again.");
+        setIsSavingVisit(false);
+        return;
+      }
+
+      targetVisitId = newVisit.id;
+      const { error: vcError } = await supabase.from("visit_clients").insert({
+        visit_id: targetVisitId,
+        client_id: selectedClientId,
+        room_number: roomNumberValue
+      });
+
+      if (vcError) {
+        console.error("Error linking client to visit:", vcError);
+        alert("Could not save visit. Please try again.");
+        setIsSavingVisit(false);
+        return;
       }
     } else if (mode === 'edit' && editingVisit) {
       targetVisitId = editingVisit.visits.id;
-      // Update visit
-      await supabase.from("visits").update({ 
-        start_date: startDate, end_date: endDate, hotel_id: hotelId 
+      const { error: updateError } = await supabase.from("visits").update({
+        start_date: startDate, end_date: endDate, hotel_id: hotelId
       }).eq("id", targetVisitId);
-      // Update main client room number
-      await supabase.from("visit_clients").update({ 
-        room_number: roomNumber 
+
+      if (updateError) {
+        console.error("Error updating visit:", updateError);
+        alert("Could not update visit. Please try again.");
+        setIsSavingVisit(false);
+        return;
+      }
+
+      const { error: vcUpdateError } = await supabase.from("visit_clients").update({
+        room_number: roomNumberValue
       }).eq("id", editingVisit.id);
+
+      if (vcUpdateError) {
+        console.error("Error updating room number:", vcUpdateError);
+        alert("Could not update room number. Please try again.");
+        setIsSavingVisit(false);
+        return;
+      }
     }
 
     // Process Companions if we have a valid visit ID
@@ -191,7 +219,7 @@ export default function VisitFormModal({
         const inserts = companionsToAdd.map(c => ({
           visit_id: targetVisitId,
           client_id: c.id,
-          room_number: roomNumber // Assuming companions share the room initially
+          room_number: roomNumberValue
         }));
         await supabase.from("visit_clients").insert(inserts);
       }
@@ -248,15 +276,32 @@ export default function VisitFormModal({
 
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Hotel</label>
-                <select name="hotel_id" defaultValue={editingVisit?.visits?.hotel_id || ""} className="w-full px-3 py-2 border rounded-md border-slate-300 focus:ring-2 focus:ring-teal-500 outline-none bg-white">
+                <label className="block text-sm font-medium text-slate-700 mb-1">
+                  Hotel {clientRequiresVisit && <span className="text-red-500">*</span>}
+                </label>
+                <select
+                  name="hotel_id"
+                  value={selectedHotelId}
+                  onChange={e => setSelectedHotelId(e.target.value)}
+                  required={clientRequiresVisit}
+                  className="w-full px-3 py-2 border rounded-md border-slate-300 focus:ring-2 focus:ring-teal-500 outline-none bg-white"
+                >
                   <option value="">Select Hotel</option>
                   {hotels.map(h => <option key={h.id} value={h.id}>{h.name}</option>)}
                 </select>
               </div>
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Room Number</label>
-                <input type="text" name="room_number" defaultValue={editingVisit?.room_number || ""} className="w-full px-3 py-2 border rounded-md border-slate-300 focus:ring-2 focus:ring-teal-500 outline-none" />
+                <label className="block text-sm font-medium text-slate-700 mb-1">
+                  Room Number {clientRequiresVisit && <span className="text-red-500">*</span>}
+                </label>
+                <input
+                  type="text"
+                  name="room_number"
+                  value={roomNumber}
+                  onChange={e => setRoomNumber(e.target.value)}
+                  required={clientRequiresVisit}
+                  className="w-full px-3 py-2 border rounded-md border-slate-300 focus:ring-2 focus:ring-teal-500 outline-none"
+                />
               </div>
             </div>
           </form>
@@ -354,7 +399,7 @@ export default function VisitFormModal({
           <button 
             type="submit" 
             form="visit-form" // Triggers the form submission above
-            disabled={isSavingVisit || hasOverlap || !startDate || !endDate}
+            disabled={isSavingVisit || hasOverlap || !startDate || !endDate || (clientRequiresVisit && (!selectedHotelId || !roomNumber.trim()))}
             className="bg-teal-600 hover:bg-teal-700 text-white px-5 py-2 rounded-md text-sm font-medium shadow-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {isSavingVisit ? "Saving..." : "Save Visit"}

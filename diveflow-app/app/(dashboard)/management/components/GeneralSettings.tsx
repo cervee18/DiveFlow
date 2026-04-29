@@ -71,29 +71,33 @@ export default function GeneralSettings({
   orgId,
   initialUnitSystem,
   initialCurrency,
+  initialRequireVisitForTrips,
 }: {
   orgId: string;
   initialUnitSystem: UnitSystem;
   initialCurrency: string;
+  initialRequireVisitForTrips: boolean;
 }) {
   const supabase = createClient();
 
-  const [unitSystem, setUnitSystem] = useState<UnitSystem>(initialUnitSystem);
-  const [currency,   setCurrency]   = useState(initialCurrency);
-  const [isSaving,   setIsSaving]   = useState(false);
-  const [saved,      setSaved]      = useState(false);
-  const [error,      setError]      = useState<string | null>(null);
+  const [unitSystem,           setUnitSystem]           = useState<UnitSystem>(initialUnitSystem);
+  const [currency,             setCurrency]             = useState(initialCurrency);
+  const [requireVisitForTrips, setRequireVisitForTrips] = useState(initialRequireVisitForTrips);
+  const [isSaving,             setIsSaving]             = useState(false);
+  const [saved,                setSaved]                = useState(false);
+  const [error,                setError]                = useState<string | null>(null);
 
   const isDirty =
-    unitSystem !== initialUnitSystem ||
-    currency   !== initialCurrency;
+    unitSystem           !== initialUnitSystem ||
+    currency             !== initialCurrency ||
+    requireVisitForTrips !== initialRequireVisitForTrips;
 
   const handleSave = async () => {
     setIsSaving(true);
     setError(null);
     const { error } = await supabase
       .from('organizations')
-      .update({ unit_system: unitSystem, currency })
+      .update({ unit_system: unitSystem, currency, require_visit_for_trips: requireVisitForTrips })
       .eq('id', orgId);
     if (error) { setError(error.message); setIsSaving(false); return; }
     setSaved(true);
@@ -127,6 +131,19 @@ export default function GeneralSettings({
           description="Controls how depths and distances are displayed across the app"
         >
           <UnitToggle value={unitSystem} onChange={setUnitSystem} />
+        </SettingRow>
+
+        <SettingRow
+          label="Require visit for trips"
+          description="New clients default to requiring an active visit booking before joining a trip. Local / walk-in clients can be toggled individually."
+        >
+          <button
+            type="button"
+            onClick={() => setRequireVisitForTrips(v => !v)}
+            className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors focus:outline-none ${requireVisitForTrips ? 'bg-teal-500' : 'bg-slate-300'}`}
+          >
+            <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${requireVisitForTrips ? 'translate-x-6' : 'translate-x-1'}`} />
+          </button>
         </SettingRow>
 
         <SettingRow
