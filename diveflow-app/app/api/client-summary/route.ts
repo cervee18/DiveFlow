@@ -21,7 +21,7 @@ export async function GET(request: NextRequest) {
 
   if (!result.ok) {
     if (result.error === 'not_found') return Response.json({ error: "Client not found" }, { status: 404 });
-    return Response.json({ error: "missing_logs", trips: result.trips }, { status: 422 });
+    return Response.json({ error: "missing_logs" }, { status: 422 });
   }
 
   const html = buildSummaryHtml(result.data).replace('</body>', '<script>setTimeout(() => window.print(), 300);</script></body>');
