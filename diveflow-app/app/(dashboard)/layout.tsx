@@ -7,7 +7,6 @@ import SidebarNav       from "@/app/(dashboard)/components/SidebarNav";
 import SubNavBar        from "@/app/(dashboard)/components/SubNavBar";
 import { OrgSettingsProvider, type OrgSettings } from "@/app/(dashboard)/components/OrgSettingsContext";
 import { PermissionsProvider } from "@/app/(dashboard)/components/PermissionsContext";
-import DevToolsModal from "@/app/(dashboard)/components/DevToolsModal";
 import { getOpenSession } from "@/utils/pos-session";
 import { ALL_PERMISSIONS, PAGE_PERMISSION_MAP } from "@/lib/permissions";
 
@@ -79,7 +78,6 @@ export default async function DashboardLayout({
 
   const openSession = orgId ? await getOpenSession(orgId, supabase) : null;
   const isPOSOpen = !!openSession;
-  const isLocalDev = process.env.NEXT_PUBLIC_SUPABASE_URL?.includes('127.0.0.1') ?? false;
 
   return (
     <OrgSettingsProvider settings={orgSettings}>
@@ -100,7 +98,6 @@ export default async function DashboardLayout({
           </div>
 
           <MobileNav isStaff={staff} />
-          {isLocalDev && orgId && <DevToolsModal orgId={orgId} />}
         </div>
       </PermissionsProvider>
     </OrgSettingsProvider>
