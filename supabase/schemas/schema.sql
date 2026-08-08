@@ -58,7 +58,9 @@ CREATE TYPE "public"."user_role" AS ENUM (
     'client',
     'staff_1',
     'staff_2',
-    'admin'
+    'admin',
+    'staff_3',
+    'staff_4'
 );
 
 
@@ -108,9 +110,8 @@ $$;
 ALTER FUNCTION "public"."add_client_to_organization"("p_user_id" "uuid") OWNER TO "postgres";
 
 
-CREATE OR REPLACE FUNCTION "public"."add_clients_to_trip"("p_trip_id" "uuid", "p_client_ids" "uuid"[], "p_trip_date" "date") RETURNS "void"
+CREATE OR REPLACE FUNCTION "public"."add_clients_to_trip"("p_trip_id" "uuid", "p_client_ids" "uuid"[], "p_trip_date" "date", "p_status" "text" DEFAULT 'confirmed'::"text") RETURNS "void"
     LANGUAGE "plpgsql" SECURITY DEFINER
-    SET "search_path" TO 'public'
     AS $$
 DECLARE
   v_client_id        uuid;
@@ -118,26 +119,26 @@ DECLARE
   v_last_tc          record;
   v_pick_up          boolean := false;
 BEGIN
-  -- Auth guard
-  IF auth.uid() IS NULL THEN
-    RAISE EXCEPTION 'authentication required';
-  END IF;
-
-  IF NOT EXISTS (
-    SELECT 1
-    FROM public.trips t
-    JOIN public.profiles p ON p.organization_id = t.organization_id
-    WHERE t.id = p_trip_id
-      AND p.id = auth.uid()
-  ) THEN
-    RAISE EXCEPTION 'permission denied: you do not have access to this trip';
-  END IF;
-
   FOREACH v_client_id IN ARRAY p_client_ids LOOP
 
+    -- 0. Reject if client requires a visit and none covers this trip date (ERRCODE 23001)
+    IF (SELECT requires_visit FROM clients WHERE id = v_client_id) THEN
+      IF NOT EXISTS (
+        SELECT 1
+        FROM visit_clients vc
+        JOIN visits v ON v.id = vc.visit_id
+        WHERE vc.client_id = v_client_id
+          AND v.start_date <= p_trip_date
+          AND v.end_date   >= p_trip_date
+      ) THEN
+        RAISE EXCEPTION 'Client requires an active visit covering % to be added to a trip. Create a visit first, or mark the client as a local resident.', p_trip_date
+          USING ERRCODE = '23001';
+      END IF;
+    END IF;
+
     -- 1. Insert (unique constraint will raise 23505 if already on trip)
-    INSERT INTO trip_clients (trip_id, client_id)
-    VALUES (p_trip_id, v_client_id)
+    INSERT INTO trip_clients (trip_id, client_id, status)
+    VALUES (p_trip_id, v_client_id, p_status)
     RETURNING id INTO v_new_tc_id;
 
     -- 2. Most recent prior trip → equipment defaults
@@ -192,7 +193,7 @@ END;
 $$;
 
 
-ALTER FUNCTION "public"."add_clients_to_trip"("p_trip_id" "uuid", "p_client_ids" "uuid"[], "p_trip_date" "date") OWNER TO "postgres";
+ALTER FUNCTION "public"."add_clients_to_trip"("p_trip_id" "uuid", "p_client_ids" "uuid"[], "p_trip_date" "date", "p_status" "text") OWNER TO "postgres";
 
 
 CREATE OR REPLACE FUNCTION "public"."add_items_to_client_tab"("p_org_id" "uuid", "p_client_id" "uuid", "p_visit_id" "uuid", "p_items" "jsonb") RETURNS "jsonb"
@@ -321,286 +322,142 @@ CREATE OR REPLACE FUNCTION "public"."calculate_visit_invoice_payload"("p_visit_i
     LANGUAGE "plpgsql" SECURITY DEFINER
     AS $$
 DECLARE
-  v_invoice_status      text    := 'open';
-  v_invoice_id          uuid    := null;
-  v_visit_start         date;
-  v_visit_end           date;
-  v_org_id              uuid;
-  v_rental_daily_cap    numeric(10,2);
-  v_clients             jsonb;
-  v_shared_group_items  jsonb;
+  v_invoice_status text := 'open';
+  v_invoice_id uuid := null;
+  v_visit_start date;
+  v_visit_end date;
+  v_clients jsonb;
+  v_shared_group_items jsonb;
   v_unassigned_payments jsonb;
-  v_master_subtotal     numeric := 0;
-  v_master_paid         numeric := 0;
-  v_master_balance      numeric := 0;
-  v_result              json;
+  v_master_subtotal numeric := 0;
+  v_master_paid numeric := 0;
+  v_master_balance numeric := 0;
+  v_result json;
 BEGIN
-  SELECT v.start_date, v.end_date, v.organization_id
-  INTO   v_visit_start, v_visit_end, v_org_id
-  FROM   public.visits v WHERE v.id = p_visit_id;
+  SELECT start_date, end_date INTO v_visit_start, v_visit_end
+  FROM public.visits WHERE id = p_visit_id;
 
   SELECT id, status INTO v_invoice_id, v_invoice_status
-  FROM   public.pos_invoices WHERE visit_id = p_visit_id LIMIT 1;
-
-  SELECT rental_daily_cap INTO v_rental_daily_cap
-  FROM   public.org_pos_config WHERE organization_id = v_org_id;
+  FROM public.pos_invoices WHERE visit_id = p_visit_id LIMIT 1;
 
   WITH visit_clients_list AS (
-    SELECT c.id AS client_id,
-           c.first_name || ' ' || c.last_name AS client_name
-    FROM   public.visit_clients vc
-    JOIN   public.clients c ON c.id = vc.client_id
-    WHERE  vc.visit_id = p_visit_id
+    SELECT c.id AS client_id, c.first_name || ' ' || c.last_name AS client_name
+    FROM public.visit_clients vc
+    JOIN public.clients c ON c.id = vc.client_id
+    WHERE vc.visit_id = p_visit_id
   ),
-
-  visit_waivers AS (
-    SELECT client_id, item_key
-    FROM   public.pos_auto_item_waivers
-    WHERE  visit_id = p_visit_id
-  ),
-
-  visit_price_overrides AS (
-    SELECT client_id, item_key, price
-    FROM   public.pos_auto_item_price_overrides
-    WHERE  visit_id = p_visit_id
-  ),
-
-  client_trip_type_counts AS (
-    SELECT tc.client_id,
-           t.trip_type_id,
-           COUNT(*) AS trip_count
-    FROM   public.trip_clients tc
-    JOIN   public.trips      t  ON t.id  = tc.trip_id
-    JOIN   public.trip_types tt ON tt.id = t.trip_type_id
-    WHERE  tc.client_id IN (SELECT client_id FROM visit_clients_list)
-      AND  t.start_time::date BETWEEN v_visit_start AND v_visit_end
-      AND  tt.billing_via_activity = false
-      AND  tt.pos_product_id IS NOT NULL
-    GROUP  BY tc.client_id, t.trip_type_id
-  ),
-
-  client_tier_prices AS (
-    SELECT ctc.client_id,
-           ctc.trip_type_id,
-           (
-             SELECT tpt.unit_price
-             FROM   public.trip_pricing_tiers tpt
-             WHERE  tpt.trip_type_id = ctc.trip_type_id
-               AND  tpt.min_qty      <= ctc.trip_count
-             ORDER  BY tpt.min_qty DESC
-             LIMIT  1
-           ) AS tier_price
-    FROM   client_trip_type_counts ctc
-  ),
-
-  client_trips_list AS (
-    SELECT tc.client_id,
-           tc.id                             AS trip_client_id,
-           'trip:' || tc.id::text            AS item_key,
-           t.id                              AS trip_id,
-           t.start_time,
-           pp.name                           AS product_name,
-           COALESCE(ctp.tier_price, pp.price) AS effective_price
-    FROM   public.trip_clients   tc
-    JOIN   public.trips          t   ON t.id   = tc.trip_id
-    JOIN   public.trip_types     tt  ON tt.id  = t.trip_type_id
-    JOIN   public.pos_products   pp  ON pp.id  = tt.pos_product_id
-    LEFT   JOIN client_tier_prices ctp
-            ON  ctp.client_id    = tc.client_id
-            AND ctp.trip_type_id = tt.id
-    WHERE  tc.client_id IN (SELECT client_id FROM visit_clients_list)
-      AND  t.start_time::date BETWEEN v_visit_start AND v_visit_end
-      AND  tt.billing_via_activity = false
-      AND  tt.pos_product_id IS NOT NULL
-  ),
-
-  daily_rental_items AS (
-    SELECT tc.client_id,
-           t.start_time::date AS trip_date,
-           frm.rental_field,
-           pp.name,
-           MAX(pp.price) AS price
-    FROM   public.trip_clients        tc
-    JOIN   public.trips               t   ON t.id  = tc.trip_id
-    JOIN   public.pos_rental_mappings frm ON frm.organization_id = t.organization_id
-    JOIN   public.pos_products        pp  ON pp.id = frm.pos_product_id
-    WHERE  tc.client_id IN (SELECT client_id FROM visit_clients_list)
-      AND  t.start_time::date BETWEEN v_visit_start AND v_visit_end
-      AND  (
-             (frm.rental_field = 'mask'      AND tc.mask IS NOT NULL AND tc.mask != '') OR
-             (frm.rental_field = 'fins'      AND tc.fins IS NOT NULL AND tc.fins != '') OR
-             (frm.rental_field = 'bcd'       AND tc.bcd  IS NOT NULL AND tc.bcd  != '') OR
-             (frm.rental_field = 'regulator' AND tc.regulator = true)                  OR
-             (frm.rental_field = 'wetsuit'   AND tc.wetsuit IS NOT NULL AND tc.wetsuit != '') OR
-             (frm.rental_field = 'computer'  AND tc.computer = true)                   OR
-             (frm.rental_field = 'nitrox'    AND tc.nitrox1  = true)
-           )
-    GROUP  BY tc.client_id, t.start_time::date, frm.rental_field, pp.name
-  ),
-
-  daily_rental_totals AS (
-    SELECT client_id,
-           trip_date,
-           SUM(price) AS raw_total,
-           LEAST(SUM(price), COALESCE(v_rental_daily_cap, SUM(price))) AS charged_amount
-    FROM   daily_rental_items
-    GROUP  BY client_id, trip_date
-  ),
-
-  automated_items AS (
-
-    -- ① Trips
-    SELECT ctl.client_id,
-           jsonb_build_object(
-             'item_key',   ctl.item_key,
-             'name',       ctl.product_name,
-             'base_price', ctl.effective_price,
-             'price',      CASE WHEN vw.item_key IS NOT NULL THEN 0
-                                ELSE COALESCE(po.price, ctl.effective_price) END,
-             'type',       'trip',
-             'trip_id',    ctl.trip_id,
-             'trip_date',  ctl.start_time,
-             'waived',     (vw.item_key IS NOT NULL)
-           ) AS item,
-           CASE WHEN vw.item_key IS NOT NULL THEN 0
-                ELSE COALESCE(po.price, ctl.effective_price) END AS price_num
-    FROM   client_trips_list ctl
-    LEFT   JOIN visit_waivers vw
-           ON  vw.client_id = ctl.client_id AND vw.item_key = ctl.item_key
-    LEFT   JOIN visit_price_overrides po
-           ON  po.client_id = ctl.client_id AND po.item_key = ctl.item_key
+  automated_trip_items AS (
+    -- Trip type charge — skipped when billing_via_activity = true.
+    -- price_override on trip_clients takes precedence over the product's default price.
+    SELECT
+      tc.client_id,
+      jsonb_build_object(
+        'name',      pp.name,
+        'price',     COALESCE(tc.price_override, pp.price),
+        'type',      'trip',
+        'trip_id',   t.id,
+        'trip_date', t.start_time
+      ) AS item,
+      COALESCE(tc.price_override, pp.price) AS price_num
+    FROM public.trip_clients tc
+    JOIN public.trips t ON t.id = tc.trip_id
+    JOIN public.trip_types tt ON tt.id = t.trip_type_id
+    JOIN public.pos_products pp ON pp.id = tt.pos_product_id
+    WHERE tc.client_id IN (SELECT client_id FROM visit_clients_list)
+      AND t.start_time::date >= v_visit_start
+      AND t.start_time::date <= v_visit_end
+      AND tt.billing_via_activity = false
 
     UNION ALL
-
-    -- ② Private guide fee
-    SELECT tc.client_id,
-           jsonb_build_object(
-             'item_key',   'guide:' || t.id::text,
-             'name',       pp.name,
-             'base_price', pp.price,
-             'price',      CASE WHEN vw.item_key IS NOT NULL THEN 0
-                                ELSE COALESCE(po.price, pp.price) END,
-             'type',       'private_guide',
-             'trip_id',    t.id,
-             'trip_date',  t.start_time,
-             'waived',     (vw.item_key IS NOT NULL)
-           ) AS item,
-           CASE WHEN vw.item_key IS NOT NULL THEN 0
-                ELSE COALESCE(po.price, pp.price) END AS price_num
-    FROM   public.trip_clients  tc
-    JOIN   public.trips         t   ON t.id  = tc.trip_id
-    JOIN   public.org_pos_config opc ON opc.organization_id = v_org_id
-    JOIN   public.pos_products  pp  ON pp.id = opc.private_instruction_product_id
-    LEFT   JOIN visit_waivers   vw
-           ON  vw.client_id = tc.client_id AND vw.item_key = 'guide:' || t.id::text
-    LEFT   JOIN visit_price_overrides po
-           ON  po.client_id = tc.client_id AND po.item_key = 'guide:' || t.id::text
-    WHERE  tc.client_id IN (SELECT client_id FROM visit_clients_list)
-      AND  t.start_time::date BETWEEN v_visit_start AND v_visit_end
-      AND  tc.private = true
+    -- Activity charge (always fires when activity_id is set on trip_client)
+    SELECT
+      tc.client_id,
+      jsonb_build_object('name', pp.name, 'price', pp.price, 'type', 'activity', 'trip_id', t.id, 'trip_date', t.start_time) AS item,
+      pp.price AS price_num
+    FROM public.trip_clients tc
+    JOIN public.trips t ON t.id = tc.trip_id
+    JOIN public.activities a ON a.id = tc.activity_id
+    JOIN public.pos_products pp ON pp.id = a.pos_product_id
+    WHERE tc.client_id IN (SELECT client_id FROM visit_clients_list)
+      AND t.start_time::date >= v_visit_start
+      AND t.start_time::date <= v_visit_end
 
     UNION ALL
-
-    -- ③ Rental uncapped
-    SELECT dri.client_id,
-           jsonb_build_object(
-             'item_key',   'rental:' || dri.trip_date::text,
-             'name',       dri.name || ' Rental',
-             'base_price', dri.price,
-             'price',      CASE WHEN vw.item_key IS NOT NULL THEN 0
-                                ELSE COALESCE(po.price, dri.price) END,
-             'type',       'rental',
-             'trip_date',  dri.trip_date::timestamptz,
-             'waived',     (vw.item_key IS NOT NULL)
-           ) AS item,
-           CASE WHEN vw.item_key IS NOT NULL THEN 0
-                ELSE COALESCE(po.price, dri.price) END AS price_num
-    FROM   daily_rental_items dri
-    JOIN   daily_rental_totals drt
-           ON  drt.client_id = dri.client_id AND drt.trip_date = dri.trip_date
-    LEFT   JOIN visit_waivers vw
-           ON  vw.client_id = dri.client_id AND vw.item_key = 'rental:' || dri.trip_date::text
-    LEFT   JOIN visit_price_overrides po
-           ON  po.client_id = dri.client_id AND po.item_key = 'rental:' || dri.trip_date::text
-    WHERE  drt.raw_total <= drt.charged_amount
+    -- Course charge
+    SELECT
+      tc.client_id,
+      jsonb_build_object('name', pp.name, 'price', pp.price, 'type', 'course', 'trip_id', t.id, 'trip_date', t.start_time) AS item,
+      pp.price AS price_num
+    FROM public.trip_clients tc
+    JOIN public.trips t ON t.id = tc.trip_id
+    JOIN public.courses c ON c.id = tc.course_id
+    JOIN public.pos_products pp ON pp.id = c.pos_product_id
+    WHERE tc.client_id IN (SELECT client_id FROM visit_clients_list)
+      AND t.start_time::date >= v_visit_start
+      AND t.start_time::date <= v_visit_end
 
     UNION ALL
-
-    -- ④ Rental capped
-    SELECT drt.client_id,
-           jsonb_build_object(
-             'item_key',   'rental:' || drt.trip_date::text,
-             'name',       'Full Rental Gear',
-             'base_price', drt.charged_amount,
-             'price',      CASE WHEN vw.item_key IS NOT NULL THEN 0
-                                ELSE COALESCE(po.price, drt.charged_amount) END,
-             'type',       'rental',
-             'trip_date',  drt.trip_date::timestamptz,
-             'waived',     (vw.item_key IS NOT NULL)
-           ) AS item,
-           CASE WHEN vw.item_key IS NOT NULL THEN 0
-                ELSE COALESCE(po.price, drt.charged_amount) END AS price_num
-    FROM   daily_rental_totals drt
-    LEFT   JOIN visit_waivers vw
-           ON  vw.client_id = drt.client_id AND vw.item_key = 'rental:' || drt.trip_date::text
-    LEFT   JOIN visit_price_overrides po
-           ON  po.client_id = drt.client_id AND po.item_key = 'rental:' || drt.trip_date::text
-    WHERE  drt.raw_total > drt.charged_amount
+    -- Rental gear charge
+    SELECT
+      tc.client_id,
+      jsonb_build_object('name', pp.name, 'price', pp.price, 'type', 'rental', 'trip_id', t.id, 'trip_date', t.start_time) AS item,
+      pp.price AS price_num
+    FROM public.trip_clients tc
+    JOIN public.trips t ON t.id = tc.trip_id
+    JOIN public.pos_rental_mappings frm ON frm.organization_id = t.organization_id
+    JOIN public.pos_products pp ON pp.id = frm.pos_product_id
+    WHERE tc.client_id IN (SELECT client_id FROM visit_clients_list)
+      AND t.start_time::date >= v_visit_start
+      AND t.start_time::date <= v_visit_end
+      AND (
+        (frm.rental_field = 'mask'      AND tc.mask IS NOT NULL AND tc.mask != '') OR
+        (frm.rental_field = 'fins'      AND tc.fins IS NOT NULL AND tc.fins != '') OR
+        (frm.rental_field = 'bcd'       AND tc.bcd IS NOT NULL AND tc.bcd != '') OR
+        (frm.rental_field = 'regulator' AND tc.regulator = true) OR
+        (frm.rental_field = 'wetsuit'   AND tc.wetsuit IS NOT NULL AND tc.wetsuit != '') OR
+        (frm.rental_field = 'computer'  AND tc.computer = true) OR
+        (frm.rental_field = 'nitrox'    AND tc.nitrox1 = true)
+      )
   ),
-
   client_aggs AS (
-    SELECT vcl.client_id,
-           vcl.client_name,
-           COALESCE(
-             (SELECT jsonb_agg(item) FROM automated_items ai WHERE ai.client_id = vcl.client_id),
-             '[]'::jsonb
-           ) AS automated_items,
-           COALESCE(
-             (SELECT SUM(price_num) FROM automated_items ai WHERE ai.client_id = vcl.client_id),
-             0
-           ) AS auto_subtotal,
-           COALESCE(
-             (SELECT jsonb_agg(jsonb_build_object(
-                       'item_id',    pii.id,
-                       'name',       pp.name,
-                       'price',      pii.unit_price,
-                       'base_price', pp.price,
-                       'qty',        pii.quantity))
-              FROM   public.pos_invoice_items pii
-              JOIN   public.pos_products pp ON pp.id = pii.pos_product_id
-              WHERE  pii.invoice_id = v_invoice_id AND pii.client_id = vcl.client_id),
-             '[]'::jsonb
-           ) AS manual_items,
-           COALESCE(
-             (SELECT SUM(pii.unit_price * pii.quantity)
-              FROM   public.pos_invoice_items pii
-              WHERE  pii.invoice_id = v_invoice_id AND pii.client_id = vcl.client_id),
-             0
-           ) AS manual_subtotal,
-           COALESCE(
-             (SELECT jsonb_agg(jsonb_build_object('date', ppay.created_at, 'amount', ppay.amount, 'method', ppay.payment_method))
-              FROM   public.pos_payments ppay
-              WHERE  ppay.invoice_id = v_invoice_id AND ppay.client_id = vcl.client_id AND ppay.voided_at IS NULL),
-             '[]'::jsonb
-           ) AS payments,
-           COALESCE(
-             (SELECT SUM(ppay.amount)
-              FROM   public.pos_payments ppay
-              WHERE  ppay.invoice_id = v_invoice_id AND ppay.client_id = vcl.client_id AND ppay.voided_at IS NULL),
-             0
-           ) AS paid_total
-    FROM   visit_clients_list vcl
+    SELECT
+      vcl.client_id,
+      vcl.client_name,
+      COALESCE((SELECT jsonb_agg(item) FROM automated_trip_items ati WHERE ati.client_id = vcl.client_id), '[]'::jsonb) AS automated_items,
+      COALESCE((SELECT sum(price_num) FROM automated_trip_items ati WHERE ati.client_id = vcl.client_id), 0) AS auto_subtotal,
+      COALESCE(
+        (SELECT jsonb_agg(jsonb_build_object('name', pp.name, 'price', pii.unit_price, 'qty', pii.quantity))
+         FROM public.pos_invoice_items pii
+         JOIN public.pos_products pp ON pp.id = pii.pos_product_id
+         WHERE pii.invoice_id = v_invoice_id AND pii.client_id = vcl.client_id), '[]'::jsonb
+      ) AS manual_items,
+      COALESCE((SELECT sum(pii.unit_price * pii.quantity) FROM public.pos_invoice_items pii WHERE pii.invoice_id = v_invoice_id AND pii.client_id = vcl.client_id), 0) AS manual_subtotal,
+      COALESCE(
+        (SELECT jsonb_agg(jsonb_build_object('date', ppay.created_at, 'amount', ppay.amount, 'method', ppay.payment_method))
+         FROM public.pos_payments ppay
+         WHERE ppay.invoice_id = v_invoice_id
+           AND ppay.client_id = vcl.client_id
+           AND ppay.voided_at IS NULL), '[]'::jsonb
+      ) AS payments,
+      COALESCE(
+        (SELECT sum(ppay.amount)
+         FROM public.pos_payments ppay
+         WHERE ppay.invoice_id = v_invoice_id
+           AND ppay.client_id = vcl.client_id
+           AND ppay.voided_at IS NULL), 0
+      ) AS paid_total
+    FROM visit_clients_list vcl
   )
   SELECT jsonb_object_agg(
     client_id,
     jsonb_build_object(
-      'client_name',     client_name,
+      'client_name', client_name,
       'automated_items', automated_items,
-      'manual_items',    manual_items,
-      'payments',        payments,
+      'manual_items', manual_items,
+      'payments', payments,
       'totals', jsonb_build_object(
-        'subtotal',    auto_subtotal + manual_subtotal,
-        'paid',        paid_total,
+        'subtotal', auto_subtotal + manual_subtotal,
+        'paid', paid_total,
         'balance_due', (auto_subtotal + manual_subtotal) - paid_total
       )
     )
@@ -610,32 +467,30 @@ BEGIN
   IF v_clients IS NULL THEN v_clients := '{}'::jsonb; END IF;
 
   SELECT COALESCE(
-    jsonb_agg(jsonb_build_object('name', pp.name, 'price', pii.unit_price, 'qty', pii.quantity)),
-    '[]'::jsonb
+    jsonb_agg(jsonb_build_object('name', pp.name, 'price', pii.unit_price, 'qty', pii.quantity)), '[]'::jsonb
   ) INTO v_shared_group_items
-  FROM   public.pos_invoice_items pii
-  JOIN   public.pos_products pp ON pp.id = pii.pos_product_id
-  WHERE  pii.invoice_id = v_invoice_id AND pii.client_id IS NULL;
+  FROM public.pos_invoice_items pii
+  JOIN public.pos_products pp ON pp.id = pii.pos_product_id
+  WHERE pii.invoice_id = v_invoice_id AND pii.client_id IS NULL;
 
   SELECT COALESCE(
-    jsonb_agg(jsonb_build_object('date', ppay.created_at, 'amount', ppay.amount, 'method', ppay.payment_method)),
-    '[]'::jsonb
+    jsonb_agg(jsonb_build_object('date', ppay.created_at, 'amount', ppay.amount, 'method', ppay.payment_method)), '[]'::jsonb
   ) INTO v_unassigned_payments
-  FROM   public.pos_payments ppay
-  WHERE  ppay.invoice_id = v_invoice_id AND ppay.client_id IS NULL AND ppay.voided_at IS NULL;
+  FROM public.pos_payments ppay
+  WHERE ppay.invoice_id = v_invoice_id
+    AND ppay.client_id IS NULL
+    AND ppay.voided_at IS NULL;
 
   SELECT
     COALESCE(SUM((val->'totals'->>'subtotal')::numeric), 0),
-    COALESCE(SUM((val->'totals'->>'paid')::numeric),     0)
+    COALESCE(SUM((val->'totals'->>'paid')::numeric), 0)
   INTO v_master_subtotal, v_master_paid
   FROM jsonb_each(v_clients) AS t(key, val);
 
   v_master_subtotal := v_master_subtotal + COALESCE(
-    (SELECT SUM(unit_price * quantity) FROM public.pos_invoice_items
-     WHERE invoice_id = v_invoice_id AND client_id IS NULL), 0);
+    (SELECT sum(unit_price * quantity) FROM public.pos_invoice_items WHERE invoice_id = v_invoice_id AND client_id IS NULL), 0);
   v_master_paid := v_master_paid + COALESCE(
-    (SELECT SUM(amount) FROM public.pos_payments
-     WHERE invoice_id = v_invoice_id AND client_id IS NULL AND voided_at IS NULL), 0);
+    (SELECT sum(amount) FROM public.pos_payments WHERE invoice_id = v_invoice_id AND client_id IS NULL AND voided_at IS NULL), 0);
   v_master_balance := v_master_subtotal - v_master_paid;
 
   v_result := jsonb_build_object(
@@ -643,9 +498,9 @@ BEGIN
     'invoice_id',          v_invoice_id,
     'status',              COALESCE(v_invoice_status, 'open'),
     'clients',             v_clients,
-    'shared_group_items',  COALESCE(v_shared_group_items,  '[]'::jsonb),
+    'shared_group_items',  COALESCE(v_shared_group_items, '[]'::jsonb),
     'unassigned_payments', COALESCE(v_unassigned_payments, '[]'::jsonb),
-    'grand_totals', jsonb_build_object(
+    'grand_totals',        jsonb_build_object(
       'master_subtotal', v_master_subtotal,
       'master_paid',     v_master_paid,
       'master_balance',  v_master_balance
@@ -731,16 +586,13 @@ DECLARE
   v_max_divers integer;
   v_booked     integer;
 BEGIN
-  -- Waitlisted rows don't consume a confirmed slot
   IF NEW.status = 'waitlist' THEN
     RETURN NEW;
   END IF;
 
   SELECT max_divers INTO v_max_divers
-  FROM public.trips
-  WHERE id = NEW.trip_id;
+  FROM public.trips WHERE id = NEW.trip_id;
 
-  -- Count confirmed rows only, excluding the row being updated (UPDATE path)
   SELECT COUNT(*) INTO v_booked
   FROM public.trip_clients
   WHERE trip_id = NEW.trip_id
@@ -868,6 +720,167 @@ $$;
 ALTER FUNCTION "public"."checkout_session"("p_org_id" "uuid", "p_visit_id" "uuid", "p_invoice_id" "uuid", "p_client_id" "uuid", "p_items" "jsonb", "p_payment_amount" numeric, "p_payment_method" "text", "p_recorded_by" "uuid", "p_recorded_by_email" "text") OWNER TO "postgres";
 
 
+CREATE OR REPLACE FUNCTION "public"."confirm_booking_hold"("p_hold_id" "uuid") RETURNS "jsonb"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    AS $$
+DECLARE
+  v_booking    public.online_bookings;
+  v_guest      jsonb;
+  v_name       text;
+  v_email      text;
+  v_first      text;
+  v_last       text;
+  v_client_id  uuid;
+  v_visit_id   uuid;
+  v_trip_date  date;
+BEGIN
+  SELECT * INTO v_booking
+  FROM   public.online_bookings
+  WHERE  id = p_hold_id
+  FOR UPDATE;
+
+  IF v_booking.id IS NULL THEN
+    RETURN jsonb_build_object('error', 'Hold not found');
+  END IF;
+
+  IF v_booking.status != 'held' THEN
+    RETURN jsonb_build_object('error', 'Hold is not active', 'status', v_booking.status);
+  END IF;
+
+  IF v_booking.hold_expires_at < now() THEN
+    UPDATE public.online_bookings SET status = 'expired' WHERE id = p_hold_id;
+    RETURN jsonb_build_object('error', 'Hold has expired');
+  END IF;
+
+  UPDATE public.online_bookings
+  SET    status = 'confirmed', hold_expires_at = NULL
+  WHERE  id = p_hold_id;
+
+  SELECT start_time::date INTO v_trip_date
+  FROM   public.trips
+  WHERE  id = v_booking.trip_id;
+
+  -- Create one shared visit for the booking group
+  INSERT INTO public.visits (organization_id, start_date, end_date)
+  VALUES (v_booking.organization_id, v_trip_date, v_trip_date)
+  RETURNING id INTO v_visit_id;
+
+  -- Process each guest
+  FOR v_guest IN SELECT * FROM jsonb_array_elements(v_booking.guests)
+  LOOP
+    v_name  := trim(v_guest->>'name');
+    v_email := nullif(trim(v_guest->>'email'), '');
+
+    v_first := split_part(v_name, ' ', 1);
+    v_last  := trim(substring(v_name from length(split_part(v_name, ' ', 1)) + 2));
+
+    v_client_id := NULL;
+    IF v_email IS NOT NULL THEN
+      SELECT id INTO v_client_id
+      FROM   public.clients
+      WHERE  organization_id = v_booking.organization_id
+        AND  lower(email) = lower(v_email)
+      LIMIT 1;
+    END IF;
+
+    IF v_client_id IS NULL THEN
+      INSERT INTO public.clients (
+        organization_id, first_name, last_name, email, phone
+      ) VALUES (
+        v_booking.organization_id,
+        v_first,
+        v_last,
+        v_email,
+        CASE WHEN v_guest = v_booking.guests->0 THEN v_booking.lead_phone ELSE NULL END
+      )
+      RETURNING id INTO v_client_id;
+    END IF;
+
+    INSERT INTO public.visit_clients (visit_id, client_id)
+    VALUES (v_visit_id, v_client_id)
+    ON CONFLICT (visit_id, client_id) DO NOTHING;
+
+    -- Set price_override so the automated charge matches the portal price
+    INSERT INTO public.trip_clients (trip_id, client_id, price_override)
+    VALUES (v_booking.trip_id, v_client_id, v_booking.price_per_person)
+    ON CONFLICT DO NOTHING;
+
+    -- Record the online payment against the visit invoice
+    IF v_booking.price_per_person IS NOT NULL AND v_booking.price_per_person > 0 THEN
+      PERFORM public.checkout_session(
+        p_org_id            => v_booking.organization_id,
+        p_visit_id          => v_visit_id,
+        p_invoice_id        => NULL,
+        p_client_id         => v_client_id,
+        p_items             => '[]'::jsonb,
+        p_payment_amount    => v_booking.price_per_person,
+        p_payment_method    => 'online',
+        p_recorded_by       => NULL,
+        p_recorded_by_email => 'Online Booking'
+      );
+    END IF;
+
+  END LOOP;
+
+  RETURN jsonb_build_object('booking_id', p_hold_id, 'visit_id', v_visit_id);
+END;
+$$;
+
+
+ALTER FUNCTION "public"."confirm_booking_hold"("p_hold_id" "uuid") OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."create_booking_hold"("p_trip_id" "uuid", "p_pax_count" integer, "p_lead_name" "text", "p_lead_email" "text", "p_lead_phone" "text", "p_guests" "jsonb") RETURNS "jsonb"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    AS $$
+DECLARE
+  v_available  integer;
+  v_org_id     uuid;
+  v_price      numeric(10,2);
+  v_hold_id    uuid;
+  v_expires_at timestamptz;
+BEGIN
+  SELECT public.get_trip_available_spaces(t.id), t.organization_id,
+         tt.online_price_per_person
+  INTO   v_available, v_org_id, v_price
+  FROM   public.trips t
+  JOIN   public.trip_types tt ON tt.id = t.trip_type_id
+  WHERE  t.id = p_trip_id
+  FOR UPDATE;
+
+  IF v_org_id IS NULL THEN
+    RETURN jsonb_build_object('error', 'Trip not found');
+  END IF;
+
+  IF v_available < p_pax_count THEN
+    RETURN jsonb_build_object('error', 'Not enough spaces available', 'available', v_available);
+  END IF;
+
+  v_expires_at := now() + interval '15 minutes';
+
+  INSERT INTO public.online_bookings (
+    organization_id, trip_id, status, hold_expires_at,
+    lead_name, lead_email, lead_phone, pax_count, guests,
+    price_per_person
+  ) VALUES (
+    v_org_id, p_trip_id, 'held', v_expires_at,
+    p_lead_name, p_lead_email, p_lead_phone, p_pax_count, p_guests,
+    v_price
+  )
+  RETURNING id INTO v_hold_id;
+
+  RETURN jsonb_build_object(
+    'hold_id',          v_hold_id,
+    'expires_at',       v_expires_at,
+    'price_per_person', v_price
+  );
+END;
+$$;
+
+
+ALTER FUNCTION "public"."create_booking_hold"("p_trip_id" "uuid", "p_pax_count" integer, "p_lead_name" "text", "p_lead_email" "text", "p_lead_phone" "text", "p_guests" "jsonb") OWNER TO "postgres";
+
+
 CREATE OR REPLACE FUNCTION "public"."create_trip_series"("p_org_id" "uuid", "p_label" "text", "p_trip_type_id" "uuid", "p_entry_mode" "text", "p_duration_mins" integer, "p_max_divers" integer, "p_vessel_id" "uuid", "p_start_times" timestamp with time zone[]) RETURNS "uuid"[]
     LANGUAGE "plpgsql" SECURITY DEFINER
     AS $$
@@ -973,6 +986,157 @@ $$;
 
 
 ALTER FUNCTION "public"."elevate_user_to_staff"("p_user_id" "uuid", "p_target_role" "text") OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."expire_stale_holds"() RETURNS "void"
+    LANGUAGE "sql" SECURITY DEFINER
+    AS $$
+  UPDATE public.online_bookings
+  SET    status = 'expired'
+  WHERE  status = 'held'
+    AND  hold_expires_at < now();
+$$;
+
+
+ALTER FUNCTION "public"."expire_stale_holds"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."find_similar_clients"("p_client_id" "uuid") RETURNS TABLE("id" "uuid", "client_number" bigint, "first_name" "text", "last_name" "text", "email" "text", "phone" "text", "cert_number" "text", "cert_level" "uuid", "user_id" "uuid", "similarity_score" numeric, "match_reasons" "text"[])
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    AS $$
+#variable_conflict use_column
+DECLARE
+  v_client public.clients%ROWTYPE;
+  v_name   text;
+BEGIN
+  SELECT * INTO v_client FROM public.clients WHERE clients.id = p_client_id;
+  IF v_client.id IS NULL THEN RETURN; END IF;
+
+  v_name := lower(v_client.first_name || ' ' || v_client.last_name);
+
+  RETURN QUERY
+  SELECT
+    c.id,
+    c.client_number,
+    c.first_name,
+    c.last_name,
+    c.email,
+    c.phone,
+    c.cert_number,
+    c.cert_level,
+    c.user_id,
+    -- Weighted score: name is the primary signal; exact email/phone/cert matches
+    -- are treated as near-certain and scored very high regardless of name.
+    ROUND(CAST(
+      GREATEST(
+        similarity(lower(c.first_name || ' ' || c.last_name), v_name),
+        CASE WHEN v_client.email IS NOT NULL AND c.email IS NOT NULL
+          THEN similarity(lower(c.email), lower(v_client.email)) * 0.95 ELSE 0 END,
+        CASE WHEN v_client.phone IS NOT NULL AND c.phone IS NOT NULL
+          THEN similarity(c.phone, v_client.phone) * 0.85 ELSE 0 END,
+        CASE WHEN v_client.cert_number IS NOT NULL AND c.cert_number IS NOT NULL
+          THEN similarity(lower(c.cert_number), lower(v_client.cert_number)) * 0.90 ELSE 0 END
+      )
+    AS numeric), 3) AS similarity_score,
+    ARRAY_REMOVE(ARRAY[
+      CASE WHEN similarity(lower(c.first_name || ' ' || c.last_name), v_name) > 0.35
+        THEN 'name' ELSE NULL END,
+      CASE WHEN v_client.email IS NOT NULL AND c.email IS NOT NULL
+        AND similarity(lower(c.email), lower(v_client.email)) > 0.7
+        THEN 'email' ELSE NULL END,
+      CASE WHEN v_client.phone IS NOT NULL AND c.phone IS NOT NULL
+        AND similarity(c.phone, v_client.phone) > 0.7
+        THEN 'phone' ELSE NULL END,
+      CASE WHEN v_client.cert_number IS NOT NULL AND c.cert_number IS NOT NULL
+        AND similarity(lower(c.cert_number), lower(v_client.cert_number)) > 0.8
+        THEN 'cert_number' ELSE NULL END
+    ], NULL) AS match_reasons
+  FROM public.clients c
+  WHERE
+    c.organization_id = v_client.organization_id
+    AND c.id != p_client_id
+    AND (
+      similarity(lower(c.first_name || ' ' || c.last_name), v_name) > 0.35
+      OR (v_client.email IS NOT NULL AND c.email IS NOT NULL
+          AND similarity(lower(c.email), lower(v_client.email)) > 0.7)
+      OR (v_client.phone IS NOT NULL AND c.phone IS NOT NULL
+          AND similarity(c.phone, v_client.phone) > 0.7)
+      OR (v_client.cert_number IS NOT NULL AND c.cert_number IS NOT NULL
+          AND similarity(lower(c.cert_number), lower(v_client.cert_number)) > 0.8)
+    )
+  ORDER BY similarity_score DESC
+  LIMIT 5;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."find_similar_clients"("p_client_id" "uuid") OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."generate_trips_from_schedule"("p_org_id" "uuid", "p_months_ahead" integer DEFAULT 24) RETURNS integer
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    AS $$
+DECLARE
+  v_inserted int := 0;
+  v_row      record;
+BEGIN
+  FOR v_row IN
+    SELECT
+      slot.vessel_id,
+      slot.trip_type_id,
+      -- Treat slot time as UTC directly — no timezone conversion.
+      (d.date_val::date + slot.start_time)::timestamptz AS trip_start,
+      COALESCE(
+        CASE WHEN tt.category = 'Snorkel'
+             THEN v.capacity_snorkel
+             ELSE v.capacity_dive
+        END,
+        14
+      ) AS capacity
+    FROM generate_series(
+      CURRENT_DATE,
+      CURRENT_DATE + (p_months_ahead || ' months')::interval,
+      '1 day'::interval
+    ) AS d(date_val)
+    JOIN LATERAL (
+      SELECT DISTINCT ON (wss.vessel_id, wss.start_time)
+        wss.vessel_id, wss.trip_type_id, wss.start_time
+      FROM public.weekly_schedule_slots wss
+      WHERE wss.organization_id = p_org_id
+        AND wss.day_of_week = EXTRACT(DOW FROM d.date_val::date)::smallint
+        AND wss.valid_from <= d.date_val::date
+      ORDER BY wss.vessel_id, wss.start_time, wss.valid_from DESC
+    ) slot ON true
+    JOIN public.trip_types tt ON tt.id = slot.trip_type_id
+    JOIN public.vessels     v  ON v.id  = slot.vessel_id
+    WHERE NOT EXISTS (
+      SELECT 1 FROM public.trips ex
+      WHERE ex.organization_id = p_org_id
+        AND ex.vessel_id        = slot.vessel_id
+        AND ex.start_time < (d.date_val::date + slot.start_time)::timestamptz + INTERVAL '240 minutes'
+        AND ex.start_time + (ex.duration_minutes * INTERVAL '1 minute') > (d.date_val::date + slot.start_time)::timestamptz
+    )
+  LOOP
+    BEGIN
+      INSERT INTO public.trips (
+        organization_id, vessel_id, trip_type_id,
+        start_time, duration_minutes, max_divers, status
+      ) VALUES (
+        p_org_id, v_row.vessel_id, v_row.trip_type_id,
+        v_row.trip_start, 240, v_row.capacity, 'active'
+      );
+      v_inserted := v_inserted + 1;
+    EXCEPTION WHEN OTHERS THEN
+      NULL;
+    END;
+  END LOOP;
+
+  RETURN v_inserted;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."generate_trips_from_schedule"("p_org_id" "uuid", "p_months_ahead" integer) OWNER TO "postgres";
 
 
 CREATE OR REPLACE FUNCTION "public"."get_active_alerts"("p_org_id" "uuid") RETURNS TABLE("alert_type" "text", "severity" "text", "trip_id" "uuid", "trip_start" timestamp with time zone, "trip_label" "text", "client_id" "uuid", "client_name" "text", "message" "text")
@@ -1185,6 +1349,60 @@ $$;
 ALTER FUNCTION "public"."get_global_passport"("p_user_id" "uuid") OWNER TO "postgres";
 
 
+CREATE OR REPLACE FUNCTION "public"."get_org_role_config"("p_org_id" "uuid") RETURNS "jsonb"
+    LANGUAGE "sql" SECURITY DEFINER
+    SET "search_path" TO 'public'
+    AS $$
+  SELECT jsonb_agg(
+    jsonb_build_object(
+      'role',         c.role,
+      'display_name', c.display_name,
+      'permissions',  COALESCE(
+        (SELECT jsonb_agg(p.permission)
+         FROM public.org_role_permissions p
+         WHERE p.organization_id = p_org_id AND p.role = c.role),
+        '[]'::jsonb
+      )
+    )
+    ORDER BY c.role
+  )
+  FROM public.org_role_config c
+  WHERE c.organization_id = p_org_id
+    AND c.role IN ('staff_1','staff_2','staff_3','staff_4');
+$$;
+
+
+ALTER FUNCTION "public"."get_org_role_config"("p_org_id" "uuid") OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."get_organization_staff"("p_org_id" "uuid") RETURNS TABLE("staff_id" "uuid", "user_id" "uuid", "first_name" "text", "last_name" "text", "email" "text", "phone" "text", "initials" "text", "captain_license" boolean, "notes" "text", "cert_abbreviation" "text", "cert_name" "text", "role" "text")
+    LANGUAGE "sql" SECURITY DEFINER
+    SET "search_path" TO 'public'
+    AS $$
+  SELECT
+    s.id,
+    s.user_id,
+    s.first_name,
+    s.last_name,
+    s.email,
+    s.phone,
+    s.initials,
+    s.captain_license,
+    s.notes,
+    cl.abbreviation,
+    cl.name,
+    p.role::text
+  FROM public.staff s
+  LEFT JOIN public.certification_levels cl ON cl.id = s.certification_level_id
+  LEFT JOIN public.profiles p ON p.id = s.user_id
+  WHERE s.organization_id = p_org_id
+  ORDER BY s.first_name, s.last_name;
+$$;
+
+
+ALTER FUNCTION "public"."get_organization_staff"("p_org_id" "uuid") OWNER TO "postgres";
+
+
 CREATE OR REPLACE FUNCTION "public"."get_overview_trips"("p_org_id" "uuid", "p_start" timestamp with time zone, "p_end" timestamp with time zone) RETURNS TABLE("id" "uuid", "label" "text", "start_time" timestamp with time zone, "max_divers" integer, "entry_mode" "text", "vessel_id" "uuid", "vessel_name" "text", "vessel_abbreviation" "text", "trip_type_name" "text", "trip_type_abbreviation" "text", "trip_type_color" "text", "trip_type_category" "text", "trip_type_number_of_dives" integer, "booked_divers" bigint, "activity_counts" "jsonb")
     LANGUAGE "sql" STABLE SECURITY DEFINER
     AS $$
@@ -1195,22 +1413,26 @@ CREATE OR REPLACE FUNCTION "public"."get_overview_trips"("p_org_id" "uuid", "p_s
     t.max_divers,
     t.entry_mode,
     t.vessel_id,
-    v.name                AS vessel_name,
-    v.abbreviation        AS vessel_abbreviation,
-    tt.name               AS trip_type_name,
-    tt.abbreviation       AS trip_type_abbreviation,
-    tt.color              AS trip_type_color,
-    tt.category           AS trip_type_category,
-    tt.number_of_dives    AS trip_type_number_of_dives,
+    v.name             AS vessel_name,
+    v.abbreviation     AS vessel_abbreviation,
+    tt.name            AS trip_type_name,
+    tt.abbreviation    AS trip_type_abbreviation,
+    tt.color           AS trip_type_color,
+    tt.category        AS trip_type_category,
+    tt.number_of_dives AS trip_type_number_of_dives,
 
-    -- Booked diver count (no need to send all UUIDs to the client)
     (
       SELECT COUNT(*)
       FROM public.trip_clients tc
       WHERE tc.trip_id = t.id
-    ) AS booked_divers,
+    ) + COALESCE((
+      SELECT SUM(ob.pax_count)
+      FROM public.online_bookings ob
+      WHERE ob.trip_id = t.id
+        AND ob.status IN ('held', 'confirmed')
+        AND (ob.status = 'confirmed' OR ob.hold_expires_at > now())
+    ), 0) AS booked_divers,
 
-    -- Activity breakdown as compact JSON array
     (
       SELECT COALESCE(
         jsonb_agg(
@@ -1239,11 +1461,34 @@ CREATE OR REPLACE FUNCTION "public"."get_overview_trips"("p_org_id" "uuid", "p_s
   WHERE t.organization_id = p_org_id
     AND t.start_time      >= p_start
     AND t.start_time       < p_end
+    AND t.status           = 'active'
   ORDER BY t.start_time ASC;
 $$;
 
 
 ALTER FUNCTION "public"."get_overview_trips"("p_org_id" "uuid", "p_start" timestamp with time zone, "p_end" timestamp with time zone) OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."get_trip_available_spaces"("p_trip_id" "uuid") RETURNS integer
+    LANGUAGE "sql" STABLE SECURITY DEFINER
+    AS $$
+  SELECT
+    t.max_divers
+    - (SELECT COUNT(*)::integer FROM public.trip_clients tc WHERE tc.trip_id = t.id)
+    - COALESCE((
+        SELECT SUM(ob.pax_count)::integer
+        FROM public.online_bookings ob
+        WHERE ob.trip_id = t.id
+          AND ob.status IN ('held', 'confirmed')
+          AND (ob.status = 'confirmed' OR ob.hold_expires_at > now())
+      ), 0)
+  FROM public.trips t
+  WHERE t.id     = p_trip_id
+    AND t.status = 'active';
+$$;
+
+
+ALTER FUNCTION "public"."get_trip_available_spaces"("p_trip_id" "uuid") OWNER TO "postgres";
 
 
 CREATE OR REPLACE FUNCTION "public"."guard_trip_client_visit"() RETURNS "trigger"
@@ -1545,6 +1790,118 @@ $$;
 ALTER FUNCTION "public"."log_trip_client_change"() OWNER TO "postgres";
 
 
+CREATE OR REPLACE FUNCTION "public"."merge_clients"("p_primary_id" "uuid", "p_duplicate_id" "uuid") RETURNS "jsonb"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    AS $$
+DECLARE
+  v_primary              public.clients%ROWTYPE;
+  v_duplicate            public.clients%ROWTYPE;
+  v_primary_unapplied    numeric := 0;
+  v_duplicate_unapplied  numeric := 0;
+BEGIN
+  IF p_primary_id = p_duplicate_id THEN
+    RETURN jsonb_build_object('error', 'Cannot merge a client with itself');
+  END IF;
+
+  SELECT * INTO v_primary   FROM public.clients WHERE id = p_primary_id   FOR UPDATE;
+  SELECT * INTO v_duplicate FROM public.clients WHERE id = p_duplicate_id FOR UPDATE;
+
+  IF v_primary.id   IS NULL THEN RETURN jsonb_build_object('error', 'Primary client not found');   END IF;
+  IF v_duplicate.id IS NULL THEN RETURN jsonb_build_object('error', 'Duplicate client not found'); END IF;
+  IF v_primary.organization_id != v_duplicate.organization_id THEN
+    RETURN jsonb_build_object('error', 'Clients belong to different organizations');
+  END IF;
+
+  -- ── Deposit conflict check ──────────────────────────────────────────────────
+  SELECT COALESCE(SUM(cd.amount) FILTER (WHERE NOT cd.voided), 0)
+       - COALESCE(SUM(da.amount_applied), 0)
+  INTO v_primary_unapplied
+  FROM public.client_deposits cd
+  LEFT JOIN public.deposit_applications da ON da.deposit_id = cd.id
+  WHERE cd.client_id = p_primary_id;
+
+  SELECT COALESCE(SUM(cd.amount) FILTER (WHERE NOT cd.voided), 0)
+       - COALESCE(SUM(da.amount_applied), 0)
+  INTO v_duplicate_unapplied
+  FROM public.client_deposits cd
+  LEFT JOIN public.deposit_applications da ON da.deposit_id = cd.id
+  WHERE cd.client_id = p_duplicate_id;
+
+  IF COALESCE(v_primary_unapplied, 0) > 0 AND COALESCE(v_duplicate_unapplied, 0) > 0 THEN
+    RETURN jsonb_build_object(
+      'error',              'Both clients have an unapplied deposit balance. Please settle one account before merging.',
+      'primary_balance',    v_primary_unapplied,
+      'duplicate_balance',  v_duplicate_unapplied
+    );
+  END IF;
+
+  -- ── Remove collisions in shared visits / trips ──────────────────────────────
+  -- If both clients are already in the same visit, drop the duplicate's row.
+  DELETE FROM public.visit_clients vc_dup
+  USING public.visit_clients vc_pri
+  WHERE vc_dup.client_id  = p_duplicate_id
+    AND vc_pri.client_id  = p_primary_id
+    AND vc_pri.visit_id   = vc_dup.visit_id;
+
+  -- Same for trips.
+  DELETE FROM public.trip_clients tc_dup
+  USING public.trip_clients tc_pri
+  WHERE tc_dup.client_id  = p_duplicate_id
+    AND tc_pri.client_id  = p_primary_id
+    AND tc_pri.trip_id    = tc_dup.trip_id;
+
+  -- ── Reassign all FK references ──────────────────────────────────────────────
+  UPDATE public.visit_clients                SET client_id = p_primary_id WHERE client_id = p_duplicate_id;
+  UPDATE public.trip_clients                 SET client_id = p_primary_id WHERE client_id = p_duplicate_id;
+  UPDATE public.alert_resolutions            SET client_id = p_primary_id WHERE client_id = p_duplicate_id;
+  UPDATE public.pos_invoice_items            SET client_id = p_primary_id WHERE client_id = p_duplicate_id;
+  UPDATE public.pos_payments                 SET client_id = p_primary_id WHERE client_id = p_duplicate_id;
+  UPDATE public.pos_parked_carts             SET client_id = p_primary_id WHERE client_id = p_duplicate_id;
+  UPDATE public.pos_auto_item_waivers        SET client_id = p_primary_id WHERE client_id = p_duplicate_id;
+  UPDATE public.pos_auto_item_price_overrides SET client_id = p_primary_id WHERE client_id = p_duplicate_id;
+  UPDATE public.pos_audit_log                SET client_id = p_primary_id WHERE client_id = p_duplicate_id;
+  UPDATE public.pos_invoices                 SET client_id = p_primary_id WHERE client_id = p_duplicate_id;
+  UPDATE public.client_deposits              SET client_id = p_primary_id WHERE client_id = p_duplicate_id;
+
+  -- ── Merge nullable fields onto primary ─────────────────────────────────────
+  UPDATE public.clients SET
+    email                   = COALESCE(email,                   v_duplicate.email),
+    phone                   = COALESCE(phone,                   v_duplicate.phone),
+    cert_number             = COALESCE(cert_number,             v_duplicate.cert_number),
+    cert_level              = COALESCE(cert_level,              v_duplicate.cert_level),
+    cert_organization       = COALESCE(cert_organization,       v_duplicate.cert_organization),
+    nitrox_cert_number      = COALESCE(nitrox_cert_number,      v_duplicate.nitrox_cert_number),
+    last_dive_date          = CASE
+                                WHEN last_dive_date IS NULL     THEN v_duplicate.last_dive_date
+                                WHEN v_duplicate.last_dive_date IS NULL THEN last_dive_date
+                                ELSE GREATEST(last_dive_date, v_duplicate.last_dive_date)
+                              END,
+    address_street          = COALESCE(address_street,          v_duplicate.address_street),
+    address_city            = COALESCE(address_city,            v_duplicate.address_city),
+    address_zip             = COALESCE(address_zip,             v_duplicate.address_zip),
+    address_country         = COALESCE(address_country,         v_duplicate.address_country),
+    emergency_contact_name  = COALESCE(emergency_contact_name,  v_duplicate.emergency_contact_name),
+    emergency_contact_phone = COALESCE(emergency_contact_phone, v_duplicate.emergency_contact_phone),
+    user_id                 = COALESCE(user_id,                 v_duplicate.user_id),
+    notes                   = CASE
+                                WHEN notes IS NULL              THEN v_duplicate.notes
+                                WHEN v_duplicate.notes IS NULL  THEN notes
+                                ELSE notes || E'\n---\n' || v_duplicate.notes
+                              END,
+    updated_at              = now()
+  WHERE id = p_primary_id;
+
+  -- ── Delete duplicate ────────────────────────────────────────────────────────
+  DELETE FROM public.clients WHERE id = p_duplicate_id;
+
+  RETURN jsonb_build_object('success', true, 'merged_into', p_primary_id);
+END;
+$$;
+
+
+ALTER FUNCTION "public"."merge_clients"("p_primary_id" "uuid", "p_duplicate_id" "uuid") OWNER TO "postgres";
+
+
 CREATE OR REPLACE FUNCTION "public"."my_org_id"() RETURNS "uuid"
     LANGUAGE "sql" STABLE SECURITY DEFINER
     SET "search_path" TO 'public'
@@ -1561,15 +1918,24 @@ CREATE OR REPLACE FUNCTION "public"."prevent_profile_escalation"() RETURNS "trig
     SET "search_path" TO 'public'
     AS $$
 BEGIN
+  -- Allow service_role (used by the seed scripts and admin API)
   IF current_setting('request.jwt.claim.role', true) = 'service_role' THEN
     RETURN NEW;
   END IF;
+
+  -- Allow trusted internal RPCs that set this flag via SET LOCAL
+  IF current_setting('app.allow_role_change', true) = 'true' THEN
+    RETURN NEW;
+  END IF;
+
   IF NEW.role IS DISTINCT FROM OLD.role THEN
     RAISE EXCEPTION 'permission denied: role changes must go through the admin API';
   END IF;
+
   IF NEW.organization_id IS DISTINCT FROM OLD.organization_id THEN
     RAISE EXCEPTION 'permission denied: organization changes must go through the admin API';
   END IF;
+
   RETURN NEW;
 END;
 $$;
@@ -1700,6 +2066,171 @@ $$;
 
 
 ALTER FUNCTION "public"."search_global_identities"("p_query" "text") OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."set_role_permissions"("p_org_id" "uuid", "p_role" "public"."user_role", "p_permissions" "text"[]) RETURNS "void"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO 'public'
+    AS $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin') THEN
+    RAISE EXCEPTION 'Unauthorized';
+  END IF;
+  DELETE FROM public.org_role_permissions
+  WHERE organization_id = p_org_id AND role = p_role;
+  INSERT INTO public.org_role_permissions (organization_id, role, permission)
+  SELECT p_org_id, p_role, unnest(p_permissions)
+  ON CONFLICT DO NOTHING;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."set_role_permissions"("p_org_id" "uuid", "p_role" "public"."user_role", "p_permissions" "text"[]) OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."suggest_divesites"("p_trip_id" "uuid") RETURNS TABLE("id" "uuid", "name" "text", "max_depth" numeric, "group_id" "uuid", "group_name" "text", "unseen_count" bigint, "total_past_visits" bigint)
+    LANGUAGE "sql" STABLE SECURITY DEFINER
+    AS $$
+  WITH org AS (
+    SELECT organization_id FROM trips WHERE id = p_trip_id
+  ),
+  booked AS (
+    SELECT client_id FROM trip_clients WHERE trip_id = p_trip_id
+  ),
+  -- one row per (client, site, past trip) — counts each visit separately
+  past_visits AS (
+    SELECT tc.client_id, t.dive_site_id
+    FROM trip_clients tc
+    JOIN trips t ON t.id = tc.trip_id
+    WHERE t.organization_id = (SELECT organization_id FROM org)
+      AND t.id        != p_trip_id
+      AND t.start_time < now()
+      AND t.dive_site_id IS NOT NULL
+      AND tc.client_id IN (SELECT client_id FROM booked)
+  ),
+  -- one row per (client, site) — has this client ever been here?
+  client_site_seen AS (
+    SELECT DISTINCT client_id, dive_site_id FROM past_visits
+  ),
+  has_groups AS (
+    SELECT EXISTS (
+      SELECT 1 FROM divesite_groups
+      WHERE organization_id = (SELECT organization_id FROM org)
+    ) AS value
+  )
+  SELECT
+    ds.id,
+    ds.name,
+    ds.max_depth,
+    ds.group_id,
+    dg.name AS group_name,
+    -- clients on this trip who have never visited this site
+    (SELECT COUNT(*) FROM booked b
+     WHERE NOT EXISTS (
+       SELECT 1 FROM client_site_seen css
+       WHERE css.client_id = b.client_id AND css.dive_site_id = ds.id
+     )) AS unseen_count,
+    -- total past visits by booked clients to this site
+    (SELECT COUNT(*) FROM past_visits pv WHERE pv.dive_site_id = ds.id) AS total_past_visits
+  FROM divesites ds
+  LEFT JOIN divesite_groups dg ON dg.id = ds.group_id
+  WHERE ds.organization_id = (SELECT organization_id FROM org)
+    -- if org has groups: only grouped sites; otherwise all sites
+    AND (NOT (SELECT value FROM has_groups) OR ds.group_id IS NOT NULL)
+  ORDER BY unseen_count DESC, total_past_visits ASC
+$$;
+
+
+ALTER FUNCTION "public"."suggest_divesites"("p_trip_id" "uuid") OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."touch_dive_maps_updated_at"() RETURNS "trigger"
+    LANGUAGE "plpgsql"
+    AS $$
+begin
+  new.updated_at = now();
+  return new;
+end;
+$$;
+
+
+ALTER FUNCTION "public"."touch_dive_maps_updated_at"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."touch_online_bookings_updated_at"() RETURNS "trigger"
+    LANGUAGE "plpgsql"
+    AS $$
+BEGIN
+  NEW.updated_at = now();
+  RETURN NEW;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."touch_online_bookings_updated_at"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."update_role_display_name"("p_org_id" "uuid", "p_role" "public"."user_role", "p_name" "text") RETURNS "void"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO 'public'
+    AS $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin') THEN
+    RAISE EXCEPTION 'Unauthorized';
+  END IF;
+  INSERT INTO public.org_role_config (organization_id, role, display_name)
+  VALUES (p_org_id, p_role, p_name)
+  ON CONFLICT (organization_id, role) DO UPDATE SET display_name = EXCLUDED.display_name;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."update_role_display_name"("p_org_id" "uuid", "p_role" "public"."user_role", "p_name" "text") OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."update_staff_captain_license"("p_staff_id" "uuid", "p_captain_license" boolean) RETURNS "void"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO 'public'
+    AS $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin'
+  ) THEN
+    RAISE EXCEPTION 'Unauthorized';
+  END IF;
+
+  UPDATE public.staff SET captain_license = p_captain_license WHERE id = p_staff_id;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."update_staff_captain_license"("p_staff_id" "uuid", "p_captain_license" boolean) OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."update_staff_role_tier"("p_user_id" "uuid", "p_new_role" "public"."user_role") RETURNS "void"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO 'public'
+    AS $$
+BEGIN
+  IF p_new_role NOT IN ('staff_1', 'staff_2', 'staff_3', 'staff_4', 'admin') THEN
+    RAISE EXCEPTION 'Role must be staff_1, staff_2, staff_3, staff_4, or admin';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin'
+  ) THEN
+    RAISE EXCEPTION 'Unauthorized';
+  END IF;
+
+  -- Scoped to this transaction only — cannot be set by external callers
+  SET LOCAL app.allow_role_change = 'true';
+
+  UPDATE public.profiles SET role = p_new_role WHERE id = p_user_id;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."update_staff_role_tier"("p_user_id" "uuid", "p_new_role" "public"."user_role") OWNER TO "postgres";
 
 
 CREATE OR REPLACE FUNCTION "public"."update_updated_at"() RETURNS "trigger"
@@ -1927,6 +2458,30 @@ CREATE TABLE IF NOT EXISTS "public"."deposit_applications" (
 ALTER TABLE "public"."deposit_applications" OWNER TO "postgres";
 
 
+CREATE TABLE IF NOT EXISTS "public"."dive_maps" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "org_id" "uuid" NOT NULL,
+    "name" "text" NOT NULL,
+    "content" "jsonb" DEFAULT '{}'::"jsonb" NOT NULL,
+    "created_by" "uuid" NOT NULL,
+    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    "updated_at" timestamp with time zone DEFAULT "now"() NOT NULL
+);
+
+
+ALTER TABLE "public"."dive_maps" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."divesite_groups" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "organization_id" "uuid" NOT NULL,
+    "name" "text" NOT NULL
+);
+
+
+ALTER TABLE "public"."divesite_groups" OWNER TO "postgres";
+
+
 CREATE TABLE IF NOT EXISTS "public"."divesites" (
     "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
     "name" "text" NOT NULL,
@@ -1936,7 +2491,8 @@ CREATE TABLE IF NOT EXISTS "public"."divesites" (
     "created_at" timestamp with time zone DEFAULT "now"(),
     "updated_at" timestamp with time zone DEFAULT "now"(),
     "organization_id" "uuid" NOT NULL,
-    "location_id" "uuid"
+    "location_id" "uuid",
+    "group_id" "uuid"
 );
 
 
@@ -2025,6 +2581,28 @@ CREATE TABLE IF NOT EXISTS "public"."locations" (
 ALTER TABLE "public"."locations" OWNER TO "postgres";
 
 
+CREATE TABLE IF NOT EXISTS "public"."online_bookings" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "organization_id" "uuid" NOT NULL,
+    "trip_id" "uuid" NOT NULL,
+    "status" "text" DEFAULT 'held'::"text" NOT NULL,
+    "hold_expires_at" timestamp with time zone,
+    "lead_name" "text" NOT NULL,
+    "lead_email" "text",
+    "lead_phone" "text",
+    "pax_count" integer NOT NULL,
+    "guests" "jsonb" DEFAULT '[]'::"jsonb" NOT NULL,
+    "created_at" timestamp with time zone DEFAULT "now"(),
+    "updated_at" timestamp with time zone DEFAULT "now"(),
+    "price_per_person" numeric(10,2),
+    CONSTRAINT "online_bookings_pax_count_check" CHECK (("pax_count" > 0)),
+    CONSTRAINT "online_bookings_status_check" CHECK (("status" = ANY (ARRAY['held'::"text", 'confirmed'::"text", 'cancelled'::"text", 'expired'::"text"])))
+);
+
+
+ALTER TABLE "public"."online_bookings" OWNER TO "postgres";
+
+
 CREATE TABLE IF NOT EXISTS "public"."org_pos_config" (
     "organization_id" "uuid" NOT NULL,
     "private_instruction_product_id" "uuid",
@@ -2033,6 +2611,26 @@ CREATE TABLE IF NOT EXISTS "public"."org_pos_config" (
 
 
 ALTER TABLE "public"."org_pos_config" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."org_role_config" (
+    "organization_id" "uuid" NOT NULL,
+    "role" "public"."user_role" NOT NULL,
+    "display_name" "text" NOT NULL
+);
+
+
+ALTER TABLE "public"."org_role_config" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."org_role_permissions" (
+    "organization_id" "uuid" NOT NULL,
+    "role" "public"."user_role" NOT NULL,
+    "permission" "text" NOT NULL
+);
+
+
+ALTER TABLE "public"."org_role_permissions" OWNER TO "postgres";
 
 
 CREATE TABLE IF NOT EXISTS "public"."organizations" (
@@ -2381,7 +2979,10 @@ CREATE TABLE IF NOT EXISTS "public"."trip_clients" (
     "nitrox3" boolean,
     "nitrox_percentage3" integer,
     "tank3" boolean,
-    "staff_assgined" "uuid"
+    "staff_assgined" "uuid",
+    "price_override" numeric(10,2),
+    "status" "text" DEFAULT 'confirmed'::"text" NOT NULL,
+    CONSTRAINT "trip_clients_status_check" CHECK (("status" = ANY (ARRAY['confirmed'::"text", 'waitlist'::"text"])))
 );
 
 
@@ -2440,7 +3041,9 @@ CREATE TABLE IF NOT EXISTS "public"."trip_types" (
     "category" "text",
     "pos_product_id" "uuid",
     "billing_via_activity" boolean DEFAULT false NOT NULL,
-    "default_start_time_pm" time without time zone DEFAULT '13:00:00'::time without time zone NOT NULL
+    "default_start_time_pm" time without time zone DEFAULT '13:00:00'::time without time zone NOT NULL,
+    "online_bookable" boolean DEFAULT false NOT NULL,
+    "online_price_per_person" numeric(10,2)
 );
 
 
@@ -2461,7 +3064,9 @@ CREATE TABLE IF NOT EXISTS "public"."trips" (
     "location_id" "uuid",
     "vessel_id" "uuid",
     "trip_type_id" "uuid",
-    "series_id" "uuid"
+    "series_id" "uuid",
+    "status" "text" DEFAULT 'active'::"text" NOT NULL,
+    CONSTRAINT "trips_status_check" CHECK (("status" = ANY (ARRAY['active'::"text", 'cancelled'::"text"])))
 );
 
 
@@ -2626,8 +3231,23 @@ ALTER TABLE ONLY "public"."deposit_applications"
 
 
 
+ALTER TABLE ONLY "public"."dive_maps"
+    ADD CONSTRAINT "dive_maps_pkey" PRIMARY KEY ("id");
+
+
+
 ALTER TABLE ONLY "public"."divesites"
     ADD CONSTRAINT "dive_sites_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."divesite_groups"
+    ADD CONSTRAINT "divesite_groups_organization_id_name_key" UNIQUE ("organization_id", "name");
+
+
+
+ALTER TABLE ONLY "public"."divesite_groups"
+    ADD CONSTRAINT "divesite_groups_pkey" PRIMARY KEY ("id");
 
 
 
@@ -2661,8 +3281,23 @@ ALTER TABLE ONLY "public"."locations"
 
 
 
+ALTER TABLE ONLY "public"."online_bookings"
+    ADD CONSTRAINT "online_bookings_pkey" PRIMARY KEY ("id");
+
+
+
 ALTER TABLE ONLY "public"."org_pos_config"
     ADD CONSTRAINT "org_pos_config_pkey" PRIMARY KEY ("organization_id");
+
+
+
+ALTER TABLE ONLY "public"."org_role_config"
+    ADD CONSTRAINT "org_role_config_pkey" PRIMARY KEY ("organization_id", "role");
+
+
+
+ALTER TABLE ONLY "public"."org_role_permissions"
+    ADD CONSTRAINT "org_role_permissions_pkey" PRIMARY KEY ("organization_id", "role", "permission");
 
 
 
@@ -2934,6 +3569,10 @@ CREATE INDEX "idx_clients_org" ON "public"."clients" USING "btree" ("organizatio
 
 
 
+CREATE INDEX "idx_clients_trgm_name" ON "public"."clients" USING "gin" ("lower"((("first_name" || ' '::"text") || "last_name")) "public"."gin_trgm_ops");
+
+
+
 CREATE INDEX "idx_clients_user_id" ON "public"."clients" USING "btree" ("user_id");
 
 
@@ -2979,6 +3618,18 @@ CREATE INDEX "idx_job_types_org" ON "public"."job_types" USING "btree" ("organiz
 
 
 CREATE INDEX "idx_locations_organization" ON "public"."locations" USING "btree" ("organization_id");
+
+
+
+CREATE INDEX "idx_online_bookings_expiry" ON "public"."online_bookings" USING "btree" ("hold_expires_at") WHERE ("status" = 'held'::"text");
+
+
+
+CREATE INDEX "idx_online_bookings_org_status" ON "public"."online_bookings" USING "btree" ("organization_id", "status");
+
+
+
+CREATE INDEX "idx_online_bookings_trip_id" ON "public"."online_bookings" USING "btree" ("trip_id");
 
 
 
@@ -3166,6 +3817,10 @@ CREATE UNIQUE INDEX "trip_staff_generic_unique" ON "public"."trip_staff" USING "
 
 
 
+CREATE INDEX "trips_org_status_time_idx" ON "public"."trips" USING "btree" ("organization_id", "status", "start_time");
+
+
+
 CREATE OR REPLACE TRIGGER "cascade_trip_removal_on_visit_client_delete" AFTER DELETE ON "public"."visit_clients" FOR EACH ROW EXECUTE FUNCTION "public"."cascade_trip_removal_on_visit_client_delete"();
 
 
@@ -3179,6 +3834,10 @@ CREATE OR REPLACE TRIGGER "clients_updated_at" BEFORE UPDATE ON "public"."client
 
 
 CREATE OR REPLACE TRIGGER "courses_updated_at" BEFORE UPDATE ON "public"."courses" FOR EACH ROW EXECUTE FUNCTION "public"."update_updated_at"();
+
+
+
+CREATE OR REPLACE TRIGGER "dive_maps_updated_at" BEFORE UPDATE ON "public"."dive_maps" FOR EACH ROW EXECUTE FUNCTION "public"."touch_dive_maps_updated_at"();
 
 
 
@@ -3235,6 +3894,10 @@ CREATE OR REPLACE TRIGGER "trg_log_trip" AFTER INSERT OR DELETE ON "public"."tri
 
 
 CREATE OR REPLACE TRIGGER "trg_log_trip_client" AFTER INSERT OR DELETE ON "public"."trip_clients" FOR EACH ROW EXECUTE FUNCTION "public"."log_trip_client_change"();
+
+
+
+CREATE OR REPLACE TRIGGER "trg_online_bookings_updated_at" BEFORE UPDATE ON "public"."online_bookings" FOR EACH ROW EXECUTE FUNCTION "public"."touch_online_bookings_updated_at"();
 
 
 
@@ -3342,6 +4005,16 @@ ALTER TABLE ONLY "public"."deposit_applications"
 
 
 
+ALTER TABLE ONLY "public"."dive_maps"
+    ADD CONSTRAINT "dive_maps_created_by_fkey" FOREIGN KEY ("created_by") REFERENCES "public"."profiles"("id") ON DELETE SET NULL;
+
+
+
+ALTER TABLE ONLY "public"."dive_maps"
+    ADD CONSTRAINT "dive_maps_org_id_fkey" FOREIGN KEY ("org_id") REFERENCES "public"."organizations"("id") ON DELETE CASCADE;
+
+
+
 ALTER TABLE ONLY "public"."divesites"
     ADD CONSTRAINT "dive_sites_location_id_fkey" FOREIGN KEY ("location_id") REFERENCES "public"."locations"("id") ON DELETE SET NULL;
 
@@ -3349,6 +4022,16 @@ ALTER TABLE ONLY "public"."divesites"
 
 ALTER TABLE ONLY "public"."divesites"
     ADD CONSTRAINT "dive_sites_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "public"."organizations"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."divesite_groups"
+    ADD CONSTRAINT "divesite_groups_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "public"."organizations"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."divesites"
+    ADD CONSTRAINT "divesites_group_id_fkey" FOREIGN KEY ("group_id") REFERENCES "public"."divesite_groups"("id") ON DELETE SET NULL;
 
 
 
@@ -3387,6 +4070,11 @@ ALTER TABLE ONLY "public"."locations"
 
 
 
+ALTER TABLE ONLY "public"."online_bookings"
+    ADD CONSTRAINT "online_bookings_trip_id_fkey" FOREIGN KEY ("trip_id") REFERENCES "public"."trips"("id") ON DELETE CASCADE;
+
+
+
 ALTER TABLE ONLY "public"."org_pos_config"
     ADD CONSTRAINT "org_pos_config_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "public"."organizations"("id") ON DELETE CASCADE;
 
@@ -3394,6 +4082,16 @@ ALTER TABLE ONLY "public"."org_pos_config"
 
 ALTER TABLE ONLY "public"."org_pos_config"
     ADD CONSTRAINT "org_pos_config_private_instruction_product_id_fkey" FOREIGN KEY ("private_instruction_product_id") REFERENCES "public"."pos_products"("id") ON DELETE SET NULL;
+
+
+
+ALTER TABLE ONLY "public"."org_role_config"
+    ADD CONSTRAINT "org_role_config_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "public"."organizations"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."org_role_permissions"
+    ADD CONSTRAINT "org_role_permissions_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "public"."organizations"("id") ON DELETE CASCADE;
 
 
 
@@ -3794,6 +4492,14 @@ CREATE POLICY "admin_write_schedule_slots" ON "public"."weekly_schedule_slots" U
 
 
 
+CREATE POLICY "admins can manage groups" ON "public"."divesite_groups" USING ((("organization_id" = ( SELECT "profiles"."organization_id"
+   FROM "public"."profiles"
+  WHERE ("profiles"."id" = "auth"."uid"()))) AND (( SELECT "profiles"."role"
+   FROM "public"."profiles"
+  WHERE ("profiles"."id" = "auth"."uid"())) = 'admin'::"public"."user_role")));
+
+
+
 CREATE POLICY "admins can update activities" ON "public"."activities" FOR UPDATE USING ((EXISTS ( SELECT 1
    FROM "public"."profiles"
   WHERE (("profiles"."id" = "auth"."uid"()) AND ("profiles"."role" = 'admin'::"public"."user_role")))));
@@ -3872,6 +4578,18 @@ CREATE POLICY "clients: update own" ON "public"."clients" FOR UPDATE USING (("us
 ALTER TABLE "public"."courses" ENABLE ROW LEVEL SECURITY;
 
 
+CREATE POLICY "creator or admin can delete dive maps" ON "public"."dive_maps" FOR DELETE USING ((("created_by" = "auth"."uid"()) OR (EXISTS ( SELECT 1
+   FROM "public"."profiles"
+  WHERE (("profiles"."id" = "auth"."uid"()) AND ("dive_maps"."org_id" = "dive_maps"."org_id") AND ("profiles"."role" = 'admin'::"public"."user_role"))))));
+
+
+
+ALTER TABLE "public"."dive_maps" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."divesite_groups" ENABLE ROW LEVEL SECURITY;
+
+
 ALTER TABLE "public"."divesites" ENABLE ROW LEVEL SECURITY;
 
 
@@ -3912,6 +4630,9 @@ ALTER TABLE "public"."locations" ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "locations: org members" ON "public"."locations" USING (("organization_id" = "public"."my_org_id"())) WITH CHECK (("organization_id" = "public"."my_org_id"()));
 
+
+
+ALTER TABLE "public"."online_bookings" ENABLE ROW LEVEL SECURITY;
 
 
 CREATE POLICY "org admins can manage pos_categories" ON "public"."pos_categories" USING (("organization_id" IN ( SELECT "profiles"."organization_id"
@@ -3962,6 +4683,12 @@ CREATE POLICY "org admins manage pos_transactions" ON "public"."pos_transactions
 
 
 
+CREATE POLICY "org members can insert dive maps" ON "public"."dive_maps" FOR INSERT WITH CHECK ((("org_id" IN ( SELECT "dive_maps"."org_id"
+   FROM "public"."profiles"
+  WHERE ("profiles"."id" = "auth"."uid"()))) AND ("created_by" = "auth"."uid"())));
+
+
+
 CREATE POLICY "org members can manage auto item price overrides" ON "public"."pos_auto_item_price_overrides" USING ((EXISTS ( SELECT 1
    FROM "public"."visits" "v"
   WHERE (("v"."id" = "pos_auto_item_price_overrides"."visit_id") AND ("v"."organization_id" = "public"."my_org_id"()))))) WITH CHECK ((EXISTS ( SELECT 1
@@ -3986,6 +4713,14 @@ CREATE POLICY "org members can manage item waivers" ON "public"."pos_auto_item_w
 
 
 
+CREATE POLICY "org members can manage online bookings" ON "public"."online_bookings" TO "authenticated" USING (("organization_id" IN ( SELECT "profiles"."organization_id"
+   FROM "public"."profiles"
+  WHERE ("profiles"."id" = "auth"."uid"())))) WITH CHECK (("organization_id" IN ( SELECT "profiles"."organization_id"
+   FROM "public"."profiles"
+  WHERE ("profiles"."id" = "auth"."uid"()))));
+
+
+
 CREATE POLICY "org members can manage pos config" ON "public"."org_pos_config" USING (("organization_id" IN ( SELECT "profiles"."organization_id"
    FROM "public"."profiles"
   WHERE ("profiles"."id" = "auth"."uid"()))));
@@ -4003,6 +4738,24 @@ CREATE POLICY "org members can manage pos_parked_carts" ON "public"."pos_parked_
 
 
 CREATE POLICY "org members can manage their sessions" ON "public"."pos_sessions" USING (("organization_id" = "public"."my_org_id"())) WITH CHECK (("organization_id" = "public"."my_org_id"()));
+
+
+
+CREATE POLICY "org members can read dive maps" ON "public"."dive_maps" FOR SELECT USING (("org_id" IN ( SELECT "dive_maps"."org_id"
+   FROM "public"."profiles"
+  WHERE ("profiles"."id" = "auth"."uid"()))));
+
+
+
+CREATE POLICY "org members can read their groups" ON "public"."divesite_groups" FOR SELECT USING (("organization_id" = ( SELECT "profiles"."organization_id"
+   FROM "public"."profiles"
+  WHERE ("profiles"."id" = "auth"."uid"()))));
+
+
+
+CREATE POLICY "org members can update dive maps" ON "public"."dive_maps" FOR UPDATE USING (("org_id" IN ( SELECT "dive_maps"."org_id"
+   FROM "public"."profiles"
+  WHERE ("profiles"."id" = "auth"."uid"()))));
 
 
 
@@ -4123,6 +4876,10 @@ CREATE POLICY "profiles: read own" ON "public"."profiles" FOR SELECT USING (("id
 
 
 CREATE POLICY "profiles: read same org" ON "public"."profiles" FOR SELECT USING ((("public"."my_org_id"() IS NOT NULL) AND ("organization_id" = "public"."my_org_id"())));
+
+
+
+CREATE POLICY "profiles: update own" ON "public"."profiles" FOR UPDATE USING (("id" = "auth"."uid"())) WITH CHECK (("id" = "auth"."uid"()));
 
 
 
@@ -4339,9 +5096,9 @@ GRANT ALL ON FUNCTION "public"."add_client_to_organization"("p_user_id" "uuid") 
 
 
 
-GRANT ALL ON FUNCTION "public"."add_clients_to_trip"("p_trip_id" "uuid", "p_client_ids" "uuid"[], "p_trip_date" "date") TO "anon";
-GRANT ALL ON FUNCTION "public"."add_clients_to_trip"("p_trip_id" "uuid", "p_client_ids" "uuid"[], "p_trip_date" "date") TO "authenticated";
-GRANT ALL ON FUNCTION "public"."add_clients_to_trip"("p_trip_id" "uuid", "p_client_ids" "uuid"[], "p_trip_date" "date") TO "service_role";
+GRANT ALL ON FUNCTION "public"."add_clients_to_trip"("p_trip_id" "uuid", "p_client_ids" "uuid"[], "p_trip_date" "date", "p_status" "text") TO "anon";
+GRANT ALL ON FUNCTION "public"."add_clients_to_trip"("p_trip_id" "uuid", "p_client_ids" "uuid"[], "p_trip_date" "date", "p_status" "text") TO "authenticated";
+GRANT ALL ON FUNCTION "public"."add_clients_to_trip"("p_trip_id" "uuid", "p_client_ids" "uuid"[], "p_trip_date" "date", "p_status" "text") TO "service_role";
 
 
 
@@ -4393,6 +5150,18 @@ GRANT ALL ON FUNCTION "public"."checkout_session"("p_org_id" "uuid", "p_visit_id
 
 
 
+GRANT ALL ON FUNCTION "public"."confirm_booking_hold"("p_hold_id" "uuid") TO "anon";
+GRANT ALL ON FUNCTION "public"."confirm_booking_hold"("p_hold_id" "uuid") TO "authenticated";
+GRANT ALL ON FUNCTION "public"."confirm_booking_hold"("p_hold_id" "uuid") TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."create_booking_hold"("p_trip_id" "uuid", "p_pax_count" integer, "p_lead_name" "text", "p_lead_email" "text", "p_lead_phone" "text", "p_guests" "jsonb") TO "anon";
+GRANT ALL ON FUNCTION "public"."create_booking_hold"("p_trip_id" "uuid", "p_pax_count" integer, "p_lead_name" "text", "p_lead_email" "text", "p_lead_phone" "text", "p_guests" "jsonb") TO "authenticated";
+GRANT ALL ON FUNCTION "public"."create_booking_hold"("p_trip_id" "uuid", "p_pax_count" integer, "p_lead_name" "text", "p_lead_email" "text", "p_lead_phone" "text", "p_guests" "jsonb") TO "service_role";
+
+
+
 GRANT ALL ON FUNCTION "public"."create_trip_series"("p_org_id" "uuid", "p_label" "text", "p_trip_type_id" "uuid", "p_entry_mode" "text", "p_duration_mins" integer, "p_max_divers" integer, "p_vessel_id" "uuid", "p_start_times" timestamp with time zone[]) TO "anon";
 GRANT ALL ON FUNCTION "public"."create_trip_series"("p_org_id" "uuid", "p_label" "text", "p_trip_type_id" "uuid", "p_entry_mode" "text", "p_duration_mins" integer, "p_max_divers" integer, "p_vessel_id" "uuid", "p_start_times" timestamp with time zone[]) TO "authenticated";
 GRANT ALL ON FUNCTION "public"."create_trip_series"("p_org_id" "uuid", "p_label" "text", "p_trip_type_id" "uuid", "p_entry_mode" "text", "p_duration_mins" integer, "p_max_divers" integer, "p_vessel_id" "uuid", "p_start_times" timestamp with time zone[]) TO "service_role";
@@ -4402,6 +5171,24 @@ GRANT ALL ON FUNCTION "public"."create_trip_series"("p_org_id" "uuid", "p_label"
 GRANT ALL ON FUNCTION "public"."elevate_user_to_staff"("p_user_id" "uuid", "p_target_role" "text") TO "anon";
 GRANT ALL ON FUNCTION "public"."elevate_user_to_staff"("p_user_id" "uuid", "p_target_role" "text") TO "authenticated";
 GRANT ALL ON FUNCTION "public"."elevate_user_to_staff"("p_user_id" "uuid", "p_target_role" "text") TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."expire_stale_holds"() TO "anon";
+GRANT ALL ON FUNCTION "public"."expire_stale_holds"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."expire_stale_holds"() TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."find_similar_clients"("p_client_id" "uuid") TO "anon";
+GRANT ALL ON FUNCTION "public"."find_similar_clients"("p_client_id" "uuid") TO "authenticated";
+GRANT ALL ON FUNCTION "public"."find_similar_clients"("p_client_id" "uuid") TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."generate_trips_from_schedule"("p_org_id" "uuid", "p_months_ahead" integer) TO "anon";
+GRANT ALL ON FUNCTION "public"."generate_trips_from_schedule"("p_org_id" "uuid", "p_months_ahead" integer) TO "authenticated";
+GRANT ALL ON FUNCTION "public"."generate_trips_from_schedule"("p_org_id" "uuid", "p_months_ahead" integer) TO "service_role";
 
 
 
@@ -4423,9 +5210,27 @@ GRANT ALL ON FUNCTION "public"."get_global_passport"("p_user_id" "uuid") TO "ser
 
 
 
+GRANT ALL ON FUNCTION "public"."get_org_role_config"("p_org_id" "uuid") TO "anon";
+GRANT ALL ON FUNCTION "public"."get_org_role_config"("p_org_id" "uuid") TO "authenticated";
+GRANT ALL ON FUNCTION "public"."get_org_role_config"("p_org_id" "uuid") TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."get_organization_staff"("p_org_id" "uuid") TO "anon";
+GRANT ALL ON FUNCTION "public"."get_organization_staff"("p_org_id" "uuid") TO "authenticated";
+GRANT ALL ON FUNCTION "public"."get_organization_staff"("p_org_id" "uuid") TO "service_role";
+
+
+
 GRANT ALL ON FUNCTION "public"."get_overview_trips"("p_org_id" "uuid", "p_start" timestamp with time zone, "p_end" timestamp with time zone) TO "anon";
 GRANT ALL ON FUNCTION "public"."get_overview_trips"("p_org_id" "uuid", "p_start" timestamp with time zone, "p_end" timestamp with time zone) TO "authenticated";
 GRANT ALL ON FUNCTION "public"."get_overview_trips"("p_org_id" "uuid", "p_start" timestamp with time zone, "p_end" timestamp with time zone) TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."get_trip_available_spaces"("p_trip_id" "uuid") TO "anon";
+GRANT ALL ON FUNCTION "public"."get_trip_available_spaces"("p_trip_id" "uuid") TO "authenticated";
+GRANT ALL ON FUNCTION "public"."get_trip_available_spaces"("p_trip_id" "uuid") TO "service_role";
 
 
 
@@ -4471,6 +5276,12 @@ GRANT ALL ON FUNCTION "public"."log_trip_client_change"() TO "service_role";
 
 
 
+GRANT ALL ON FUNCTION "public"."merge_clients"("p_primary_id" "uuid", "p_duplicate_id" "uuid") TO "anon";
+GRANT ALL ON FUNCTION "public"."merge_clients"("p_primary_id" "uuid", "p_duplicate_id" "uuid") TO "authenticated";
+GRANT ALL ON FUNCTION "public"."merge_clients"("p_primary_id" "uuid", "p_duplicate_id" "uuid") TO "service_role";
+
+
+
 GRANT ALL ON FUNCTION "public"."my_org_id"() TO "anon";
 GRANT ALL ON FUNCTION "public"."my_org_id"() TO "authenticated";
 GRANT ALL ON FUNCTION "public"."my_org_id"() TO "service_role";
@@ -4492,6 +5303,48 @@ GRANT ALL ON FUNCTION "public"."propagate_trip_client_changes"("p_client_id" "uu
 GRANT ALL ON FUNCTION "public"."search_global_identities"("p_query" "text") TO "anon";
 GRANT ALL ON FUNCTION "public"."search_global_identities"("p_query" "text") TO "authenticated";
 GRANT ALL ON FUNCTION "public"."search_global_identities"("p_query" "text") TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."set_role_permissions"("p_org_id" "uuid", "p_role" "public"."user_role", "p_permissions" "text"[]) TO "anon";
+GRANT ALL ON FUNCTION "public"."set_role_permissions"("p_org_id" "uuid", "p_role" "public"."user_role", "p_permissions" "text"[]) TO "authenticated";
+GRANT ALL ON FUNCTION "public"."set_role_permissions"("p_org_id" "uuid", "p_role" "public"."user_role", "p_permissions" "text"[]) TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."suggest_divesites"("p_trip_id" "uuid") TO "anon";
+GRANT ALL ON FUNCTION "public"."suggest_divesites"("p_trip_id" "uuid") TO "authenticated";
+GRANT ALL ON FUNCTION "public"."suggest_divesites"("p_trip_id" "uuid") TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."touch_dive_maps_updated_at"() TO "anon";
+GRANT ALL ON FUNCTION "public"."touch_dive_maps_updated_at"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."touch_dive_maps_updated_at"() TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."touch_online_bookings_updated_at"() TO "anon";
+GRANT ALL ON FUNCTION "public"."touch_online_bookings_updated_at"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."touch_online_bookings_updated_at"() TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."update_role_display_name"("p_org_id" "uuid", "p_role" "public"."user_role", "p_name" "text") TO "anon";
+GRANT ALL ON FUNCTION "public"."update_role_display_name"("p_org_id" "uuid", "p_role" "public"."user_role", "p_name" "text") TO "authenticated";
+GRANT ALL ON FUNCTION "public"."update_role_display_name"("p_org_id" "uuid", "p_role" "public"."user_role", "p_name" "text") TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."update_staff_captain_license"("p_staff_id" "uuid", "p_captain_license" boolean) TO "anon";
+GRANT ALL ON FUNCTION "public"."update_staff_captain_license"("p_staff_id" "uuid", "p_captain_license" boolean) TO "authenticated";
+GRANT ALL ON FUNCTION "public"."update_staff_captain_license"("p_staff_id" "uuid", "p_captain_license" boolean) TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."update_staff_role_tier"("p_user_id" "uuid", "p_new_role" "public"."user_role") TO "anon";
+GRANT ALL ON FUNCTION "public"."update_staff_role_tier"("p_user_id" "uuid", "p_new_role" "public"."user_role") TO "authenticated";
+GRANT ALL ON FUNCTION "public"."update_staff_role_tier"("p_user_id" "uuid", "p_new_role" "public"."user_role") TO "service_role";
 
 
 
@@ -4585,6 +5438,18 @@ GRANT ALL ON TABLE "public"."deposit_applications" TO "service_role";
 
 
 
+GRANT ALL ON TABLE "public"."dive_maps" TO "anon";
+GRANT ALL ON TABLE "public"."dive_maps" TO "authenticated";
+GRANT ALL ON TABLE "public"."dive_maps" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."divesite_groups" TO "anon";
+GRANT ALL ON TABLE "public"."divesite_groups" TO "authenticated";
+GRANT ALL ON TABLE "public"."divesite_groups" TO "service_role";
+
+
+
 GRANT ALL ON TABLE "public"."divesites" TO "anon";
 GRANT ALL ON TABLE "public"."divesites" TO "authenticated";
 GRANT ALL ON TABLE "public"."divesites" TO "service_role";
@@ -4621,9 +5486,27 @@ GRANT ALL ON TABLE "public"."locations" TO "service_role";
 
 
 
+GRANT ALL ON TABLE "public"."online_bookings" TO "anon";
+GRANT ALL ON TABLE "public"."online_bookings" TO "authenticated";
+GRANT ALL ON TABLE "public"."online_bookings" TO "service_role";
+
+
+
 GRANT ALL ON TABLE "public"."org_pos_config" TO "anon";
 GRANT ALL ON TABLE "public"."org_pos_config" TO "authenticated";
 GRANT ALL ON TABLE "public"."org_pos_config" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."org_role_config" TO "anon";
+GRANT ALL ON TABLE "public"."org_role_config" TO "authenticated";
+GRANT ALL ON TABLE "public"."org_role_config" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."org_role_permissions" TO "anon";
+GRANT ALL ON TABLE "public"."org_role_permissions" TO "authenticated";
+GRANT ALL ON TABLE "public"."org_role_permissions" TO "service_role";
 
 
 
