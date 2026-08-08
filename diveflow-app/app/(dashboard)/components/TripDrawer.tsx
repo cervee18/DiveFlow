@@ -6,6 +6,8 @@ import TripDrawerHeader from './TripDrawerHeader';
 import TripManifest from '@/app/(dashboard)/trips/components/TripManifest';
 import TripFormModal from '@/app/(dashboard)/components/TripFormModal';
 import PostTripLog from './PostTripLog';
+import OnlineBookingsTab from './OnlineBookingsTab';
+import SuggestedDiveSitesModal from './SuggestedDiveSitesModal';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -61,8 +63,9 @@ export default function TripDrawer({
   const [isEditOpen, setIsEditOpen] = useState(false);
   /** Bump to re-fetch the trip header (e.g. after an edit). */
   const [refreshKey, setRefreshKey] = useState(0);
-  /** 'manifest' = normal view, 'post-trip' = dive log entry */
-  const [drawerMode, setDrawerMode] = useState<'manifest' | 'post-trip'>('manifest');
+  /** 'manifest' = normal view, 'post-trip' = dive log entry, 'online-bookings' = online booking list */
+  const [drawerMode, setDrawerMode] = useState<'manifest' | 'post-trip' | 'online-bookings'>('manifest');
+  const [showSuggestedSites, setShowSuggestedSites] = useState(false);
 
   // ── Fetch trip data ──────────────────────────────────────────────────────
   const loadTrip = useCallback(async (id: string) => {
@@ -73,7 +76,7 @@ export default function TripDrawer({
         .select(`
           id, label, start_time, duration_minutes, max_divers, vessel_id, trip_type_id,
           vessels ( name, abbreviation ),
-          trip_types ( id, name, default_start_time_am, default_start_time_pm, number_of_dives, category ),
+          trip_types ( id, name, default_start_time_am, default_start_time_pm, number_of_dives, category, online_bookable ),
           trip_staff ( roles ( name ), staff ( id, first_name, last_name, initials ) )
         `)
         .eq('id', id)
@@ -93,7 +96,8 @@ export default function TripDrawer({
 
   useEffect(() => {
     if (!tripId) { setTrip(null); return; }
-    setDrawerMode('manifest'); // reset to manifest view when trip changes
+    setDrawerMode('manifest');
+    setShowSuggestedSites(false);
     loadTrip(tripId);
   }, [tripId, refreshKey, loadTrip]);
 
@@ -106,9 +110,9 @@ export default function TripDrawer({
   // ── Handlers ─────────────────────────────────────────────────────────────
   const handleDelete = async () => {
     if (!trip) return;
-    if (!window.confirm('Are you sure you want to delete this trip? All manifest data will be lost.')) return;
-    const { error } = await supabase.from('trips').delete().eq('id', trip.id);
-    if (error) { alert('Error deleting trip: ' + error.message); return; }
+    if (!window.confirm('Cancel this trip? It will be hidden from the schedule and online booking.')) return;
+    const { error } = await supabase.from('trips').update({ status: 'cancelled' }).eq('id', trip.id);
+    if (error) { alert('Error cancelling trip: ' + error.message); return; }
     onClose();
     onSuccess?.();
   };
@@ -202,27 +206,55 @@ export default function TripDrawer({
             />
 
             {/* ── Mode tab bar ── */}
-            <div className="flex gap-0 border-b border-slate-200 shrink-0 px-6">
-              <button
-                onClick={() => setDrawerMode('manifest')}
-                className={`px-4 py-3 text-sm font-semibold border-b-2 transition-colors ${
-                  drawerMode === 'manifest'
-                    ? 'border-teal-600 text-teal-700'
-                    : 'border-transparent text-slate-500 hover:text-slate-700'
-                }`}
-              >
-                Manifest
-              </button>
-              <button
-                onClick={() => setDrawerMode('post-trip')}
-                className={`px-4 py-3 text-sm font-semibold border-b-2 transition-colors ${
-                  drawerMode === 'post-trip'
-                    ? 'border-teal-600 text-teal-700'
-                    : 'border-transparent text-slate-500 hover:text-slate-700'
-                }`}
-              >
-                Post-trip log
-              </button>
+            <div className="flex items-center border-b border-slate-200 shrink-0 px-6">
+              <div className="flex gap-0 flex-1">
+                <button
+                  onClick={() => setDrawerMode('manifest')}
+                  className={`px-4 py-3 text-sm font-semibold border-b-2 transition-colors ${
+                    drawerMode === 'manifest'
+                      ? 'border-teal-600 text-teal-700'
+                      : 'border-transparent text-slate-500 hover:text-slate-700'
+                  }`}
+                >
+                  Manifest
+                </button>
+                <button
+                  onClick={() => setDrawerMode('post-trip')}
+                  className={`px-4 py-3 text-sm font-semibold border-b-2 transition-colors ${
+                    drawerMode === 'post-trip'
+                      ? 'border-teal-600 text-teal-700'
+                      : 'border-transparent text-slate-500 hover:text-slate-700'
+                  }`}
+                >
+                  Post-trip log
+                </button>
+                {trip.trip_types?.online_bookable && (
+                  <button
+                    onClick={() => setDrawerMode('online-bookings')}
+                    className={`px-4 py-3 text-sm font-semibold border-b-2 transition-colors ${
+                      drawerMode === 'online-bookings'
+                        ? 'border-teal-600 text-teal-700'
+                        : 'border-transparent text-slate-500 hover:text-slate-700'
+                    }`}
+                  >
+                    Online bookings
+                  </button>
+                )}
+              </div>
+
+              {/* Suggested sites — only in manifest mode */}
+              {drawerMode === 'manifest' && (
+                <button
+                  onClick={() => setShowSuggestedSites(true)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-500 hover:text-teal-700 hover:bg-teal-50 rounded-lg transition-colors shrink-0"
+                  title="Suggested dive sites based on client history"
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 6.75V15m6-6v8.25m.503 3.498 4.875-2.437c.381-.19.622-.58.622-1.006V4.82c0-.836-.88-1.38-1.628-1.006l-3.869 1.934c-.317.159-.69.159-1.006 0L9.503 3.252a1.125 1.125 0 0 0-1.006 0L3.622 5.689C3.24 5.88 3 6.27 3 6.695V19.18c0 .836.88 1.38 1.628 1.006l3.869-1.934c.317-.159.69-.159 1.006 0l4.994 2.497c.317.159.69.159 1.006 0Z" />
+                  </svg>
+                  Suggested sites
+                </button>
+              )}
             </div>
 
             {/* ── Content (scrollable) ── */}
@@ -245,6 +277,11 @@ export default function TripDrawer({
                       .filter((s: any) => s.initials),
                   }}
                 />
+              ) : drawerMode === 'online-bookings' ? (
+                <OnlineBookingsTab
+                  tripId={trip.id}
+                  onBookingChange={onSuccess}
+                />
               ) : (
                 <PostTripLog
                   trip={trip}
@@ -262,6 +299,14 @@ export default function TripDrawer({
               onClose={() => setIsEditOpen(false)}
               onSuccess={handleEditSuccess}
             />
+
+            {/* ── Suggested dive sites panel ── */}
+            {showSuggestedSites && (
+              <SuggestedDiveSitesModal
+                tripId={trip.id}
+                onClose={() => setShowSuggestedSites(false)}
+              />
+            )}
           </>
         )}
       </div>

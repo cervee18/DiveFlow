@@ -5,11 +5,12 @@ import { createContext, useContext } from 'react';
 export type UnitSystem = 'metric' | 'imperial';
 
 export interface OrgSettings {
-  unitSystem: UnitSystem;
-  currency:   string;
+  unitSystem:             UnitSystem;
+  currency:               string;
+  requireVisitForTrips:   boolean;
 }
 
-const DEFAULT: OrgSettings = { unitSystem: 'metric', currency: 'EUR' };
+const DEFAULT: OrgSettings = { unitSystem: 'metric', currency: 'EUR', requireVisitForTrips: true };
 
 export const OrgSettingsContext = createContext<OrgSettings>(DEFAULT);
 

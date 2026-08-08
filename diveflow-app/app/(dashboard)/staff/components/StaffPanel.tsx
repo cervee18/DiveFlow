@@ -17,7 +17,7 @@ interface StaffPanelProps {
   selectedBubbles?: SelectedBubble[];
   onToggle: (id: string) => void;
   onCancel: () => void;
-  onSave: () => void;
+  onSave?: () => void;
   onUnassignBubbles?: () => void;
   onClearBubbles?: () => void;
 }
@@ -88,7 +88,7 @@ export default function StaffPanel({
             <p className="hidden sm:block text-[11px] text-teal-600 font-medium mt-1">
               {selectedIds.length} selected — click trips or jobs to queue
             </p>
-            <button
+            {onSave && <button
               onClick={onSave}
               className={`hidden sm:flex mt-2 w-full items-center justify-center gap-1.5 py-1.5 rounded-lg text-xs font-bold transition-colors ${
                 selectedTargetCount > 0
@@ -97,7 +97,7 @@ export default function StaffPanel({
               }`}
             >
               {selectedTargetCount > 0 ? `Save assignments (${selectedTargetCount})` : 'Save / Exit'}
-            </button>
+            </button>}
           </>
         )}
       </div>

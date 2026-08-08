@@ -4,12 +4,18 @@ import { useState, useEffect, useRef } from 'react';
 import { createClient } from '@/utils/supabase/client';
 import { useOrgSettings, formatDepth, depthUnit, inputToMetres, mToFt } from '@/app/(dashboard)/components/OrgSettingsContext';
 
+interface DiveSiteGroup {
+  id: string;
+  name: string;
+}
+
 interface DiveSite {
   id: string;
   name: string;
   max_depth: number;
   latitude: number | null;
   longitude: number | null;
+  group_id: string | null;
 }
 
 interface FormState {
@@ -17,21 +23,23 @@ interface FormState {
   max_depth: string;
   latitude: string;
   longitude: string;
+  group_id: string;
 }
 
-const emptyForm = (): FormState => ({ name: '', max_depth: '', latitude: '', longitude: '' });
+const emptyForm = (): FormState => ({ name: '', max_depth: '', latitude: '', longitude: '', group_id: '' });
 
 function siteToForm(s: DiveSite, unitSystem: 'metric' | 'imperial'): FormState {
   const depthDisplay = unitSystem === 'imperial' ? mToFt(s.max_depth) : s.max_depth;
   return {
     name:      s.name,
     max_depth: String(depthDisplay),
-    latitude:  s.latitude != null  ? String(s.latitude)  : '',
+    latitude:  s.latitude  != null ? String(s.latitude)  : '',
     longitude: s.longitude != null ? String(s.longitude) : '',
+    group_id:  s.group_id ?? '',
   };
 }
 
-// ── Depth display (needs hook, so must be a component) ────────────────────────
+// ── Depth display ─────────────────────────────────────────────────────────────
 function DepthDisplay({ metres }: { metres: number }) {
   const { unitSystem } = useOrgSettings();
   return (
@@ -43,12 +51,7 @@ function DepthDisplay({ metres }: { metres: number }) {
 
 // ── Inline form row ───────────────────────────────────────────────────────────
 function DiveSiteFormRow({
-  form,
-  onChange,
-  onSave,
-  onCancel,
-  isSaving,
-  isNew,
+  form, onChange, onSave, onCancel, isSaving, isNew, groups,
 }: {
   form: FormState;
   onChange: (f: FormState) => void;
@@ -56,6 +59,7 @@ function DiveSiteFormRow({
   onCancel: () => void;
   isSaving: boolean;
   isNew: boolean;
+  groups: DiveSiteGroup[];
 }) {
   const nameRef = useRef<HTMLInputElement>(null);
   useEffect(() => { nameRef.current?.focus(); }, []);
@@ -79,6 +83,20 @@ function DiveSiteFormRow({
           placeholder="Site name"
           className="flex-1 min-w-0 text-sm px-2.5 py-1.5 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-400 bg-white"
         />
+
+        {/* Group */}
+        {groups.length > 0 && (
+          <select
+            value={form.group_id}
+            onChange={e => set('group_id', e.target.value)}
+            className="text-sm px-2.5 py-1.5 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-400 bg-white text-slate-700"
+          >
+            <option value="">No group</option>
+            {groups.map(g => (
+              <option key={g.id} value={g.id}>{g.name}</option>
+            ))}
+          </select>
+        )}
 
         {/* Max depth */}
         <div className="flex items-center gap-1.5 shrink-0">
@@ -149,24 +167,32 @@ function DiveSiteFormRow({
 
 // ── Read-only row ─────────────────────────────────────────────────────────────
 function DiveSiteRow({
-  site,
-  onEdit,
-  onDelete,
-  isDeleting,
+  site, onEdit, onDelete, isDeleting, groups,
 }: {
   site: DiveSite;
   onEdit: () => void;
   onDelete: () => void;
   isDeleting: boolean;
+  groups: DiveSiteGroup[];
 }) {
   const hasCoords = site.latitude != null && site.longitude != null;
+  const group = groups.find(g => g.id === site.group_id);
 
   return (
     <div className="group flex items-center gap-4 px-6 py-3 hover:bg-slate-50 transition-colors">
       {/* Name */}
       <span className="flex-1 min-w-0 font-medium text-slate-800 truncate">{site.name}</span>
 
-      {/* Max depth — rendered via a child component so it can call useOrgSettings */}
+      {/* Group badge */}
+      {group ? (
+        <span className="shrink-0 text-[11px] font-medium px-2 py-0.5 rounded-full bg-violet-50 text-violet-600">
+          {group.name}
+        </span>
+      ) : (
+        <span className="shrink-0 w-[52px]" />
+      )}
+
+      {/* Max depth */}
       <DepthDisplay metres={site.max_depth} />
 
       {/* Coordinates badge */}
@@ -222,11 +248,160 @@ function DiveSiteRow({
   );
 }
 
+// ── Groups card ───────────────────────────────────────────────────────────────
+function GroupsCard({
+  orgId, groups, setGroups,
+}: {
+  orgId: string;
+  groups: DiveSiteGroup[];
+  setGroups: React.Dispatch<React.SetStateAction<DiveSiteGroup[]>>;
+}) {
+  const supabase = createClient();
+  const [adding,    setAdding]    = useState(false);
+  const [newName,   setNewName]   = useState('');
+  const [isSaving,  setIsSaving]  = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [error,     setError]     = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => { if (adding) inputRef.current?.focus(); }, [adding]);
+
+  const handleAdd = async () => {
+    const name = newName.trim();
+    if (!name) return;
+    setIsSaving(true);
+    setError(null);
+    const { data, error } = await supabase
+      .from('divesite_groups')
+      .insert({ organization_id: orgId, name })
+      .select('id, name')
+      .single();
+    if (error) { setError(error.message); setIsSaving(false); return; }
+    if (data) setGroups(prev => [...prev, data].sort((a, b) => a.name.localeCompare(b.name)));
+    setNewName('');
+    setAdding(false);
+    setIsSaving(false);
+  };
+
+  const handleDelete = async (id: string) => {
+    setDeletingId(id);
+    setError(null);
+    const { error } = await supabase.from('divesite_groups').delete().eq('id', id);
+    if (error) { setError(error.message); setDeletingId(null); return; }
+    setGroups(prev => prev.filter(g => g.id !== id));
+    setDeletingId(null);
+  };
+
+  if (groups.length === 0 && !adding) return (
+    <section className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+      <div className="flex items-center justify-between px-6 py-4">
+        <div>
+          <h2 className="text-sm font-semibold text-slate-800">Site Groups</h2>
+          <p className="text-xs text-slate-400 mt-0.5">Optional groupings for your dive sites</p>
+        </div>
+        <button
+          onClick={() => setAdding(true)}
+          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-teal-600 bg-teal-50 hover:bg-teal-100 rounded-lg transition-colors"
+        >
+          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+          </svg>
+          Add group
+        </button>
+      </div>
+    </section>
+  );
+
+  return (
+    <section className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+      <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
+        <div>
+          <h2 className="text-sm font-semibold text-slate-800">Site Groups</h2>
+          <p className="text-xs text-slate-400 mt-0.5">Optional groupings for your dive sites</p>
+        </div>
+        {!adding && (
+          <button
+            onClick={() => setAdding(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-teal-600 bg-teal-50 hover:bg-teal-100 rounded-lg transition-colors"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+            </svg>
+            Add group
+          </button>
+        )}
+      </div>
+
+      {error && (
+        <div className="px-6 py-2 bg-rose-50 border-b border-rose-100 text-xs text-rose-600">{error}</div>
+      )}
+
+      <div className="px-6 py-3 flex flex-wrap items-center gap-2">
+        {groups.map(g => (
+          <span
+            key={g.id}
+            className="group/chip flex items-center gap-1.5 text-sm font-medium px-3 py-1 rounded-full bg-violet-50 text-violet-700"
+          >
+            {g.name}
+            <button
+              onClick={() => handleDelete(g.id)}
+              disabled={deletingId === g.id}
+              className="text-violet-400 hover:text-rose-500 transition-colors disabled:opacity-40"
+              title="Delete group"
+            >
+              {deletingId === g.id ? (
+                <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth={4} />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                </svg>
+              ) : (
+                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              )}
+            </button>
+          </span>
+        ))}
+
+        {adding && (
+          <div className="flex items-center gap-2">
+            <input
+              ref={inputRef}
+              value={newName}
+              onChange={e => setNewName(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter') handleAdd();
+                if (e.key === 'Escape') { setAdding(false); setNewName(''); }
+              }}
+              placeholder="Group name"
+              className="text-sm px-2.5 py-1 border border-slate-300 rounded-full focus:outline-none focus:ring-2 focus:ring-teal-400 bg-white w-36"
+            />
+            <button
+              onClick={handleAdd}
+              disabled={isSaving || !newName.trim()}
+              className="px-3 py-1 text-xs font-semibold bg-teal-500 text-white rounded-full hover:bg-teal-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            >
+              {isSaving ? 'Adding…' : 'Add'}
+            </button>
+            <button
+              onClick={() => { setAdding(false); setNewName(''); setError(null); }}
+              className="text-xs text-slate-400 hover:text-slate-600 transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 export default function DiveSitesConfig({ orgId }: { orgId: string }) {
   const supabase = createClient();
   const { unitSystem } = useOrgSettings();
 
+  const [groups,     setGroups]     = useState<DiveSiteGroup[]>([]);
   const [sites,      setSites]      = useState<DiveSite[]>([]);
   const [isLoading,  setIsLoading]  = useState(true);
   const [editingId,  setEditingId]  = useState<string | null>(null);
@@ -237,16 +412,23 @@ export default function DiveSitesConfig({ orgId }: { orgId: string }) {
   const [error,      setError]      = useState<string | null>(null);
 
   useEffect(() => {
-    supabase
-      .from('divesites')
-      .select('id, name, max_depth, latitude, longitude')
-      .eq('organization_id', orgId)
-      .order('name')
-      .then(({ data, error }) => {
-        if (data) setSites(data);
-        if (error) setError(error.message);
-        setIsLoading(false);
-      });
+    Promise.all([
+      supabase
+        .from('divesite_groups')
+        .select('id, name')
+        .eq('organization_id', orgId)
+        .order('name'),
+      supabase
+        .from('divesites')
+        .select('id, name, max_depth, latitude, longitude, group_id')
+        .eq('organization_id', orgId)
+        .order('name'),
+    ]).then(([{ data: gData, error: gErr }, { data: sData, error: sErr }]) => {
+      if (gData) setGroups(gData);
+      if (sData) setSites(sData);
+      if (gErr || sErr) setError((gErr ?? sErr)!.message);
+      setIsLoading(false);
+    });
   }, [orgId]);
 
   const startEdit = (site: DiveSite) => {
@@ -269,6 +451,7 @@ export default function DiveSitesConfig({ orgId }: { orgId: string }) {
       max_depth: inputToMetres(parseFloat(editForm.max_depth), unitSystem),
       latitude:  parseCoord(editForm.latitude),
       longitude: parseCoord(editForm.longitude),
+      group_id:  editForm.group_id || null,
     };
     const { error } = await supabase.from('divesites').update(patch).eq('id', editingId);
     if (error) { setError(error.message); setIsSaving(false); return; }
@@ -289,8 +472,9 @@ export default function DiveSitesConfig({ orgId }: { orgId: string }) {
         max_depth:       inputToMetres(parseFloat(addForm.max_depth), unitSystem),
         latitude:        parseCoord(addForm.latitude),
         longitude:       parseCoord(addForm.longitude),
+        group_id:        addForm.group_id || null,
       })
-      .select('id, name, max_depth, latitude, longitude')
+      .select('id, name, max_depth, latitude, longitude, group_id')
       .single();
     if (error) { setError(error.message); setIsSaving(false); return; }
     if (data) setSites(prev => [...prev, data].sort((a, b) => a.name.localeCompare(b.name)));
@@ -308,85 +492,89 @@ export default function DiveSitesConfig({ orgId }: { orgId: string }) {
   };
 
   return (
-    <section className="bg-white rounded-xl border border-slate-200 overflow-hidden">
-      {/* Block header */}
-      <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
-        <div>
-          <h2 className="text-sm font-semibold text-slate-800">Dive Sites</h2>
-          <p className="text-xs text-slate-400 mt-0.5">Sites used in trip logs and dive records</p>
+    <div className="space-y-6">
+      {/* Groups card */}
+      <GroupsCard orgId={orgId} groups={groups} setGroups={setGroups} />
+
+      {/* Sites card */}
+      <section className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
+          <div>
+            <h2 className="text-sm font-semibold text-slate-800">Dive Sites</h2>
+            <p className="text-xs text-slate-400 mt-0.5">Sites used in trip logs and dive records</p>
+          </div>
+          {!addForm && (
+            <button
+              onClick={() => { setEditingId(null); setAddForm(emptyForm()); setError(null); }}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-teal-600 bg-teal-50 hover:bg-teal-100 rounded-lg transition-colors"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+              </svg>
+              Add site
+            </button>
+          )}
         </div>
-        {!addForm && (
-          <button
-            onClick={() => { setEditingId(null); setAddForm(emptyForm()); setError(null); }}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-teal-600 bg-teal-50 hover:bg-teal-100 rounded-lg transition-colors"
-          >
-            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
-            </svg>
-            Add site
-          </button>
+
+        {error && (
+          <div className="px-6 py-2 bg-rose-50 border-b border-rose-100 text-xs text-rose-600">{error}</div>
         )}
-      </div>
 
-      {/* Error banner */}
-      {error && (
-        <div className="px-6 py-2 bg-rose-50 border-b border-rose-100 text-xs text-rose-600">
-          {error}
-        </div>
-      )}
+        {isLoading ? (
+          <div className="divide-y divide-slate-100">
+            {[1, 2, 3].map(i => (
+              <div key={i} className="flex items-center gap-4 px-6 py-3">
+                <div className="flex-1 h-4 bg-slate-100 animate-pulse rounded" />
+                <div className="w-12 h-4 bg-slate-100 animate-pulse rounded" />
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="divide-y divide-slate-100">
+            {sites.length === 0 && !addForm && (
+              <div className="px-6 py-8 text-center text-sm text-slate-400">
+                No dive sites yet — add your first one above.
+              </div>
+            )}
 
-      {/* Loading skeleton */}
-      {isLoading ? (
-        <div className="divide-y divide-slate-100">
-          {[1, 2, 3].map(i => (
-            <div key={i} className="flex items-center gap-4 px-6 py-3">
-              <div className="flex-1 h-4 bg-slate-100 animate-pulse rounded" />
-              <div className="w-12 h-4 bg-slate-100 animate-pulse rounded" />
-            </div>
-          ))}
-        </div>
-      ) : (
-        <div className="divide-y divide-slate-100">
-          {sites.length === 0 && !addForm && (
-            <div className="px-6 py-8 text-center text-sm text-slate-400">
-              No dive sites yet — add your first one above.
-            </div>
-          )}
+            {sites.map(site =>
+              editingId === site.id ? (
+                <DiveSiteFormRow
+                  key={site.id}
+                  form={editForm}
+                  onChange={setEditForm}
+                  onSave={handleSaveEdit}
+                  onCancel={cancelEdit}
+                  isSaving={isSaving}
+                  isNew={false}
+                  groups={groups}
+                />
+              ) : (
+                <DiveSiteRow
+                  key={site.id}
+                  site={site}
+                  onEdit={() => startEdit(site)}
+                  onDelete={() => handleDelete(site.id)}
+                  isDeleting={deletingId === site.id}
+                  groups={groups}
+                />
+              )
+            )}
 
-          {sites.map(site =>
-            editingId === site.id ? (
+            {addForm && (
               <DiveSiteFormRow
-                key={site.id}
-                form={editForm}
-                onChange={setEditForm}
-                onSave={handleSaveEdit}
-                onCancel={cancelEdit}
+                form={addForm}
+                onChange={setAddForm}
+                onSave={handleAdd}
+                onCancel={() => { setAddForm(null); setError(null); }}
                 isSaving={isSaving}
-                isNew={false}
+                isNew
+                groups={groups}
               />
-            ) : (
-              <DiveSiteRow
-                key={site.id}
-                site={site}
-                onEdit={() => startEdit(site)}
-                onDelete={() => handleDelete(site.id)}
-                isDeleting={deletingId === site.id}
-              />
-            )
-          )}
-
-          {addForm && (
-            <DiveSiteFormRow
-              form={addForm}
-              onChange={setAddForm}
-              onSave={handleAdd}
-              onCancel={() => { setAddForm(null); setError(null); }}
-              isSaving={isSaving}
-              isNew
-            />
-          )}
-        </div>
-      )}
-    </section>
+            )}
+          </div>
+        )}
+      </section>
+    </div>
   );
 }

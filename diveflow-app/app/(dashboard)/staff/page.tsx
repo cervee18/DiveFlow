@@ -10,10 +10,13 @@ import StaffPanel  from './components/StaffPanel';
 import TripDrawer  from '@/app/(dashboard)/components/TripDrawer';
 import { getTodayStr, localHour } from './components/dateUtils';
 import { SelectedBubble, MoveDestination, bubbleKey } from './components/staffTypes';
+import { usePermission } from '@/app/(dashboard)/components/PermissionsContext';
+import { PERMISSIONS } from '@/lib/permissions';
 
 export default function StaffPage() {
   const supabase = createClient();
-  const router   = useRouter();
+  const router       = useRouter();
+  const canMoveStaff = usePermission(PERMISSIONS.STAFF_MOVE_STAFF);
 
   const [selectedDate,         setSelectedDate]         = useState(() => {
     if (typeof window === 'undefined') return getTodayStr();
@@ -874,13 +877,13 @@ export default function StaffPage() {
           onToggleTripSelection={handleToggleTripSelection}
           onToggleActivitySelection={handleToggleActivitySelection}
           onToggleJobSelection={handleToggleJobSelection}
-          onRemoveStaff={handleRemoveStaff}
-          onRemoveFromJob={handleRemoveFromJob}
-          onRemoveActivityStaff={handleRemoveActivityStaff}
-          onAssignCaptain={handleAssignCaptain}
+          onRemoveStaff={canMoveStaff ? handleRemoveStaff : undefined}
+          onRemoveFromJob={canMoveStaff ? handleRemoveFromJob : undefined}
+          onRemoveActivityStaff={canMoveStaff ? handleRemoveActivityStaff : undefined}
+          onAssignCaptain={canMoveStaff ? handleAssignCaptain : undefined}
           onOpenTrip={setDrawerTripId}
           onToggleBubble={handleToggleBubble}
-          onMoveBubbles={handleMoveBubbles}
+          onMoveBubbles={canMoveStaff ? handleMoveBubbles : undefined}
           onAddCustomLabel={handleAddCustomLabel}
           onDeleteCustomLabel={handleDeleteCustomLabel}
         />
@@ -897,7 +900,7 @@ export default function StaffPage() {
             );
           }}
           onCancel={handleCancelAssign}
-          onSave={handleSaveAssignments}
+          onSave={canMoveStaff ? handleSaveAssignments : undefined}
           onUnassignBubbles={handleUnassignBubbles}
           onClearBubbles={() => setSelectedBubbles([])}
         />

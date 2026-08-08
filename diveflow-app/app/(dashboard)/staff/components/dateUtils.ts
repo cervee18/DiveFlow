@@ -1,15 +1,14 @@
-// All helpers use local time to avoid UTC drift
+const pad = (n: number) => String(n).padStart(2, '0');
 
 export function getTodayStr(): string {
   const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
 }
 
 export function formatTime(timestamp: string): string {
-  return new Date(timestamp).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+  return new Date(timestamp).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'UTC' });
 }
 
-/** Returns the local hour (0–23) for a timestamp string */
 export function localHour(timestamp: string): number {
-  return new Date(timestamp).getHours();
+  return new Date(timestamp).getUTCHours();
 }

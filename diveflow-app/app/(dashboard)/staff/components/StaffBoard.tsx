@@ -37,13 +37,13 @@ interface StaffBoardProps {
   onToggleTripSelection: (tripId: string) => void;
   onToggleActivitySelection: (tripId: string, activityId: string) => void;
   onToggleJobSelection: (jobTypeId: string, halfDay: 'AM' | 'PM', customLabel?: string) => void;
-  onRemoveStaff: (tripId: string, staffId: string) => void;
-  onRemoveFromJob: (jobTypeId: string, staffId: string, halfDay: 'AM' | 'PM') => void;
-  onRemoveActivityStaff: (tripStaffId: string, tripId: string, staffId: string) => void;
-  onAssignCaptain: (tripId: string, staffId: string) => void;
+  onRemoveStaff?: (tripId: string, staffId: string) => void;
+  onRemoveFromJob?: (jobTypeId: string, staffId: string, halfDay: 'AM' | 'PM') => void;
+  onRemoveActivityStaff?: (tripStaffId: string, tripId: string, staffId: string) => void;
+  onAssignCaptain?: (tripId: string, staffId: string) => void;
   onOpenTrip?: (tripId: string) => void;
   onToggleBubble: (bubble: SelectedBubble) => void;
-  onMoveBubbles: (dest: MoveDestination) => void;
+  onMoveBubbles?: (dest: MoveDestination) => void;
   onAddCustomLabel: (halfDay: 'AM' | 'PM', label: string) => void;
   onDeleteCustomLabel: (halfDay: 'AM' | 'PM', label: string) => void;
 }
@@ -82,7 +82,7 @@ function JobCard({
   conflictedStaffIds: Set<string>;
   onToggle: () => void;
   onToggleBubble: (bubble: SelectedBubble) => void;
-  onMoveBubbles: (dest: MoveDestination) => void;
+  onMoveBubbles?: (dest: MoveDestination) => void;
   onDelete?: () => void;
 }) {
   const seen = new Set<string>();
@@ -98,7 +98,7 @@ function JobCard({
 
   const handleCardClick = () => {
     if (bubbleMode) {
-      onMoveBubbles({ kind: 'job', jobTypeId: jobType.id, halfDay, ...(customLabel ? { customLabel } : {}) });
+      onMoveBubbles?.({ kind: 'job', jobTypeId: jobType.id, halfDay, ...(customLabel ? { customLabel } : {}) });
     } else if (assignMode) {
       onToggle();
     }
@@ -286,13 +286,13 @@ function Column({
   onToggleTripSelection: (tripId: string) => void;
   onToggleActivitySelection: (tripId: string, activityId: string) => void;
   onToggleJobSelection: (jobTypeId: string, halfDay: 'AM' | 'PM', customLabel?: string) => void;
-  onRemoveStaff: (tripId: string, staffId: string) => void;
-  onRemoveFromJob: (jobTypeId: string, staffId: string, halfDay: 'AM' | 'PM') => void;
-  onRemoveActivityStaff: (tripStaffId: string, tripId: string, staffId: string) => void;
-  onAssignCaptain: (tripId: string, staffId: string) => void;
+  onRemoveStaff?: (tripId: string, staffId: string) => void;
+  onRemoveFromJob?: (jobTypeId: string, staffId: string, halfDay: 'AM' | 'PM') => void;
+  onRemoveActivityStaff?: (tripStaffId: string, tripId: string, staffId: string) => void;
+  onAssignCaptain?: (tripId: string, staffId: string) => void;
   onOpenTrip?: (tripId: string) => void;
   onToggleBubble: (bubble: SelectedBubble) => void;
-  onMoveBubbles: (dest: MoveDestination) => void;
+  onMoveBubbles?: (dest: MoveDestination) => void;
   onAddCustomLabel: (halfDay: 'AM' | 'PM', label: string) => void;
   onDeleteCustomLabel: (halfDay: 'AM' | 'PM', label: string) => void;
 }) {
@@ -462,9 +462,9 @@ function Column({
                       conflictedStaffIds={conflictedStaffIds}
                       onToggle={() => onToggleTripSelection(trip.id)}
                       onToggleActivity={activityId => onToggleActivitySelection(trip.id, activityId)}
-                      onRemoveStaff={staffId => onRemoveStaff(trip.id, staffId)}
+                      onRemoveStaff={onRemoveStaff ? staffId => onRemoveStaff(trip.id, staffId) : undefined}
                       onRemoveActivityStaff={onRemoveActivityStaff}
-                      onAssignCaptain={staffId => onAssignCaptain(trip.id, staffId)}
+                      onAssignCaptain={onAssignCaptain ? staffId => onAssignCaptain(trip.id, staffId) : undefined}
                       onOpenTrip={onOpenTrip}
                       onToggleBubble={onToggleBubble}
                       onMoveBubbles={onMoveBubbles}

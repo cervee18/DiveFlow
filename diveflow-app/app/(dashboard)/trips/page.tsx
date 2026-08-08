@@ -109,6 +109,7 @@ export default function TripsPage() {
           trip_staff ( roles ( name ), staff ( id, first_name, last_name, initials ) )
         `)
         .eq('organization_id', userOrgId)
+        .eq('status', 'active')
         .gte('start_time', startDate.toISOString())
         .lte('start_time', endDate.toISOString())
         .order('start_time', { ascending: true });
@@ -127,14 +128,14 @@ export default function TripsPage() {
 
   // -- Handlers --
   const handleDeleteTrip = async (id: string) => {
-    if (!window.confirm("Are you sure you want to delete this trip? All manifest data will be lost.")) return;
-    const { error } = await supabase.from('trips').delete().eq('id', id);
+    if (!window.confirm("Cancel this trip? It will be hidden from the schedule and online booking.")) return;
+    const { error } = await supabase.from('trips').update({ status: 'cancelled' }).eq('id', id);
     if (!error) {
       setSelectedTripId(null);
       setRefreshTrigger(prev => prev + 1);
     } else {
-      console.error("Error deleting trip:", error);
-      alert("Could not delete trip. Please try again.");
+      console.error("Error cancelling trip:", error);
+      alert("Could not cancel trip. Please try again.");
     }
   };
 

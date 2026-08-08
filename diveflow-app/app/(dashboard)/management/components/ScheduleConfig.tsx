@@ -352,8 +352,10 @@ export default function ScheduleConfig({ orgId }: { orgId: string }) {
   const [modalSection, setModalSection] = useState<TimeSection>('am');
   const [editingId,  setEditingId]  = useState<string | null>(null);
   const [form,       setForm]       = useState<SlotForm>({ vessel_id: '', trip_type_id: '', start_time: '08:00', valid_from: todayStr() });
-  const [isSaving,   setIsSaving]   = useState(false);
-  const [error,      setError]      = useState<string | null>(null);
+  const [isSaving,      setIsSaving]      = useState(false);
+  const [error,         setError]         = useState<string | null>(null);
+  const [isGenerating,  setIsGenerating]  = useState(false);
+  const [generateMsg,   setGenerateMsg]   = useState<string | null>(null);
 
   useEffect(() => {
     async function load() {
@@ -398,6 +400,18 @@ export default function ScheduleConfig({ orgId }: { orgId: string }) {
     setModalOpen(true);
   };
 
+  const handleGenerate = async () => {
+    setIsGenerating(true);
+    setGenerateMsg(null);
+    const { data, error } = await supabase.rpc('generate_trips_from_schedule', {
+      p_org_id: orgId,
+      p_months_ahead: 24,
+    });
+    setIsGenerating(false);
+    setGenerateMsg(error ? `Error: ${error.message}` : `${data ?? 0} trip${data !== 1 ? 's' : ''} created`);
+    setTimeout(() => setGenerateMsg(null), 4000);
+  };
+
   const handleSave = async (selectedDays: number[]) => {
     setIsSaving(true);
     setError(null);
@@ -432,6 +446,9 @@ export default function ScheduleConfig({ orgId }: { orgId: string }) {
       if (data) setSlots(prev => prev.map(s => s.id === editingId ? (data as any) : s));
     }
 
+    // Generate trips for the new/updated slot pattern
+    await supabase.rpc('generate_trips_from_schedule', { p_org_id: orgId, p_months_ahead: 24 });
+
     setIsSaving(false);
     setModalOpen(false);
   };
@@ -440,6 +457,7 @@ export default function ScheduleConfig({ orgId }: { orgId: string }) {
     setDeletingId(id);
     await supabase.from('weekly_schedule_slots').delete().eq('id', id);
     setSlots(prev => prev.filter(s => s.id !== id));
+    // No trip regeneration needed on delete — existing trips remain until cancelled individually
     setDeletingId(null);
   };
 
@@ -460,6 +478,31 @@ export default function ScheduleConfig({ orgId }: { orgId: string }) {
   return (
     <>
       <div className="h-full flex flex-col bg-white rounded-xl border border-slate-200 overflow-hidden">
+
+        {/* Toolbar */}
+        <div className="flex items-center justify-end gap-3 px-4 py-2.5 border-b border-slate-100 shrink-0">
+          {generateMsg && (
+            <span className="text-xs text-slate-500">{generateMsg}</span>
+          )}
+          <button
+            type="button"
+            onClick={handleGenerate}
+            disabled={isGenerating}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 hover:border-teal-400 hover:text-teal-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {isGenerating ? (
+              <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth={4} />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+              </svg>
+            ) : (
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+            )}
+            Regenerate trips
+          </button>
+        </div>
 
         {/* Board */}
         <div className="flex-1 min-h-0 overflow-x-auto">

@@ -33,7 +33,7 @@ const BORDER_MAP: Record<string, string> = {
 interface Props {
   slot: BlueprintSlot;
   isConfirming: boolean;
-  onConfirm: () => void;
+  onConfirm?: () => void;
   onEdit: () => void;
 }
 
@@ -64,8 +64,8 @@ export default function BlueprintSlotCard({ slot, isConfirming, onConfirm, onEdi
         </span>
       </button>
 
-      {/* Confirm button — always accessible, visible on hover */}
-      <button
+      {/* Confirm button — only rendered when caller has permission */}
+      {onConfirm && <button
         onClick={e => { e.stopPropagation(); onConfirm(); }}
         disabled={isConfirming}
         title="Confirm trip"
@@ -81,7 +81,7 @@ export default function BlueprintSlotCard({ slot, isConfirming, onConfirm, onEdi
             <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
           </svg>
         )}
-      </button>
+      </button>}
     </div>
   );
 }

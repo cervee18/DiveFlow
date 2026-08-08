@@ -12,11 +12,13 @@ export default function ClientFormModal({ userOrgId, requireVisitDefault, onClos
   const supabase = createClient();
   const [isCreating, setIsCreating] = useState(false);
   const [requiresVisit, setRequiresVisit] = useState(requireVisitDefault);
+  const [formError, setFormError] = useState<string | null>(null);
 
   const handleCreate = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!userOrgId) return;
     setIsCreating(true);
+    setFormError(null);
 
     const formData = new FormData(e.currentTarget);
     const emailValue = formData.get("email") as string;
@@ -36,8 +38,12 @@ export default function ClientFormModal({ userOrgId, requireVisitDefault, onClos
     if (!error && data) {
       onSuccess(data);
     } else {
-      console.error("Error creating client:", error);
-      alert("Could not create client. Please try again.");
+      if (error?.code === "23505") {
+        setFormError("A client with this email already exists. Search for them in the client directory — they may be a duplicate.");
+      } else {
+        console.error("Error creating client:", error);
+        setFormError("Could not create client. Please try again.");
+      }
     }
   };
 
@@ -92,6 +98,12 @@ export default function ClientFormModal({ userOrgId, requireVisitDefault, onClos
               </button>
             </div>
           </div>
+
+          {formError && (
+            <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-xs text-red-700">
+              {formError}
+            </div>
+          )}
 
           <div className="pt-4 mt-2 border-t border-slate-100 flex justify-end gap-3">
             <button type="button" onClick={onClose} className="px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 rounded-md transition-colors">Cancel</button>

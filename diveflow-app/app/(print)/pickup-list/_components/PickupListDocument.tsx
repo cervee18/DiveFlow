@@ -41,9 +41,9 @@ function formatPickupDate(dateStr: string): string {
   });
 }
 
-function formatTime(isoStr: string, timezone: string): string {
+function formatTime(isoStr: string): string {
   return new Date(isoStr).toLocaleTimeString("en-GB", {
-    timeZone: timezone,
+    timeZone: 'UTC',
     hour: "2-digit",
     minute: "2-digit",
   });
@@ -92,7 +92,7 @@ export default function PickupListDocument({ data }: { data: PickupListData }) {
                 {/* Trip time header */}
                 <div className="flex items-baseline gap-3 pb-2 border-b-2 border-slate-700 mb-4">
                   <span className="text-base font-bold tabular-nums text-slate-900">
-                    {formatTime(slot.start_time, org.timezone)}
+                    {formatTime(slot.start_time)}
                   </span>
                   {slot.trip_type_name && (
                     <span className="text-sm text-slate-500">{slot.trip_type_name}</span>

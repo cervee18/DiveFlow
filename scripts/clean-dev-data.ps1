@@ -15,6 +15,9 @@ if ($confirm -ne "YES") {
     exit 0
 }
 
+$cleanClients = Read-Host "Also delete all clients? (YES to include, anything else to skip)"
+$includeClients = ($cleanClients -eq "YES")
+
 $sql = @"
 SET session_replication_role = replica;
 
@@ -41,13 +44,29 @@ TRUNCATE TABLE
   trip_clients,
   trips
 CASCADE;
+"@
+
+if ($includeClients) {
+    $sql += @"
+
+TRUNCATE TABLE
+  clients
+CASCADE;
+"@
+}
+
+$sql += @"
 
 SET session_replication_role = DEFAULT;
 
-SELECT 'Done. Trips, visits, POS data, and client deposits cleared.' AS result;
+SELECT 'Done.' AS result;
 "@
 
 $sql | docker exec -i supabase_db_DiveFlow psql -U postgres -d postgres
 
 Write-Host ""
-Write-Host "Clean complete." -ForegroundColor Green
+if ($includeClients) {
+    Write-Host "Clean complete (including clients)." -ForegroundColor Green
+} else {
+    Write-Host "Clean complete (clients preserved)." -ForegroundColor Green
+}
