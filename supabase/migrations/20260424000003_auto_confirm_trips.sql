@@ -2,6 +2,17 @@
 -- immediately available for online booking. Staff cancels individual trips
 -- instead of confirming them.
 
+-- Step 0: one-time production catch-up cleanup.
+-- This migration was originally meant to run in April 2026 (seeding trips from
+-- the weekly schedule right after the schedule feature shipped), but a migration
+-- history/repair mishap meant it never actually executed. In the time since, the
+-- app was live but only had placeholder/test trips created manually (no real
+-- customer bookings exist yet), so it's safe to clear them and let the schedule
+-- seed generate a clean 24-month baseline now. Cascades to trip_clients,
+-- trip_dives, trip_staff, online_bookings; staff_daily_job.trip_id is set NULL.
+-- NOT safe to reuse this step once real bookings exist.
+DELETE FROM public.trips;
+
 -- Step 1: Add status to trips
 ALTER TABLE public.trips
   ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'active'
@@ -184,13 +195,8 @@ AS $$
     AND t.status = 'active';
 $$;
 
--- Step 5: Seed trips for all existing organisations
-DO $$
-DECLARE
-  org record;
-BEGIN
-  FOR org IN SELECT id FROM public.organizations LOOP
-    PERFORM public.generate_trips_from_schedule(org.id, 24);
-  END LOOP;
-END;
-$$;
+-- Step 5: Seed trips for all existing organisations.
+-- Moved to 20260424000004_fix_generate_trips_overlap.sql, which redefines
+-- generate_trips_from_schedule to skip individual vessel-overlap conflicts
+-- instead of aborting the whole batch (this bulk version fails outright on
+-- the first overlapping slot).

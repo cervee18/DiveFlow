@@ -79,3 +79,16 @@ BEGIN
   RETURN v_inserted;
 END;
 $$;
+
+-- Step 2: Seed trips for all existing organisations (moved here from
+-- 20260424000003_auto_confirm_trips.sql so the overlap-safe version above is
+-- what actually runs the seed).
+DO $$
+DECLARE
+  org record;
+BEGIN
+  FOR org IN SELECT id FROM public.organizations LOOP
+    PERFORM public.generate_trips_from_schedule(org.id, 24);
+  END LOOP;
+END;
+$$;

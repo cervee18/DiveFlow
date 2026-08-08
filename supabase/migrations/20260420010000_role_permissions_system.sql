@@ -1,9 +1,7 @@
 -- Role permissions system
 -- Adds staff_3/staff_4 tiers, custom role names per org, and per-org permission grants.
-
--- Extend the enum (IF NOT EXISTS guards are safe for re-runs)
-ALTER TYPE user_role ADD VALUE IF NOT EXISTS 'staff_3';
-ALTER TYPE user_role ADD VALUE IF NOT EXISTS 'staff_4';
+-- (enum values themselves are added in 20260420005000_extend_user_role_enum.sql,
+-- since a new enum value can't be used in the same transaction that adds it)
 
 -- Custom display name per org per role
 CREATE TABLE IF NOT EXISTS public.org_role_config (
