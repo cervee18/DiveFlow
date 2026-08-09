@@ -44,27 +44,34 @@ function alertKey(a: Alert): string {
   return `${a.alert_type}:${a.trip_id}:${a.client_id ?? ''}`;
 }
 
-/** Returns YYYY-MM-DD in local time for a given Date (or today if omitted). */
+// Timestamps are stored as "clock time = UTC" (see overview/components/dateUtils.ts) —
+// i.e. 08:30Z always means 08:30 at the dive shop, regardless of browser timezone.
+// All date/time extraction below must use the UTC getters, not local ones, or the
+// displayed time shifts by the browser's UTC offset.
+
+/** Returns YYYY-MM-DD for a given Date (or today if omitted), read as shop clock time. */
 function toLocalDateStr(d: Date = new Date()): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
 }
 
 function formatTripDate(iso: string): string {
   const d = new Date(iso);
   const today    = new Date();
   const tomorrow = new Date(today);
-  tomorrow.setDate(today.getDate() + 1);
+  tomorrow.setUTCDate(today.getUTCDate() + 1);
 
   const sameDay = (a: Date, b: Date) =>
-    a.getFullYear() === b.getFullYear() &&
-    a.getMonth()    === b.getMonth()    &&
-    a.getDate()     === b.getDate();
+    a.getUTCFullYear() === b.getUTCFullYear() &&
+    a.getUTCMonth()    === b.getUTCMonth()    &&
+    a.getUTCDate()     === b.getUTCDate();
 
-  if (sameDay(d, today))    return `Today ${d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
-  if (sameDay(d, tomorrow)) return `Tomorrow ${d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+  const timeStr = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', timeZone: 'UTC' });
 
-  return d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' }) +
-    ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  if (sameDay(d, today))    return `Today ${timeStr}`;
+  if (sameDay(d, tomorrow)) return `Tomorrow ${timeStr}`;
+
+  return d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' }) +
+    ' ' + timeStr;
 }
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
