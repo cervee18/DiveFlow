@@ -1139,12 +1139,12 @@ $$;
 ALTER FUNCTION "public"."generate_trips_from_schedule"("p_org_id" "uuid", "p_months_ahead" integer) OWNER TO "postgres";
 
 
-CREATE OR REPLACE FUNCTION "public"."get_active_alerts"("p_org_id" "uuid") RETURNS TABLE("alert_type" "text", "severity" "text", "trip_id" "uuid", "trip_start" timestamp with time zone, "trip_label" "text", "client_id" "uuid", "client_name" "text", "message" "text")
+CREATE OR REPLACE FUNCTION "public"."get_active_alerts"("p_org_id" "uuid", "p_days_ahead" integer DEFAULT 15) RETURNS TABLE("alert_type" "text", "severity" "text", "trip_id" "uuid", "trip_start" timestamp with time zone, "trip_label" "text", "client_id" "uuid", "client_name" "text", "message" "text")
     LANGUAGE "sql" STABLE SECURITY DEFINER
     SET "search_path" TO 'public', 'auth'
     AS $$
 
-  -- missing_waiver: client has no waiver, trip starts within 2 days
+  -- missing_waiver: client has no waiver, trip starts within the selected window
   SELECT
     'missing_waiver'::text                                AS alert_type,
     'critical'::text                                      AS severity,
@@ -1161,7 +1161,7 @@ CREATE OR REPLACE FUNCTION "public"."get_active_alerts"("p_org_id" "uuid") RETUR
   WHERE t.organization_id = p_org_id
     AND tc.waiver         = false
     AND t.start_time      > now()
-    AND t.start_time     <= now() + INTERVAL '2 days'
+    AND t.start_time     <= now() + make_interval(days => p_days_ahead)
     AND NOT EXISTS (
       SELECT 1 FROM public.alert_resolutions ar
       WHERE ar.org_id      = p_org_id
@@ -1172,7 +1172,7 @@ CREATE OR REPLACE FUNCTION "public"."get_active_alerts"("p_org_id" "uuid") RETUR
 
   UNION ALL
 
-  -- missing_deposit: client has no deposit, trip starts within 7 days
+  -- missing_deposit: client has no deposit, trip starts within the selected window
   SELECT
     'missing_deposit'::text,
     'warning'::text,
@@ -1189,7 +1189,7 @@ CREATE OR REPLACE FUNCTION "public"."get_active_alerts"("p_org_id" "uuid") RETUR
   WHERE t.organization_id = p_org_id
     AND tc.deposit        = false
     AND t.start_time      > now()
-    AND t.start_time     <= now() + INTERVAL '7 days'
+    AND t.start_time     <= now() + make_interval(days => p_days_ahead)
     AND NOT EXISTS (
       SELECT 1 FROM public.alert_resolutions ar
       WHERE ar.org_id      = p_org_id
@@ -1200,7 +1200,7 @@ CREATE OR REPLACE FUNCTION "public"."get_active_alerts"("p_org_id" "uuid") RETUR
 
   UNION ALL
 
-  -- no_staff: trip starts within 7 days and has no trip_staff entries
+  -- no_staff: trip starts within the selected window and has no trip_staff entries
   SELECT
     'no_staff'::text,
     'critical'::text,
@@ -1214,7 +1214,7 @@ CREATE OR REPLACE FUNCTION "public"."get_active_alerts"("p_org_id" "uuid") RETUR
   LEFT JOIN public.trip_types tt ON tt.id = t.trip_type_id
   WHERE t.organization_id = p_org_id
     AND t.start_time      > now()
-    AND t.start_time     <= now() + INTERVAL '7 days'
+    AND t.start_time     <= now() + make_interval(days => p_days_ahead)
     AND NOT EXISTS (
       SELECT 1 FROM public.trip_staff ts WHERE ts.trip_id = t.id
     )
@@ -1258,7 +1258,7 @@ CREATE OR REPLACE FUNCTION "public"."get_active_alerts"("p_org_id" "uuid") RETUR
 $$;
 
 
-ALTER FUNCTION "public"."get_active_alerts"("p_org_id" "uuid") OWNER TO "postgres";
+ALTER FUNCTION "public"."get_active_alerts"("p_org_id" "uuid", "p_days_ahead" integer) OWNER TO "postgres";
 
 
 CREATE OR REPLACE FUNCTION "public"."get_activity_logs"("p_org_id" "uuid", "p_entity_type" "text" DEFAULT NULL::"text", "p_from" timestamp with time zone DEFAULT NULL::timestamp with time zone, "p_to" timestamp with time zone DEFAULT NULL::timestamp with time zone, "p_limit" integer DEFAULT 50, "p_offset" integer DEFAULT 0) RETURNS TABLE("id" "uuid", "action" "text", "entity_type" "text", "entity_id" "uuid", "metadata" "jsonb", "actor_name" "text", "created_at" timestamp with time zone)
@@ -5192,9 +5192,9 @@ GRANT ALL ON FUNCTION "public"."generate_trips_from_schedule"("p_org_id" "uuid",
 
 
 
-GRANT ALL ON FUNCTION "public"."get_active_alerts"("p_org_id" "uuid") TO "anon";
-GRANT ALL ON FUNCTION "public"."get_active_alerts"("p_org_id" "uuid") TO "authenticated";
-GRANT ALL ON FUNCTION "public"."get_active_alerts"("p_org_id" "uuid") TO "service_role";
+GRANT ALL ON FUNCTION "public"."get_active_alerts"("p_org_id" "uuid", "p_days_ahead" integer) TO "anon";
+GRANT ALL ON FUNCTION "public"."get_active_alerts"("p_org_id" "uuid", "p_days_ahead" integer) TO "authenticated";
+GRANT ALL ON FUNCTION "public"."get_active_alerts"("p_org_id" "uuid", "p_days_ahead" integer) TO "service_role";
 
 
 

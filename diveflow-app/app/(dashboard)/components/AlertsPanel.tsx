@@ -10,6 +10,7 @@ import TripDrawer from '@/app/(dashboard)/components/TripDrawer';
 type AlertType = 'missing_waiver' | 'missing_deposit' | 'no_staff' | 'staff_double_booked';
 type Severity  = 'critical' | 'warning';
 type Category  = 'all' | 'staff' | 'clients';
+type Timeframe = 1 | 7 | 15;
 
 interface UnassignedMember {
   id:         string;
@@ -39,6 +40,19 @@ const ALERT_LABELS: Record<AlertType, string> = {
 
 const STAFF_ALERT_TYPES:  AlertType[] = ['no_staff', 'staff_double_booked'];
 const CLIENT_ALERT_TYPES: AlertType[] = ['missing_waiver', 'missing_deposit'];
+
+const TIMEFRAME_OPTIONS: { value: Timeframe; label: string }[] = [
+  { value: 1,  label: '1 day' },
+  { value: 7,  label: '7 days' },
+  { value: 15, label: '15 days' },
+];
+const TIMEFRAME_STORAGE_KEY = 'diveflow.alerts.timeframe';
+
+function loadStoredTimeframe(): Timeframe {
+  if (typeof window === 'undefined') return 15;
+  const raw = Number(window.localStorage.getItem(TIMEFRAME_STORAGE_KEY));
+  return raw === 1 || raw === 7 || raw === 15 ? raw : 15;
+}
 
 function alertKey(a: Alert): string {
   return `${a.alert_type}:${a.trip_id}:${a.client_id ?? ''}`;
@@ -154,6 +168,15 @@ export default function AlertsPanel() {
   const [category,    setCategory]    = useState<Category>('all');
   /** YYYY-MM-DD local string, or null = no date filter */
   const [dateFilter,  setDateFilter]  = useState<string | null>(null);
+  const [timeframe,   setTimeframe]   = useState<Timeframe>(15);
+
+  // Read the persisted timeframe on mount (after hydration, to avoid SSR mismatch)
+  useEffect(() => { setTimeframe(loadStoredTimeframe()); }, []);
+
+  const handleTimeframeChange = (value: Timeframe) => {
+    setTimeframe(value);
+    window.localStorage.setItem(TIMEFRAME_STORAGE_KEY, String(value));
+  };
 
   // ── Fetch org id once ─────────────────────────────────────────────────────
   useEffect(() => {
@@ -175,11 +198,11 @@ export default function AlertsPanel() {
     if (!orgId) return;
     setIsLoading(true);
     const { data, error } = await supabase
-      .rpc('get_active_alerts', { p_org_id: orgId });
+      .rpc('get_active_alerts', { p_org_id: orgId, p_days_ahead: timeframe });
     if (!error && data) setAlerts(data as Alert[]);
     else if (error) console.error('[AlertsPanel] fetch error:', error.message);
     setIsLoading(false);
-  }, [orgId, supabase]);
+  }, [orgId, supabase, timeframe]);
 
   useEffect(() => { loadAlerts(); }, [loadAlerts]);
 
@@ -304,6 +327,24 @@ export default function AlertsPanel() {
               onClick={() => setCategory(key)}
               className={`px-3 py-1 text-xs font-semibold rounded-md transition-colors ${
                 category === key
+                  ? 'bg-white text-slate-800 shadow-sm'
+                  : 'text-slate-500 hover:text-slate-700'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {/* Timeframe selector */}
+        <div className="flex items-center gap-1 bg-slate-100 rounded-lg p-0.5">
+          {TIMEFRAME_OPTIONS.map(({ value, label }) => (
+            <button
+              key={value}
+              onClick={() => handleTimeframeChange(value)}
+              title={`Show alerts for the next ${label}`}
+              className={`px-3 py-1 text-xs font-semibold rounded-md transition-colors ${
+                timeframe === value
                   ? 'bg-white text-slate-800 shadow-sm'
                   : 'text-slate-500 hover:text-slate-700'
               }`}
